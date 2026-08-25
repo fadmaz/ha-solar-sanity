@@ -165,6 +165,13 @@ The clean-house suite is a **gate, not a test**: thousands of healthy scenarios
 across topologies, noise levels and seasons, every one asserting silence. It
 must be green before any threshold anywhere is changed.
 
+## Brand assets
+
+The icon lives in `custom_components/solar_sanity/brand/` and is regenerated
+with `python scripts/make_brand_assets.py`. Home Assistant serves brand images
+from there as of 2026.3, taking priority over the CDN — the `home-assistant/brands`
+repository no longer accepts custom-integration icons.
+
 ## License
 
 [MIT](LICENSE)

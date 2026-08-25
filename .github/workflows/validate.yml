@@ -24,13 +24,6 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # The brands check requires the domain to exist in the
-          # home-assistant/brands repository, which needs a pull request over
-          # there and cannot be satisfied from here. Submitting solar_sanity to
-          # brands is tracked separately; until it merges this check can only
-          # ever fail, so failing the whole build on it would just train us to
-          # ignore red.
-          ignore: brands
 
   tests:
     name: Tests
