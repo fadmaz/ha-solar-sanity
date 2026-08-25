@@ -298,8 +298,21 @@ async def async_forecast_providers(hass: HomeAssistant) -> list[tuple[str, str]]
         _LOGGER.debug("forecast provider discovery failed", exc_info=True)
         return []
 
+    from homeassistant.loader import async_get_integration
+
     providers: list[tuple[str, str]] = []
     for domain in sorted(domains):
+        # A bare entry title is not enough to identify a provider — a
+        # Forecast.Solar entry is often just called "Home", which tells the user
+        # nothing about which integration it belongs to.
+        try:
+            integration = await async_get_integration(hass, domain)
+            product = integration.name
+        except Exception:
+            product = domain
+
         for entry in hass.config_entries.async_entries(domain):
-            providers.append((entry.entry_id, entry.title or domain))
+            title = entry.title
+            label = product if not title or title == product else f"{product} — {title}"
+            providers.append((entry.entry_id, label))
     return providers
