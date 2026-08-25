@@ -126,7 +126,7 @@
       },
       "data_completeness": { "name": "Data completeness" },
       "corrections_active": { "name": "Corrections in effect" },
-      "expected_tomorrow": { "name": "Expected tomorrow" },
+      "expected_tomorrow": { "name": "Forecast tomorrow" },
       "live_residual": { "name": "Live residual" }
     },
     "binary_sensor": {

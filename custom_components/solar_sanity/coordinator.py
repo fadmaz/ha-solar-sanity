@@ -113,6 +113,8 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._suspect: set[str] = set()
         #: When sampling began, so a partial first hour is labelled honestly.
         self._first_sample_at: datetime | None = None
+        #: Latest forecast total for tomorrow, in kWh.
+        self._expected_tomorrow_kwh: float | None = None
         self._accumulator_start: datetime | None = None
         self._loss_model: LossModel | None = None
         self._store = Store[dict[str, Any]](
@@ -371,6 +373,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
         forecasts = await async_get_solar_forecasts(self.hass, entry_ids)
         written = 0
+        tomorrow_kwh: float | None = None
         for entry_id, payload in forecasts.items():
             provider = self.hass.config_entries.async_get_entry(entry_id)
             if provider is None:
@@ -382,7 +385,43 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 self.hass, entry_id, provider.title or provider.domain, wh_hours
             ):
                 written += 1
+
+            # Surface the first provider's figure. Once accuracy scoring exists
+            # this should prefer whichever provider has been most accurate here.
+            if tomorrow_kwh is None:
+                tomorrow_kwh = self._sum_for_tomorrow(wh_hours)
+
+        self._expected_tomorrow_kwh = tomorrow_kwh
         return written
+
+    def _sum_for_tomorrow(self, wh_hours: dict[str, Any]) -> float | None:
+        """Total forecast energy for tomorrow, in kWh, by local date.
+
+        The payload's values are Wh produced *during* each period — a delta, not
+        a running total — so they add. Periods are not guaranteed to be an hour,
+        which is why every entry is summed rather than counted.
+        """
+        try:
+            tz = dt_util.get_time_zone(self.hass.config.time_zone)
+        except Exception:
+            tz = None
+        now = dt_util.now(tz) if tz else dt_util.utcnow()
+        tomorrow = (now + timedelta(days=1)).date()
+
+        total = 0.0
+        seen = False
+        for raw_when, raw_value in wh_hours.items():
+            when = dt_util.parse_datetime(raw_when)
+            if when is None or not isinstance(raw_value, (int, float)):
+                continue
+            local = when.astimezone(tz) if tz else when
+            if local.date() != tomorrow:
+                continue
+            total += float(raw_value)
+            seen = True
+
+        # No entries for tomorrow is not zero production — it is no forecast.
+        return round(total / 1000.0, 2) if seen else None
 
     # -- analysis -----------------------------------------------------------
 
@@ -446,6 +485,47 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._loss_model = _loss_from_dict(stored.get("loss_model"))
 
     # -- reporting ----------------------------------------------------------
+
+    @property
+    def expected_tomorrow_kwh(self) -> float | None:
+        """Tomorrow's forecast total, or ``None`` when no provider is configured."""
+        return self._expected_tomorrow_kwh
+
+    @property
+    def live_residual_w(self) -> float | None:
+        """Sources minus sinks right now, in watts.
+
+        ``None`` whenever there is no usable snapshot — which is always, on a
+        system with any energy channel, since the live tier is skipped there. An
+        absent number is the honest answer; a zero would not be.
+        """
+        if not self._snapshots:
+            return None
+        snapshot = self._snapshots[-1]
+        total = 0.0
+        for spec in self.specs:
+            if not spec.role.in_balance:
+                continue
+            value = snapshot.watts.get(spec.key)
+            if value is None:
+                return None
+            total += spec.role.sign * value
+        return round(total, 1)
+
+    @property
+    def channel_completeness(self) -> int | None:
+        """Percentage of configured channels currently readable.
+
+        This measures what its name says. It previously reported how many days
+        of history existed, which is a different question with the same units.
+        """
+        specs = self.specs
+        if not specs:
+            return None
+        readable = sum(
+            1 for spec in specs if read_channel(self.hass.states.get(spec.entity_id))[0] is not None
+        )
+        return round(readable / len(specs) * 100)
 
     @property
     def report(self) -> AnalysisReport | None:

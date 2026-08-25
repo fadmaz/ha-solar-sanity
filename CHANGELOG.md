@@ -2,6 +2,24 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.1.4] - 2026-08-25
+
+### Fixed
+
+- **Three sensors could never produce a value.** `Expected tomorrow` and
+  `Live residual` had value functions returning `None` unconditionally, so they
+  advertised capabilities that did not exist. `Data completeness` reported days
+  of history under a name and description promising the fraction of inputs
+  present — a different question wearing the same unit.
+
+  All three now measure what they claim: tomorrow's total comes from the
+  captured forecast payload, the live residual from the most recent snapshot,
+  and completeness from how many configured channels are currently readable.
+
+  `Live residual` remains blank on any system with an energy channel, because
+  the live tier is skipped there. That absence is the honest answer; a zero
+  would not be.
+
 ## [0.1.3] - 2026-08-25
 
 ### Fixed
