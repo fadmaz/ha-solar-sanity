@@ -133,3 +133,48 @@ class TestIntegrationImports:
     def test_module_imports(self, module: str) -> None:
         """Catches the class of bug that made v0.1.0 unloadable."""
         __import__(f"custom_components.solar_sanity.{module}")
+
+
+class TestQuestionsAreConditional:
+    """Never ask what the mapping already answers.
+
+    A user who has just mapped battery charge and discharge sensors should not
+    then be asked whether they have a battery. Beyond looking silly, an
+    "unknown" answer there changes what the engine does — it runs the
+    missing-storage probe — so a redundant question is also a chance to record
+    a worse answer than the one we already had.
+    """
+
+    def _flow(self, channels: dict[str, str]):
+        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
+
+        flow = SolarSanityConfigFlow()
+        flow._channels = channels
+        return flow
+
+    def test_battery_question_is_skipped_when_battery_is_mapped(self) -> None:
+        flow = self._flow(
+            {"pv": "sensor.pv", "load": "sensor.load", "battery_charge": "sensor.chg"}
+        )
+        assert flow._battery_mapped is True
+
+    def test_battery_question_is_asked_when_no_battery_is_mapped(self) -> None:
+        flow = self._flow({"pv": "sensor.pv", "load": "sensor.load"})
+        assert flow._battery_mapped is False
+
+    def test_grid_net_question_only_matters_when_import_is_alone(self) -> None:
+        """Both mapped means two dedicated sensors — nothing to interpret."""
+        both = self._flow(
+            {
+                "pv": "sensor.pv",
+                "load": "sensor.load",
+                "grid_import": "sensor.i",
+                "grid_export": "sensor.e",
+            }
+        )
+        assert both._both_grid_mapped is True
+
+        import_only = self._flow(
+            {"pv": "sensor.pv", "load": "sensor.load", "grid_import": "sensor.i"}
+        )
+        assert import_only._both_grid_mapped is False
