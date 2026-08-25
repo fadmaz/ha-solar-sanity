@@ -289,6 +289,18 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
             self._accumulator[spec.key] = self._accumulator.get(spec.key, 0.0) + delta
 
+    def notify_live_entities(self) -> None:
+        """Write live-state entities without re-running the analysis.
+
+        ``CoordinatorEntity`` only writes state when the coordinator updates,
+        and the analysis runs every six hours. Sensors that describe *now* —
+        completeness and the live residual — would otherwise be frozen to that
+        cadence, which is how completeness stuck at 0%: the integration loaded
+        before the inverter's entities had published, the first reading found
+        nothing readable, and nothing rewrote it for six hours.
+        """
+        self.async_update_listeners()
+
     def _close_bucket(self, start: datetime, end: datetime | None = None) -> None:
         specs = self.specs
         # The first bucket after a restart covers only part of an hour.
