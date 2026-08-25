@@ -17,7 +17,7 @@ window.customCards.push({
   name: "Solar Sanity",
   description: "Tells you whether your solar data adds up. Stays quiet when it does.",
   preview: true,
-  documentationURL: "https://github.com/fadmaz/ha-smart-solar-manager",
+  documentationURL: "https://github.com/fadmaz/ha-solar-sanity",
 });
 
 // eslint-disable-next-line no-console

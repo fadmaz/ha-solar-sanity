@@ -2,9 +2,9 @@
 
 **Tells you whether your solar data adds up — and stays quiet when it does.**
 
-[![Validate](https://github.com/fadmaz/ha-smart-solar-manager/actions/workflows/validate.yml/badge.svg)](https://github.com/fadmaz/ha-smart-solar-manager/actions/workflows/validate.yml)
+[![Validate](https://github.com/fadmaz/ha-solar-sanity/actions/workflows/validate.yml/badge.svg)](https://github.com/fadmaz/ha-solar-sanity/actions/workflows/validate.yml)
 [![HACS](https://img.shields.io/badge/HACS-custom-41BDF5.svg)](https://hacs.xyz)
-[![License](https://img.shields.io/github/license/fadmaz/ha-smart-solar-manager)](LICENSE)
+[![License](https://img.shields.io/github/license/fadmaz/ha-solar-sanity)](LICENSE)
 
 > [!WARNING]
 > Early development. The checks are conservative by design, but the thresholds

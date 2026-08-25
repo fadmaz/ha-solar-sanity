@@ -5,10 +5,10 @@
   "config_flow": true,
   "dependencies": ["frontend", "http", "websocket_api"],
   "after_dependencies": ["recorder", "energy", "repairs"],
-  "documentation": "https://github.com/fadmaz/ha-smart-solar-manager",
+  "documentation": "https://github.com/fadmaz/ha-solar-sanity",
   "integration_type": "service",
   "iot_class": "calculated",
-  "issue_tracker": "https://github.com/fadmaz/ha-smart-solar-manager/issues",
+  "issue_tracker": "https://github.com/fadmaz/ha-solar-sanity/issues",
   "requirements": [],
   "version": "0.1.0"
 }
