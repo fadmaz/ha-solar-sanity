@@ -74,6 +74,21 @@ def _entity_selector() -> selector.EntitySelector:
     )
 
 
+def _duplicate_entity(channels: dict[str, str]) -> str | None:
+    """The entity mapped to more than one role, if any.
+
+    One sensor on both sides of the identity cancels itself out and makes the
+    balance meaningless — and the live tripwire would then report the same
+    entity flowing two ways at once, naming it twice in a single sentence.
+    """
+    seen: dict[str, str] = {}
+    for role_key, entity_id in channels.items():
+        if entity_id in seen:
+            return entity_id
+        seen[entity_id] = role_key
+    return None
+
+
 def _channel_schema(discovery: Discovery, current: dict[str, str]) -> vol.Schema:
     fields: dict[Any, Any] = {}
     for role in MAPPED_ROLES:
@@ -103,12 +118,15 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._channels = {key: value for key, value in user_input.items() if value}
+            duplicate = _duplicate_entity(self._channels)
             if Role.LOAD.key not in self._channels:
                 # Without consumption the identity closes by definition and the
                 # whole check is vacuous, so this is worth blocking on.
                 errors["base"] = "load_required"
             elif Role.PV.key not in self._channels:
                 errors["base"] = "pv_required"
+            elif duplicate:
+                errors["base"] = "duplicate_entity"
             else:
                 return await self.async_step_topology()
 
@@ -215,11 +233,20 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             channels = {key: value for key, value in user_input.items() if value}
+            error = None
             if Role.LOAD.key not in channels:
+                error = "load_required"
+            elif Role.PV.key not in channels:
+                error = "pv_required"
+            elif _duplicate_entity(channels):
+                error = "duplicate_entity"
+            if error:
+                # Re-render from what the user just submitted, not from the
+                # stored config — otherwise their edits vanish on any error.
                 return self.async_show_form(
                     step_id="reconfigure",
-                    data_schema=_channel_schema(self._discovery, current),
-                    errors={"base": "load_required"},
+                    data_schema=_channel_schema(self._discovery, channels),
+                    errors={"base": error},
                 )
             return self.async_update_reload_and_abort(
                 entry,

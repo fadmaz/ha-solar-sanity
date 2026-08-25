@@ -264,7 +264,10 @@ def screen_cumulative(
                 code=Code.CUMULATIVE_IN_PERIODIC,
                 channel_keys=(spec.key,),
                 confidence=Confidence.CERTAIN,
-                correction_kind="use_daily_delta",
+                # No correction offered: the coordinator already differences
+                # cumulative energy sensors, and a button that does nothing is
+                # worse than no button on a product selling trustworthiness.
+                correction_kind=None,
                 fields={
                     "name": spec.friendly_name,
                     "observed": level,

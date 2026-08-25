@@ -80,7 +80,9 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         )
 
     # --- Loss model, then residual -------------------------------------------
-    provisional = build_days(buckets, specs, request.loss_model or LossModel())
+    provisional = build_days(
+        buckets, specs, request.loss_model or LossModel(), request.utc_offset_hours
+    )
     if len(provisional) < MIN_ACTIONABLE_DAYS:
         return AnalysisReport(
             status=Status.INSUFFICIENT_DATA,
@@ -89,7 +91,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         )
 
     loss = topology.fit_loss_model(provisional, specs, request.loss_model)
-    days = build_days(buckets, specs, loss)
+    days = build_days(buckets, specs, loss, request.utc_offset_hours)
     estimate = topology.infer(days, specs, request.declared, loss)
     summary = _summarise(days)
 

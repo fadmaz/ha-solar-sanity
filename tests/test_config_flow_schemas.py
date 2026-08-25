@@ -287,3 +287,77 @@ class TestEnergyAccumulation:
                 accumulated += kwh * 1000.0 - previous
             previous = kwh * 1000.0
         assert accumulated == 0.0
+
+
+class TestDuplicateEntityRejected:
+    """One sensor cannot be on both sides of the identity.
+
+    Discovery could suggest the same entity for two roles, and nothing rejected
+    it. The entity then cancels itself out of the balance, and the live tripwire
+    reports it flowing two ways at once — naming the same sensor twice in one
+    sentence.
+    """
+
+    def test_duplicate_is_found(self) -> None:
+        from custom_components.solar_sanity.config_flow import _duplicate_entity
+
+        assert (
+            _duplicate_entity(
+                {
+                    "pv": "sensor.a",
+                    "load": "sensor.b",
+                    "grid_import": "sensor.c",
+                    "grid_export": "sensor.c",
+                }
+            )
+            == "sensor.c"
+        )
+
+    def test_distinct_mapping_is_accepted(self) -> None:
+        from custom_components.solar_sanity.config_flow import _duplicate_entity
+
+        assert _duplicate_entity({"pv": "sensor.a", "load": "sensor.b"}) is None
+
+
+class TestLocalDays:
+    """Buckets must group into local days, not UTC ones."""
+
+    def test_offset_shifts_the_day_boundary(self) -> None:
+        """At UTC-8 a UTC day starts at 16:00 local, splitting the solar curve."""
+        from datetime import UTC, datetime
+
+        from custom_components.solar_sanity.analysis.model import (
+            Bucket,
+            BucketSource,
+            ChannelSpec,
+            LossModel,
+            Quality,
+            Role,
+        )
+        from custom_components.solar_sanity.analysis.residual import build_days
+
+        specs = (
+            ChannelSpec("pv", Role.PV, "sensor.pv", "PV", "Wh"),
+            ChannelSpec("load", Role.LOAD, "sensor.load", "Load", "Wh"),
+        )
+        buckets = tuple(
+            Bucket(
+                start_utc=datetime(2026, 3, 1, hour, tzinfo=UTC),
+                seconds=3600,
+                wh={"pv": 100.0, "load": 100.0},
+                quality={"pv": Quality.OK, "load": Quality.OK},
+                source={
+                    "pv": BucketSource.OWN_INTEGRAL,
+                    "load": BucketSource.OWN_INTEGRAL,
+                },
+            )
+            for hour in range(24)
+        )
+
+        utc_days = build_days(buckets, specs, LossModel(), 0.0)
+        shifted = build_days(buckets, specs, LossModel(), -8.0)
+
+        # A full UTC day is one day at UTC; at -8 it straddles two, so neither
+        # part reaches the 20-bucket minimum and both are dropped.
+        assert len(utc_days) == 1
+        assert len(shifted) == 0

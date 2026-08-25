@@ -31,6 +31,7 @@ from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
+from ._match import matches
 from .analysis.model import Role
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,8 +42,22 @@ ENERGY_UNITS = {u.value for u in UnitOfEnergy}
 #: Keyword hints per role, best first. Earlier keywords score higher.
 KEYWORDS: dict[Role, tuple[str, ...]] = {
     Role.PV: ("pv", "solar", "photovoltaic", "generation", "production"),
-    Role.LOAD: ("load", "consumption", "house", "home", "usage"),
-    Role.GRID_IMPORT: ("grid import", "from grid", "import", "consumed", "grid"),
+    Role.LOAD: (
+        "load",
+        "consumption",
+        "house",
+        "home",
+        "usage",
+        # Hybrid inverters commonly name the house feed this way, and without
+        # these nothing is suggested for the one channel that is mandatory.
+        "output active",
+        "output power",
+        "backup",
+        "essential",
+    ),
+    # No bare "grid": it carries no direction, so it makes every grid-ish
+    # entity a candidate for the import slot.
+    Role.GRID_IMPORT: ("grid import", "from grid", "import", "consumed"),
     Role.GRID_EXPORT: ("grid export", "to grid", "export", "feed", "return"),
     Role.BATTERY_CHARGE: ("battery charge", "charging", "charge"),
     Role.BATTERY_DISCHARGE: ("battery discharge", "discharging", "discharge"),
@@ -61,9 +76,14 @@ class Candidate:
     score: int
     reasons: tuple[str, ...]
 
+    #: Maximum achievable score: 30 for the unit/device-class match plus 20 for
+    #: a first-choice keyword. The old threshold of 60 was unreachable, which
+    #: silently disabled the de-duplication that depends on it.
+    CONFIDENT_SCORE = 45
+
     @property
     def confident(self) -> bool:
-        return self.score >= 60
+        return self.score >= self.CONFIDENT_SCORE
 
 
 @dataclass
@@ -87,6 +107,8 @@ async def async_discover(hass: HomeAssistant) -> Discovery:
     related = await _async_energy_dashboard_entities(hass)
     registry = er.async_get(hass)
     candidates = _sibling_entities(registry, related)
+    forbidden = await _forecast_entity_ids(hass, registry)
+    candidates = [e for e in candidates if e not in forbidden]
 
     if not candidates:
         # No Energy Dashboard, or nothing recognisable in it. Fall back to the
@@ -152,6 +174,31 @@ async def _async_energy_dashboard_entities(hass: HomeAssistant) -> list[str]:
         _add(device.get("stat_consumption"))
 
     return found
+
+
+async def _forecast_entity_ids(hass: HomeAssistant, registry: er.EntityRegistry) -> set[str]:
+    """Entities belonging to a solar *forecast* integration.
+
+    A forecast sensor carries ``device_class: power`` or ``energy`` and a name
+    full of words like "production", so it scores well for the PV slot and can
+    be suggested as the panels' own output. The predecessor shipped exactly that
+    bug — mapping a forecast into a measurement channel — and this project must
+    not repeat it.
+    """
+    from .statistics_source import async_forecast_providers
+
+    try:
+        providers = await async_forecast_providers(hass)
+    except Exception:
+        _LOGGER.debug("could not enumerate forecast providers", exc_info=True)
+        return set()
+
+    entry_ids = {entry_id for entry_id, _ in providers}
+    return {
+        entry.entity_id
+        for entry in registry.entities.values()
+        if entry.config_entry_id in entry_ids
+    }
 
 
 def _sibling_entities(registry: er.EntityRegistry, seeds: list[str]) -> list[str]:
@@ -254,7 +301,10 @@ def _rank(
             continue
 
         for index, keyword in enumerate(KEYWORDS[role]):
-            if keyword in haystack:
+            # Whole words only: "charge" must not match "discharge", which would
+            # put a discharge sensor in the charge slot and silently swap the
+            # two battery directions.
+            if matches(keyword, haystack):
                 score += max(5, 20 - index * 3)
                 reasons.append(f"name mentions {keyword!r}")
                 break

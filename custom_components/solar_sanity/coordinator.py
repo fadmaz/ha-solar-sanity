@@ -24,10 +24,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant, State
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -110,6 +111,8 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._last_energy: dict[str, float] = {}
         #: Channels whose current hour saw a reset and cannot be trusted.
         self._suspect: set[str] = set()
+        #: When sampling began, so a partial first hour is labelled honestly.
+        self._first_sample_at: datetime | None = None
         self._accumulator_start: datetime | None = None
         self._loss_model: LossModel | None = None
         self._store = Store[dict[str, Any]](
@@ -240,9 +243,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
         if self._accumulator_start is None:
             self._accumulator_start = hour
+            # Only a full hour of samples earns a full-hour bucket.
+            self._first_sample_at = now
         elif hour != self._accumulator_start:
-            self._close_bucket(self._accumulator_start)
+            self._close_bucket(self._accumulator_start, hour)
             self._accumulator_start = hour
+            self._first_sample_at = None
 
         interval_hours = BUCKET_INTERVAL.total_seconds() / 3600.0
 
@@ -257,6 +263,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 self._accumulator[spec.key] = (
                     self._accumulator.get(spec.key, 0.0) + value * interval_hours
                 )
+                continue
+
+            if not energy_is_cumulative(state):
+                # A `measurement` energy sensor already reports the amount for
+                # the period, so it is added rather than differenced.
+                self._accumulator[spec.key] = self._accumulator.get(spec.key, 0.0) + value
                 continue
 
             previous = self._last_energy.get(spec.key)
@@ -275,8 +287,14 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
             self._accumulator[spec.key] = self._accumulator.get(spec.key, 0.0) + delta
 
-    def _close_bucket(self, start: datetime) -> None:
+    def _close_bucket(self, start: datetime, end: datetime | None = None) -> None:
         specs = self.specs
+        # The first bucket after a restart covers only part of an hour.
+        # Claiming otherwise applies a full hour of standby draw to it and
+        # silently degrades the day; build_days drops anything not 3600s.
+        started = self._first_sample_at or start
+        covered = int((end - max(start, started)).total_seconds()) if end else 3600
+        covered = max(0, min(3600, covered))
         wh: dict[str, float | None] = {}
         quality: dict[str, Quality] = {}
         source: dict[str, BucketSource] = {}
@@ -295,7 +313,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._buckets.append(
             Bucket(
                 start_utc=start,
-                seconds=3600,
+                seconds=covered,
                 wh=wh,
                 quality=quality,
                 source=source,
@@ -379,6 +397,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             active_corrections=self.corrections,
             suppressed_codes=self.suppressed,
             loss_model=self._loss_model,
+            utc_offset_hours=self._utc_offset_hours(),
         )
 
         report = await self.hass.async_add_executor_job(analyse, request)
@@ -388,6 +407,21 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
         await self._async_persist(report)
         return report
+
+    def _utc_offset_hours(self) -> float:
+        """The instance's current offset from UTC, in hours.
+
+        Passed into the analysis so buckets group into local days. A day that
+        starts at 16:00 local splits the solar curve in two.
+        """
+        try:
+            tz = dt_util.get_time_zone(self.hass.config.time_zone)
+            if tz is None:
+                return 0.0
+            offset = dt_util.utcnow().astimezone(tz).utcoffset()
+            return offset.total_seconds() / 3600.0 if offset else 0.0
+        except Exception:
+            return 0.0
 
     async def _async_persist(self, report: AnalysisReport) -> None:
         """Save daily digests and the fitted loss model.
@@ -505,9 +539,16 @@ def _numeric_state(state: State | None) -> float | None:
 def read_channel(state: State | None) -> tuple[float | None, str | None]:
     """Return ``(value, kind)``: watts for power, watt-hours for energy.
 
-    An unrecognised unit yields ``None`` rather than the raw number. Passing a
-    value through unconverted is exactly how the predecessor turned a
-    kilowatt-hour forecast into "1.2 watts" and broke its own thresholds.
+    The unit is checked against the converter's own vocabulary *before*
+    converting rather than catching afterwards. Home Assistant's converters
+    raise ``HomeAssistantError``, which is not a ``ValueError`` — catching the
+    usual suspects would let it escape into the polling callback, where it stops
+    every channel from accumulating rather than just the offending one.
+
+    That case is ordinary, not exotic: a sensor can declare
+    ``device_class: energy`` and carry a unit the converter has never heard of
+    (``""``, ``"kWh/h"``, ``"VA"``), and the entity picker filters on device
+    class, so such a sensor is selectable.
     """
     value = _numeric_state(state)
     if value is None:
@@ -517,14 +558,32 @@ def read_channel(state: State | None) -> tuple[float | None, str | None]:
     unit = _unit_of(state)
 
     try:
-        if kind == KIND_POWER:
+        if kind == KIND_POWER and unit in PowerConverter.VALID_UNITS:
             return PowerConverter.convert(value, unit, UnitOfPower.WATT), kind
-        if kind == KIND_ENERGY:
+        if kind == KIND_ENERGY and unit in EnergyConverter.VALID_UNITS:
             return EnergyConverter.convert(value, unit, UnitOfEnergy.WATT_HOUR), kind
-    except (ValueError, TypeError, KeyError):
+    except (HomeAssistantError, ValueError, TypeError, KeyError):
+        # Belt and braces. A unit we cannot convert yields nothing, never the
+        # raw number — passing a value through unconverted is how the
+        # predecessor read a kilowatt-hour forecast as "1.2 watts".
         return None, kind
 
-    return None, None
+    return None, kind
+
+
+def energy_is_cumulative(state: State | None) -> bool:
+    """Whether an energy reading is a running total that must be differenced.
+
+    ``total`` and ``total_increasing`` are counters. A ``measurement`` energy
+    sensor reports an amount *for the period* — differencing that is as wrong as
+    integrating a counter, so it is accumulated directly instead.
+    """
+    if state is None:
+        return False
+    return state.attributes.get("state_class") in (
+        SensorStateClass.TOTAL,
+        SensorStateClass.TOTAL_INCREASING,
+    )
 
 
 def _loss_to_dict(loss: LossModel | None) -> dict[str, float] | None:

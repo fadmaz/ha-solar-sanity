@@ -51,7 +51,8 @@
     },
     "error": {
       "load_required": "A consumption sensor is required. Without one the balance closes by definition and Solar Sanity cannot check anything.",
-      "pv_required": "A generation sensor is required."
+      "pv_required": "A generation sensor is required.",
+      "duplicate_entity": "The same sensor is mapped to two different roles. One sensor cannot be on both sides of the calculation — it would cancel itself out."
     },
     "abort": {
       "already_configured": "These sensors are already being monitored.",

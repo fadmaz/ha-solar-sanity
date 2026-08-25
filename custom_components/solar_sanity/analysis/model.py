@@ -279,6 +279,12 @@ class AnalysisRequest:
     active_corrections: tuple[Correction, ...] = ()
     suppressed_codes: tuple[str, ...] = ()
     loss_model: LossModel | None = None
+    #: The installation's UTC offset, so buckets group into *local* days.
+    #: Grouping by UTC splits the solar curve across two days anywhere far
+    #: from Greenwich, which breaks the storage probe, the standby fit and
+    #: every daily asymmetry test. This is user configuration, not a clock,
+    #: so the engine stays pure.
+    utc_offset_hours: float = 0.0
 
     def spec(self, key: str) -> ChannelSpec | None:
         for s in self.specs:
