@@ -2,6 +2,38 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.1.3] - 2026-08-25
+
+### Fixed
+
+- **Energy sensors were integrated as if they were power.** A daily-resetting
+  total deposited roughly the whole running day into every hour — wrong by
+  ~11.5x per day on generation, and up to ~1900x on a lifetime battery counter.
+  The engine's response was not silence: it would name a high-confidence
+  "counted twice" fault with a one-click button that zeroed the channel. Power
+  is now integrated, energy differenced, and a reset marks the hour untrusted
+  rather than guessing.
+- **Unit conversion could stop every channel dead.** Home Assistant's
+  converters raise `HomeAssistantError`, which the handler did not catch, so
+  one odd sensor produced a traceback every five minutes and no channel
+  accumulated at all.
+- **Discovery could suggest a forecast entity as the panels** — the
+  predecessor's bug, reproduced.
+- **"charge" matched "discharge"**, which could swap the two battery
+  directions without ever surfacing as a fault.
+- **The same entity could be mapped to two roles**, cancelling itself out of
+  the balance.
+- **Two "fix it" buttons did nothing** and the finding returned forever.
+- **Days were UTC days**, splitting the solar curve in two away from Greenwich.
+- A partial first bucket after a restart claimed to be a full hour.
+
+### Changed
+
+- Setup no longer asks whether you have a battery when you have just mapped
+  battery sensors. Each question appears only when genuinely open.
+- The forecast picker names the integration ("Forecast.Solar — Home")
+  rather than showing a bare entry title.
+
 ## [0.1.2] - 2026-08-25
 
 ### Fixed
