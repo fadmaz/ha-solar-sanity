@@ -274,3 +274,32 @@ def utc_day_bounds(when: datetime, days_back: int) -> tuple[datetime, datetime]:
     """A UTC window ending at the top of ``when``'s hour."""
     end = when.replace(minute=0, second=0, microsecond=0)
     return end - timedelta(days=days_back), end
+
+
+async def async_forecast_providers(hass: HomeAssistant) -> list[tuple[str, str]]:
+    """Return ``(entry_id, label)`` for every loaded solar forecast provider.
+
+    Discovery goes through the public integration-platform helper rather than
+    ``energy.websocket_api``, which is private and singleton-backed.
+    """
+    from homeassistant.helpers.integration_platform import (
+        async_process_integration_platforms,
+    )
+
+    domains: set[str] = set()
+
+    async def _collect(_hass: HomeAssistant, domain: str, platform: Any) -> None:
+        if hasattr(platform, "async_get_solar_forecast"):
+            domains.add(domain)
+
+    try:
+        await async_process_integration_platforms(hass, "energy", _collect, wait_for_platforms=True)
+    except Exception:
+        _LOGGER.debug("forecast provider discovery failed", exc_info=True)
+        return []
+
+    providers: list[tuple[str, str]] = []
+    for domain in sorted(domains):
+        for entry in hass.config_entries.async_entries(domain):
+            providers.append((entry.entry_id, entry.title or domain))
+    return providers

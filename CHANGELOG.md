@@ -2,6 +2,30 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.1.2] - 2026-08-25
+
+### Fixed
+
+- **Setup failed with "Unknown error occurred".** The topology step built
+  `selector.selector({"config_entry": {"multiple": True}})`, but
+  `ConfigEntrySelector` has no `multiple` option — its config schema accepts
+  `integration` and nothing else — so constructing that schema raised
+  `vol.Invalid`. Home Assistant reported it on the *previous* step, which
+  pointed at the wrong place entirely. Nobody could complete setup.
+
+### Changed
+
+- Forecast providers are now chosen from a named list rather than by config
+  entry, so the picker shows "Forecast.Solar" instead of a UUID. The field is
+  omitted entirely when no provider is installed.
+
+### Added
+
+- Tests that construct every config-flow and options-flow schema, and that
+  import every module the way Home Assistant loads it. A selector's config is
+  only validated when the schema is built, so nothing in the existing suite
+  could have caught this.
+
 ## [0.1.1] - 2026-08-25
 
 ### Added

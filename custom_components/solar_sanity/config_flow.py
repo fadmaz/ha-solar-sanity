@@ -41,6 +41,7 @@ from .const import (
     DOMAIN,
 )
 from .discovery import Discovery, async_discover
+from .statistics_source import async_forecast_providers
 
 #: Roles offered at setup, in the order they appear.
 MAPPED_ROLES: tuple[Role, ...] = (
@@ -149,19 +150,30 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                 },
             )
 
-        return self.async_show_form(
-            step_id="topology",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_HAS_BATTERY, default="unknown"): _TRISTATE,
-                    vol.Required(CONF_GRID_IS_NET, default="unknown"): _TRISTATE,
-                    vol.Required(CONF_LOAD_WHOLE_HOUSE, default="unknown"): _TRISTATE,
-                    vol.Optional(CONF_FORECAST_ENTRIES, default=[]): selector.selector(
-                        {"config_entry": {"multiple": True}}
-                    ),
-                }
-            ),
-        )
+        fields: dict[Any, Any] = {
+            vol.Required(CONF_HAS_BATTERY, default="unknown"): _TRISTATE,
+            vol.Required(CONF_GRID_IS_NET, default="unknown"): _TRISTATE,
+            vol.Required(CONF_LOAD_WHOLE_HOUSE, default="unknown"): _TRISTATE,
+        }
+
+        # ConfigEntrySelector takes a single entry and has no `multiple` option,
+        # so the providers are listed by name instead — which is better anyway,
+        # since the user recognises "Forecast.Solar" and not a UUID. The field is
+        # omitted entirely when there is nothing to pick.
+        providers = await async_forecast_providers(self.hass)
+        if providers:
+            fields[vol.Optional(CONF_FORECAST_ENTRIES, default=[])] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value=entry_id, label=label)
+                        for entry_id, label in providers
+                    ],
+                    multiple=True,
+                    mode=selector.SelectSelectorMode.LIST,
+                )
+            )
+
+        return self.async_show_form(step_id="topology", data_schema=vol.Schema(fields))
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
