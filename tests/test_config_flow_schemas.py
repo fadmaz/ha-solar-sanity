@@ -48,13 +48,16 @@ class TestConfigFlowSchemas:
         from custom_components.solar_sanity.config_flow import _entity_selector
 
         selector = _entity_selector()
-        assert selector.config["domain"] == "sensor"
+        # Home Assistant normalises `domain` to a list, whether one was given or
+        # a bare string. Constructing it at all is the real assertion here — an
+        # invalid config raises rather than returning something wrong.
+        assert selector.config["domain"] == ["sensor"]
 
     def test_tristate_selector_is_valid(self) -> None:
         """Every setup question must offer "not sure" as a real answer."""
         from custom_components.solar_sanity.config_flow import _TRISTATE
 
-        values = {option for option in _TRISTATE.config["options"]}
+        values = set(_TRISTATE.config["options"])
         assert values == {"yes", "no", "unknown"}
 
     def test_forecast_provider_selector_is_valid(self) -> None:
