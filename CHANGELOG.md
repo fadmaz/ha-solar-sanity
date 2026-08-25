@@ -2,6 +2,31 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.1.1] - 2026-08-25
+
+### Added
+
+- Brand icons, shipped inside the integration at
+  `custom_components/solar_sanity/brand/`. Home Assistant serves them from there
+  as of 2026.3, taking priority over the brands CDN.
+
+### Fixed
+
+- The analysis package used absolute `from analysis.x import` internally, which
+  resolved under pytest but failed on a real install with
+  `No module named 'analysis'` — Home Assistant puts the *config* directory on
+  the path, not the integration's own. The integration would not have loaded.
+  Relative imports resolve either way.
+- The release workflow could not attach assets; the default token is read-only
+  on this repository and needed `contents: write`.
+
+### Notes
+
+- v0.1.0's archive predates the icons, so installs pinned to that tag have none.
+- The `home-assistant/brands` repository stopped accepting custom-integration
+  icons in 2026.3, so the HACS brands check now passes on locally-provided
+  assets rather than being skipped.
+
 ## [0.1.0] - 2026-08-25
 
 Complete rewrite. Replaces `ha_smart_solar_manager`, which was a threshold-based
