@@ -1,7 +1,8 @@
 {
-  "name": "HA Smart Solar Manager",
-  "content_in_root": false,
+  "name": "Solar Sanity",
+  "homeassistant": "2025.1.0",
   "render_readme": true,
-  "homeassistant": "2024.8.0",
-  "domains": ["ha_smart_solar_manager"]
+  "zip_release": true,
+  "filename": "solar_sanity.zip",
+  "hide_default_branch": true
 }

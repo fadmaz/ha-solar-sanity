@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build the card
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stamp the version
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          tag = os.environ["TAG"].lstrip("v")
+          path = pathlib.Path("custom_components/solar_sanity/manifest.json")
+          manifest = json.loads(path.read_text())
+          manifest["version"] = tag
+          path.write_text(json.dumps(manifest, indent=2) + "\n")
+          PY
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+
+      # HACS unpacks the zip's contents straight into the domain directory, so
+      # the archive holds the contents flat rather than the directory itself.
+      - name: Package
+        run: cd custom_components/solar_sanity && zip solar_sanity.zip -r ./
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            custom_components/solar_sanity/solar_sanity.zip
+            custom_components/solar_sanity/frontend/solar-sanity.js

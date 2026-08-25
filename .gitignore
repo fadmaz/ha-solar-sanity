@@ -179,3 +179,9 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+# Solar Sanity: the card is built in CI and shipped in the release zip,
+# so main stays diff-clean.
+custom_components/solar_sanity/frontend/*.js
+custom_components/solar_sanity/frontend/*.map
+node_modules/
+.hass_dev/
