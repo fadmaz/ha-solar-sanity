@@ -1,0 +1,9 @@
+validate_now:
+  name: Check now
+  description: Re-run the checks immediately instead of waiting for the next scheduled run.
+
+export_report:
+  name: Export report
+  description: >-
+    Return a plain-language summary of what Solar Sanity has found, suitable for
+    pasting into a support request or a warranty enquiry.

@@ -1,0 +1,33 @@
+[project]
+name = "solar-sanity"
+version = "0.1.0"
+description = "Tells you whether your solar data adds up."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.pytest.ini_options]
+# asyncio_mode set once pytest-asyncio is installed (HA integration tests)
+testpaths = ["tests"]
+# `analysis` is imported absolutely so the package can load with Home Assistant
+# absent. That is a structural purity guarantee, not a convention.
+pythonpath = [".", "custom_components/solar_sanity"]
+filterwarnings = ["error::DeprecationWarning:solar_sanity.*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF", "PL", "C4", "PIE", "RET"]
+ignore = [
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "RUF012",
+    # Guard clauses read better with the literal in them than with a constant
+    # named after a number.
+    "PLR2004",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLC0415"]
+# Home Assistant integrations import recorder and energy internals lazily,
+# because those components may not be loaded at all.
+"custom_components/solar_sanity/*.py" = ["PLC0415"]

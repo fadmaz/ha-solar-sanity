@@ -1,0 +1,145 @@
+{
+  "title": "Solar Sanity",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Which sensors measure what?",
+        "description": "Solar Sanity checks that your energy figures add up, so it needs to know which sensor is which. Fields are pre-filled from your Energy Dashboard where possible — {found} were found. Consumption and generation are both required: without consumption the arithmetic closes by definition and cannot tell you anything.",
+        "data": {
+          "pv": "Solar generation",
+          "load": "House consumption",
+          "grid_import": "Grid import",
+          "grid_export": "Grid export",
+          "battery_charge": "Battery charging",
+          "battery_discharge": "Battery discharging"
+        },
+        "data_description": {
+          "pv": "Power or energy produced by your panels.",
+          "load": "What the house uses. Required.",
+          "grid_import": "Power or energy drawn from the grid. If you have one sensor that goes negative when exporting, put it here and leave export empty.",
+          "grid_export": "Power or energy sent to the grid.",
+          "battery_charge": "Energy going into the battery.",
+          "battery_discharge": "Energy coming out of the battery."
+        }
+      },
+      "topology": {
+        "title": "A few things only you know",
+        "description": "Everything else is worked out from your data. Answer \"Not sure\" for anything you are unsure of — it is a real answer, and Solar Sanity will infer it rather than assume.",
+        "data": {
+          "has_battery": "Do you have a home battery?",
+          "grid_is_net": "Is your grid connection one sensor that goes negative when exporting?",
+          "load_whole_house": "Does your consumption sensor cover the whole house?",
+          "forecast_entries": "Solar forecast integrations to keep history for"
+        },
+        "data_description": {
+          "load_whole_house": "Answer \"No\" if it only covers a backup or critical-loads panel.",
+          "forecast_entries": "Home Assistant discards yesterday's forecast, so Solar Sanity records it as it is issued. Pick any forecast integrations you already have."
+        }
+      },
+      "reconfigure": {
+        "title": "Change which sensors are used",
+        "description": "Correct a mapping without losing any history.",
+        "data": {
+          "pv": "Solar generation",
+          "load": "House consumption",
+          "grid_import": "Grid import",
+          "grid_export": "Grid export",
+          "battery_charge": "Battery charging",
+          "battery_discharge": "Battery discharging"
+        }
+      }
+    },
+    "error": {
+      "load_required": "A consumption sensor is required. Without one the balance closes by definition and Solar Sanity cannot check anything.",
+      "pv_required": "A generation sensor is required."
+    },
+    "abort": {
+      "already_configured": "These sensors are already being monitored.",
+      "reconfigure_successful": "Sensor mapping updated.",
+      "unique_id_mismatch": "These sensors belong to a different installation."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Solar Sanity settings",
+        "data": {
+          "guaranteed_annual_kwh": "Guaranteed annual production (kWh)"
+        },
+        "data_description": {
+          "guaranteed_annual_kwh": "The yearly figure your installer promised, if you have it. Solar Sanity will track your actual production against it, corrected for how sunny each year actually was."
+        }
+      }
+    }
+  },
+  "selector": {
+    "tristate": {
+      "options": {
+        "yes": "Yes",
+        "no": "No",
+        "unknown": "Not sure"
+      }
+    }
+  },
+  "issues": {
+    "finding": {
+      "title": "{headline}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "{headline}",
+            "description": "{detail}\n\n**How to fix it properly**\n{source_fix}\n\nSolar Sanity can also adjust for this internally so it can carry on checking the rest of your system. That changes nothing outside this integration — not your sensor, not your Energy Dashboard, not your automations — and you can undo it at any time."
+          }
+        },
+        "abort": {
+          "entry_gone": "That installation is no longer configured."
+        }
+      }
+    },
+    "finding_question": {
+      "title": "{headline}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "{headline}",
+            "description": "{detail}\n\nThis one is a question rather than a conclusion — the pattern fits, but not well enough to be sure.\n\n{source_fix}"
+          }
+        },
+        "abort": {
+          "entry_gone": "That installation is no longer configured."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "ok": "Data checks out",
+          "insufficient_data": "Not enough data yet",
+          "not_checkable": "Cannot be checked",
+          "investigating": "Still looking",
+          "fault_found": "Something does not add up"
+        }
+      },
+      "data_completeness": { "name": "Data completeness" },
+      "corrections_active": { "name": "Corrections in effect" },
+      "expected_tomorrow": { "name": "Expected tomorrow" },
+      "live_residual": { "name": "Live residual" }
+    },
+    "binary_sensor": {
+      "data_healthy": { "name": "Data problem" }
+    }
+  },
+  "services": {
+    "validate_now": {
+      "name": "Check now",
+      "description": "Re-run the checks immediately instead of waiting for the next scheduled run."
+    },
+    "export_report": {
+      "name": "Export report",
+      "description": "Return a plain-language summary of what Solar Sanity has found, suitable for pasting into a support request."
+    }
+  }
+}

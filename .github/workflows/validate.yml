@@ -1,0 +1,95 @@
+name: Validate
+
+on:
+  push:
+    branches: [main, solar-sanity]
+  pull_request:
+  schedule:
+    # Upstream breaks things on their own schedule, not ours.
+    - cron: "0 6 * * 1"
+
+jobs:
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt
+      - name: Run the suite
+        run: python -m pytest tests -q
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  deprecations:
+    name: Upstream deadlines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: External statistics must set mean_type and unit_class
+        run: |
+          # Omitting either is deprecated now and a hard error in Home
+          # Assistant 2026.11. Custom integrations are not exempt.
+          if grep -rn "async_add_external_statistics" custom_components/ --include=*.py \
+             | grep -v "^.*statistics_source.py" ; then
+            echo "external statistics written outside statistics_source.py"; exit 1
+          fi
+          grep -q "mean_type=StatisticMeanType.NONE" custom_components/solar_sanity/statistics_source.py \
+            || { echo "missing mean_type"; exit 1; }
+          grep -q 'unit_class="energy"' custom_components/solar_sanity/statistics_source.py \
+            || { echo "missing unit_class"; exit 1; }
+          echo "statistics metadata is 2026.11-safe"
+
+      - name: No config entry update listeners
+        run: |
+          # Combining these with async_update_reload_and_abort or
+          # OptionsFlowWithReload is an error from Home Assistant 2026.12.
+          if grep -rn "add_update_listener" custom_components/ --include=*.py; then
+            echo "update listener found; use the listener-free path"; exit 1
+          fi
+          echo "no update listeners"
+
+  card:
+    name: Card
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: npm ci
+      - name: Typecheck and build
+        run: npm run build
+      - name: Bundle size budget
+        run: python scripts/check_size.py
