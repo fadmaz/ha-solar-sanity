@@ -39,11 +39,12 @@ from .entity import SolarSanityEntity
 class SolarSanitySensorDescription(SensorEntityDescription):
     """A sensor described by a function, not by a branch in a long if/elif."""
 
-    value_fn: Callable[[AnalysisReport | None], StateType]
+    value_fn: Callable[[SolarSanityCoordinator], StateType]
     attrs_fn: Callable[[AnalysisReport | None], dict[str, Any]] | None = None
 
 
-def _status(report: AnalysisReport | None) -> StateType:
+def _status(coordinator: SolarSanityCoordinator) -> StateType:
+    report = coordinator.report
     return report.status.value if report else Status.INSUFFICIENT_DATA.value
 
 
@@ -64,22 +65,19 @@ def _status_attrs(report: AnalysisReport | None) -> dict[str, Any]:
     }
 
 
-def _completeness(report: AnalysisReport | None) -> StateType:
-    """How much of the picture we actually have.
+def _completeness(coordinator: SolarSanityCoordinator) -> StateType:
+    """Percentage of configured channels currently readable.
 
-    Adapted from the one genuinely good idea in the predecessor: report the
-    fraction of tracked inputs that are present, rather than pretending an
-    absent input is a zero.
+    Adapted from the one genuinely good idea in the predecessor: report how much
+    of the picture actually exists rather than pretending an absent input is a
+    zero. It now measures what its name says — it previously reported days of
+    history, which is a different question wearing the same unit.
     """
-    if report is None or report.residual.valid_days == 0:
-        return None
-    return min(100, round(report.residual.valid_days / 30 * 100))
+    return coordinator.channel_completeness
 
 
-def _corrections_active(report: AnalysisReport | None) -> StateType:
-    if report is None:
-        return 0
-    return len(report.stale_corrections)
+def _corrections_active(coordinator: SolarSanityCoordinator) -> StateType:
+    return len(coordinator.corrections)
 
 
 SENSORS: tuple[SolarSanitySensorDescription, ...] = (
@@ -118,7 +116,7 @@ SENSORS: tuple[SolarSanitySensorDescription, ...] = (
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         state_class=SensorStateClass.TOTAL,
-        value_fn=lambda report: None,
+        value_fn=lambda coordinator: coordinator.expected_tomorrow_kwh,
     ),
     SolarSanitySensorDescription(
         key="live_residual",
@@ -127,7 +125,7 @@ SENSORS: tuple[SolarSanitySensorDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.WATT,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        value_fn=lambda report: None,
+        value_fn=lambda coordinator: coordinator.live_residual_w,
     ),
 )
 
@@ -159,7 +157,7 @@ class SolarSanitySensor(SolarSanityEntity, SensorEntity):
 
     @property
     def native_value(self) -> StateType:
-        return self.entity_description.value_fn(self.coordinator.report)
+        return self.entity_description.value_fn(self.coordinator)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
