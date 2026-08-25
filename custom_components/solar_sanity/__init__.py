@@ -79,9 +79,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     entry.async_on_unload(
         async_track_time_interval(hass, lambda _now: coordinator.capture_live(), LIVE_INTERVAL)
     )
-    entry.async_on_unload(
-        async_track_time_interval(hass, lambda _now: coordinator.accumulate(), BUCKET_INTERVAL)
-    )
+
+    def _sample(_now: Any) -> None:
+        coordinator.accumulate()
+        # Sensors describing live state must not wait for the six-hourly
+        # analysis before they are rewritten.
+        coordinator.notify_live_entities()
+
+    entry.async_on_unload(async_track_time_interval(hass, _sample, BUCKET_INTERVAL))
 
     async def _capture(_now: Any) -> None:
         try:

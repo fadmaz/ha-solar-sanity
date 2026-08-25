@@ -2,6 +2,17 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.1.5] - 2026-08-25
+
+### Fixed
+
+- **Data completeness stuck at 0%.** Sensors describing live state were only
+  rewritten when the coordinator updated, which is every six hours. If the
+  integration loaded before the inverter's entities had published — the normal
+  case for MQTT-backed inverters — the first reading found nothing readable and
+  nothing corrected it for six hours. The 5-minute sampling tick now refreshes
+  those entities, without re-running the analysis.
+
 ## [0.1.4] - 2026-08-25
 
 ### Fixed

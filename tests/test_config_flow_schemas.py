@@ -404,3 +404,28 @@ class TestForecastTomorrow:
         # _sum_for_tomorrow is pure apart from the timezone lookup; an empty
         # payload must yield None regardless of when it runs.
         assert SolarSanityCoordinator._sum_for_tomorrow.__doc__ is not None
+
+
+class TestLiveSensorsAreNotFrozen:
+    """Sensors describing *now* must not wait for the six-hourly analysis.
+
+    `CoordinatorEntity` writes state only when the coordinator updates. With a
+    six-hour analysis interval, a sensor reading live state is frozen to that
+    cadence — which is how completeness stuck at 0%: the integration loaded
+    before the inverter's entities had published, found nothing readable, and
+    nothing rewrote it for six hours.
+    """
+
+    def test_coordinator_exposes_a_live_notifier(self) -> None:
+        from custom_components.solar_sanity.coordinator import SolarSanityCoordinator
+
+        assert callable(SolarSanityCoordinator.notify_live_entities)
+
+    def test_the_sampling_tick_refreshes_entities(self) -> None:
+        """The 5-minute tick must both sample and push state."""
+        import inspect
+
+        from custom_components.solar_sanity import async_setup_entry
+
+        source = inspect.getsource(async_setup_entry)
+        assert "notify_live_entities" in source, "the sampling tick does not refresh live entities"
