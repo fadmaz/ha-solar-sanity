@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from analysis.model import Confidence
+from .model import Confidence
 
 
 class Code:

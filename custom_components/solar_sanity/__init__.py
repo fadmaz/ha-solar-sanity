@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from analysis.model import Status
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
@@ -25,6 +24,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 
 from . import frontend
+from .analysis.model import Status
 from .const import (
     BUCKET_INTERVAL,
     DOMAIN,

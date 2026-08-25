@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from analysis.faults import SNAP_TABLE, Code, Snap
-from analysis.linalg import (
+from .faults import SNAP_TABLE, Code, Snap
+from .linalg import (
     coefficient_of_variation,
     iqr,
     median,
@@ -22,8 +22,8 @@ from analysis.linalg import (
     safe_ratio,
     sum_squares,
 )
-from analysis.model import ChannelSpec, Confidence, Role
-from analysis.residual import DayResidual, virtual_soc
+from .model import ChannelSpec, Confidence, Role
+from .residual import DayResidual, virtual_soc
 
 #: A channel needs this many large-magnitude hours before its gamma means much.
 MIN_RATIO_SAMPLES = 40

@@ -18,7 +18,6 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
-from analysis.model import Role
 from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
@@ -28,6 +27,7 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
+from .analysis.model import Role
 from .const import (
     CONF_CHANNELS,
     CONF_ENTITY_ID,

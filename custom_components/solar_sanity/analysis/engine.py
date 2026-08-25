@@ -12,10 +12,10 @@ only then — attribution.
 
 from __future__ import annotations
 
-from analysis import faults, hypotheses, screen, topology
-from analysis.faults import Code
-from analysis.hypotheses import Hypothesis
-from analysis.model import (
+from . import faults, hypotheses, screen, topology
+from .faults import Code
+from .hypotheses import Hypothesis
+from .model import (
     AnalysisReport,
     AnalysisRequest,
     Bucket,
@@ -29,14 +29,14 @@ from analysis.model import (
     Severity,
     Status,
 )
-from analysis.residual import (
+from .residual import (
     MIN_SIGNAL_WH,
     DayResidual,
     build_days,
     median_daily_abs_pct,
     total_abs_residual,
 )
-from analysis.topology import Closure
+from .topology import Closure
 
 #: Consecutive actionable days before we will look for an explanation at all.
 MIN_ACTIONABLE_DAYS = 5

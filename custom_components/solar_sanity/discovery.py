@@ -26,11 +26,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from analysis.model import Role
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+
+from .analysis.model import Role
 
 _LOGGER = logging.getLogger(__name__)
 

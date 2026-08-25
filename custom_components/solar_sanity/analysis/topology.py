@@ -10,9 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from analysis.faults import DC_MEASUREMENT_MAX_IQR, DC_MEASUREMENT_WINDOW
-from analysis.linalg import median
-from analysis.model import (
+from .faults import DC_MEASUREMENT_MAX_IQR, DC_MEASUREMENT_WINDOW
+from .linalg import median
+from .model import (
     Answer,
     ChannelSpec,
     Coupling,
@@ -21,7 +21,7 @@ from analysis.model import (
     Role,
     TopologyEstimate,
 )
-from analysis.residual import DayResidual
+from .residual import DayResidual
 
 #: Days of data before we will commit to a DC-vs-AC conclusion.
 MIN_DAYS_FOR_COUPLING = 14

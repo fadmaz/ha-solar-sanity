@@ -29,8 +29,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from analysis.linalg import median, safe_ratio
-from analysis.model import (
+from .linalg import median, safe_ratio
+from .model import (
     Bucket,
     BucketSource,
     ChannelSpec,

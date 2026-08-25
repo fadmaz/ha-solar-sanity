@@ -24,8 +24,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from analysis.engine import analyse
-from analysis.model import (
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, State
+from homeassistant.helpers.storage import Store
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
+from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
+
+from .analysis.engine import analyse
+from .analysis.model import (
     AnalysisReport,
     AnalysisRequest,
     Answer,
@@ -40,13 +47,6 @@ from analysis.model import (
     Role,
     Status,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, State
-from homeassistant.helpers.storage import Store
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util import dt as dt_util
-from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
-
 from .const import (
     ANALYSIS_INTERVAL,
     CONF_CHANNELS,

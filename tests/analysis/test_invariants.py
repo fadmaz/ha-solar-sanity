@@ -60,24 +60,29 @@ class TestPurity:
                         offenders.append(f"{path.name}: from {module} import ...")
         assert not offenders, "analysis must not depend on Home Assistant: " + "; ".join(offenders)
 
-    def test_no_relative_parent_imports(self) -> None:
-        """Only absolute intra-package imports.
+    def test_no_imports_escape_the_package(self) -> None:
+        """Relative imports may not reach above ``analysis``.
 
-        This is what lets the package be imported by putting
-        ``custom_components/solar_sanity`` on ``sys.path``, which turns purity
-        into a structural guarantee rather than a convention.
+        Single-dot imports are required, not merely allowed: they resolve
+        whether the package is loaded standalone as ``analysis`` (in tests) or
+        as ``custom_components.solar_sanity.analysis`` (as Home Assistant loads
+        it). Absolute ``from analysis.x import`` worked under pytest only
+        because the test config puts the integration directory on ``sys.path``,
+        and it made the integration fail to import on a real install.
+
+        Two dots would reach into the Home Assistant layer, which is the thing
+        purity forbids.
         """
         offenders: list[str] = []
         for path, tree in _parsed():
             for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom) and node.level and node.level > 0:
+                if isinstance(node, ast.ImportFrom) and node.level and node.level > 1:
                     offenders.append(f"{path.name}: level={node.level}")
-        assert not offenders, "relative parent imports break purity: " + "; ".join(offenders)
+        assert not offenders, "imports escaping the package: " + "; ".join(offenders)
 
     def test_no_third_party_dependencies(self) -> None:
         """Zero wheels. The integration must install on a Pi as a file copy."""
         allowed = {
-            "analysis",
             "dataclasses",
             "datetime",
             "enum",
@@ -95,7 +100,7 @@ class TestPurity:
                 roots: list[str] = []
                 if isinstance(node, ast.Import):
                     roots = [a.name.split(".")[0] for a in node.names]
-                elif isinstance(node, ast.ImportFrom) and node.module:
+                elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
                     roots = [node.module.split(".")[0]]
                 offenders += [f"{path.name}: {r}" for r in roots if r not in allowed]
         assert not offenders, "unexpected dependency: " + "; ".join(offenders)
@@ -265,3 +270,35 @@ class TestNoneHostility:
         if report.finding is not None:
             # Whatever we say, it must not be a confident numeric claim built on NaN.
             assert report.finding.code != "unit_scale_1000"
+
+
+class TestLoadsAsHomeAssistantLoadsIt:
+    """The integration must import the way Home Assistant actually loads it.
+
+    Home Assistant puts the *config* directory on ``sys.path`` and imports
+    ``custom_components.solar_sanity``. It never adds the integration's own
+    directory. An earlier version of this package used absolute
+    ``from analysis.x import`` internally, which resolved under pytest — the
+    test config adds that directory — and failed on every real install with
+    ``No module named 'analysis'``.
+
+    This test exists so that cannot happen again silently.
+    """
+
+    def test_no_absolute_self_imports(self) -> None:
+        """`from analysis.x import` must not appear anywhere in the tree."""
+        root = ANALYSIS_DIR.parent
+        offenders: list[str] = []
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and not node.level
+                    and (node.module or "").split(".")[0] == "analysis"
+                ):
+                    offenders.append(f"{path.name}:{node.lineno}")
+        assert not offenders, (
+            "absolute self-import resolves only under pytest and breaks a real "
+            "install: " + "; ".join(offenders)
+        )

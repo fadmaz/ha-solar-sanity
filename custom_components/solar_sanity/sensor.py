@@ -18,7 +18,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from analysis.model import AnalysisReport, Status
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -31,6 +30,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
+from .analysis.model import AnalysisReport, Status
 from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .entity import SolarSanityEntity
 

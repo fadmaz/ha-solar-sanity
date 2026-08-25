@@ -15,9 +15,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import pairwise
 
-from analysis.faults import Code
-from analysis.linalg import median, percentile, safe_ratio
-from analysis.model import Bucket, ChannelSpec, Confidence, LiveSnapshot, Role
+from .faults import Code
+from .linalg import median, percentile, safe_ratio
+from .model import Bucket, ChannelSpec, Confidence, LiveSnapshot, Role
 
 #: Plausible upper bounds for a residential installation, in W. A channel that
 #: sits far outside these is not measuring what it claims to.

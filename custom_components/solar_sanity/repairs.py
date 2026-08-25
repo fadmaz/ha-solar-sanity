@@ -15,12 +15,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from analysis.model import AnalysisReport, Severity
 from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
+from .analysis.model import AnalysisReport, Severity
 from .const import DOMAIN, EVENT_FINDING_CLEARED, EVENT_FINDING_RAISED, OPT_CORRECTIONS
 
 _LOGGER = logging.getLogger(__name__)
