@@ -20,7 +20,9 @@ from typing import Any
 from analysis.model import Status
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.typing import ConfigType
 
 from . import frontend
 from .const import (
@@ -44,8 +46,13 @@ type SolarSanityConfigEntry = ConfigEntry[SolarSanityData]
 #: immediately rather than after a week of its own measurement.
 BACKFILL_DAYS = 30
 
+#: There is nothing to configure in YAML — everything comes from the config
+#: entry. ``async_setup`` exists only to register the bundled card, which has
+#: to happen once per install rather than once per entry.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the bundled card. Once per install, not once per entry."""
     version = "0.1.0"
     integration = hass.data.get("integrations", {}).get(DOMAIN)

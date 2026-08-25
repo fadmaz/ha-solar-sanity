@@ -1,10 +1,10 @@
 {
   "domain": "solar_sanity",
   "name": "Solar Sanity",
+  "after_dependencies": ["recorder", "energy", "repairs"],
   "codeowners": ["@fadmaz"],
   "config_flow": true,
   "dependencies": ["frontend", "http", "websocket_api"],
-  "after_dependencies": ["recorder", "energy", "repairs"],
   "documentation": "https://github.com/fadmaz/ha-solar-sanity",
   "integration_type": "service",
   "iot_class": "calculated",
