@@ -3,12 +3,28 @@ name: Release
 on:
   release:
     types: [published]
+  # So a failed upload can be retried against an existing tag without
+  # deleting and recreating the release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and attach artifacts to"
+        required: true
+
+# The default token is read-only on this repository, which is GitHub's default
+# for repositories created recently. Attaching release assets needs write.
+permissions:
+  contents: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -28,17 +44,20 @@ jobs:
           manifest = json.loads(path.read_text())
           manifest["version"] = tag
           path.write_text(json.dumps(manifest, indent=2) + "\n")
+          print(f"stamped manifest version {tag}")
           PY
-        env:
-          TAG: ${{ github.event.release.tag_name }}
 
       # HACS unpacks the zip's contents straight into the domain directory, so
       # the archive holds the contents flat rather than the directory itself.
       - name: Package
-        run: cd custom_components/solar_sanity && zip solar_sanity.zip -r ./
+        run: |
+          cd custom_components/solar_sanity
+          zip solar_sanity.zip -r ./ -x '*.pyc' -x '__pycache__/*'
+          unzip -l solar_sanity.zip | tail -5
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
           files: |
             custom_components/solar_sanity/solar_sanity.zip
             custom_components/solar_sanity/frontend/solar-sanity.js
