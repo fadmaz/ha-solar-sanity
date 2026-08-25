@@ -74,6 +74,21 @@ def _entity_selector() -> selector.EntitySelector:
     )
 
 
+def _duplicate_entity(channels: dict[str, str]) -> str | None:
+    """The entity mapped to more than one role, if any.
+
+    One sensor on both sides of the identity cancels itself out and makes the
+    balance meaningless — and the live tripwire would then report the same
+    entity flowing two ways at once, naming it twice in a single sentence.
+    """
+    seen: dict[str, str] = {}
+    for role_key, entity_id in channels.items():
+        if entity_id in seen:
+            return entity_id
+        seen[entity_id] = role_key
+    return None
+
+
 def _channel_schema(discovery: Discovery, current: dict[str, str]) -> vol.Schema:
     fields: dict[Any, Any] = {}
     for role in MAPPED_ROLES:
@@ -103,12 +118,15 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._channels = {key: value for key, value in user_input.items() if value}
+            duplicate = _duplicate_entity(self._channels)
             if Role.LOAD.key not in self._channels:
                 # Without consumption the identity closes by definition and the
                 # whole check is vacuous, so this is worth blocking on.
                 errors["base"] = "load_required"
             elif Role.PV.key not in self._channels:
                 errors["base"] = "pv_required"
+            elif duplicate:
+                errors["base"] = "duplicate_entity"
             else:
                 return await self.async_step_topology()
 
@@ -143,18 +161,42 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                         }
                         for role_key, entity_id in self._channels.items()
                     ],
-                    CONF_HAS_BATTERY: user_input.get(CONF_HAS_BATTERY, "unknown"),
-                    CONF_GRID_IS_NET: user_input.get(CONF_GRID_IS_NET, "unknown"),
+                    # A mapped battery answers the question outright; likewise
+                    # two dedicated grid sensors mean it is not a net meter.
+                    CONF_HAS_BATTERY: user_input.get(
+                        CONF_HAS_BATTERY, "yes" if self._battery_mapped else "unknown"
+                    ),
+                    CONF_GRID_IS_NET: user_input.get(
+                        CONF_GRID_IS_NET, "no" if self._both_grid_mapped else "unknown"
+                    ),
                     CONF_LOAD_WHOLE_HOUSE: user_input.get(CONF_LOAD_WHOLE_HOUSE, "unknown"),
                     CONF_FORECAST_ENTRIES: user_input.get(CONF_FORECAST_ENTRIES, []),
                 },
             )
 
-        fields: dict[Any, Any] = {
-            vol.Required(CONF_HAS_BATTERY, default="unknown"): _TRISTATE,
-            vol.Required(CONF_GRID_IS_NET, default="unknown"): _TRISTATE,
-            vol.Required(CONF_LOAD_WHOLE_HOUSE, default="unknown"): _TRISTATE,
-        }
+        # Ask only what the user actually knows and we cannot work out. Asking
+        # "do you have a battery?" of someone who just mapped two battery
+        # sensors is the kind of question that makes software feel stupid.
+        fields: dict[Any, Any] = {}
+
+        battery_mapped = (
+            Role.BATTERY_CHARGE.key in self._channels
+            or Role.BATTERY_DISCHARGE.key in self._channels
+        )
+        if not battery_mapped:
+            fields[vol.Required(CONF_HAS_BATTERY, default="unknown")] = _TRISTATE
+
+        # Only ambiguous when import is mapped alone. Both mapped means two
+        # dedicated sensors; neither mapped means there is nothing to interpret.
+        import_only = (
+            Role.GRID_IMPORT.key in self._channels and Role.GRID_EXPORT.key not in self._channels
+        )
+        if import_only:
+            fields[vol.Required(CONF_GRID_IS_NET, default="unknown")] = _TRISTATE
+
+        # Not inferable from the mapping at all — a backup-panel sensor looks
+        # exactly like a whole-house one until the residual says otherwise.
+        fields[vol.Required(CONF_LOAD_WHOLE_HOUSE, default="unknown")] = _TRISTATE
 
         # ConfigEntrySelector takes a single entry and has no `multiple` option,
         # so the providers are listed by name instead — which is better anyway,
@@ -191,11 +233,20 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             channels = {key: value for key, value in user_input.items() if value}
+            error = None
             if Role.LOAD.key not in channels:
+                error = "load_required"
+            elif Role.PV.key not in channels:
+                error = "pv_required"
+            elif _duplicate_entity(channels):
+                error = "duplicate_entity"
+            if error:
+                # Re-render from what the user just submitted, not from the
+                # stored config — otherwise their edits vanish on any error.
                 return self.async_show_form(
                     step_id="reconfigure",
-                    data_schema=_channel_schema(self._discovery, current),
-                    errors={"base": "load_required"},
+                    data_schema=_channel_schema(self._discovery, channels),
+                    errors={"base": error},
                 )
             return self.async_update_reload_and_abort(
                 entry,
@@ -211,6 +262,17 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="reconfigure",
             data_schema=_channel_schema(self._discovery, current),
         )
+
+    @property
+    def _battery_mapped(self) -> bool:
+        return (
+            Role.BATTERY_CHARGE.key in self._channels
+            or Role.BATTERY_DISCHARGE.key in self._channels
+        )
+
+    @property
+    def _both_grid_mapped(self) -> bool:
+        return Role.GRID_IMPORT.key in self._channels and Role.GRID_EXPORT.key in self._channels
 
     def _unique_id(self) -> str:
         """Identify an installation by the channels it monitors."""

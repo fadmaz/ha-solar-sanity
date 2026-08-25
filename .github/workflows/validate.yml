@@ -2,7 +2,6 @@ name: Validate
 
 on:
   push:
-    branches: [main, solar-sanity]
   pull_request:
   schedule:
     # Upstream breaks things on their own schedule, not ours.

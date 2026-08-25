@@ -133,3 +133,231 @@ class TestIntegrationImports:
     def test_module_imports(self, module: str) -> None:
         """Catches the class of bug that made v0.1.0 unloadable."""
         __import__(f"custom_components.solar_sanity.{module}")
+
+
+class TestQuestionsAreConditional:
+    """Never ask what the mapping already answers.
+
+    A user who has just mapped battery charge and discharge sensors should not
+    then be asked whether they have a battery. Beyond looking silly, an
+    "unknown" answer there changes what the engine does — it runs the
+    missing-storage probe — so a redundant question is also a chance to record
+    a worse answer than the one we already had.
+    """
+
+    def _flow(self, channels: dict[str, str]):
+        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
+
+        flow = SolarSanityConfigFlow()
+        flow._channels = channels
+        return flow
+
+    def test_battery_question_is_skipped_when_battery_is_mapped(self) -> None:
+        flow = self._flow(
+            {"pv": "sensor.pv", "load": "sensor.load", "battery_charge": "sensor.chg"}
+        )
+        assert flow._battery_mapped is True
+
+    def test_battery_question_is_asked_when_no_battery_is_mapped(self) -> None:
+        flow = self._flow({"pv": "sensor.pv", "load": "sensor.load"})
+        assert flow._battery_mapped is False
+
+    def test_grid_net_question_only_matters_when_import_is_alone(self) -> None:
+        """Both mapped means two dedicated sensors — nothing to interpret."""
+        both = self._flow(
+            {
+                "pv": "sensor.pv",
+                "load": "sensor.load",
+                "grid_import": "sensor.i",
+                "grid_export": "sensor.e",
+            }
+        )
+        assert both._both_grid_mapped is True
+
+        import_only = self._flow(
+            {"pv": "sensor.pv", "load": "sensor.load", "grid_import": "sensor.i"}
+        )
+        assert import_only._both_grid_mapped is False
+
+
+class TestChannelKind:
+    """Power and energy need opposite treatment, so telling them apart matters.
+
+    This suite exists because the first version converted every channel to watts
+    and integrated it. For an energy sensor that is not a small error but the
+    wrong operation: a daily-resetting total would deposit roughly the whole
+    day's running total into every single hour.
+    """
+
+    def _state(self, value, unit, device_class=None):
+        from homeassistant.core import State
+
+        attrs = {"unit_of_measurement": unit}
+        if device_class:
+            attrs["device_class"] = device_class
+        return State("sensor.x", str(value), attrs)
+
+    def test_power_is_recognised_and_converted_to_watts(self) -> None:
+        from custom_components.solar_sanity.coordinator import KIND_POWER, read_channel
+
+        value, kind = read_channel(self._state(1.5, "kW", "power"))
+        assert kind == KIND_POWER
+        assert value == pytest.approx(1500.0)
+
+    def test_energy_is_recognised_and_converted_to_watt_hours(self) -> None:
+        from custom_components.solar_sanity.coordinator import KIND_ENERGY, read_channel
+
+        value, kind = read_channel(self._state(2.5, "kWh", "energy"))
+        assert kind == KIND_ENERGY
+        assert value == pytest.approx(2500.0)
+
+    def test_kind_falls_back_to_unit_when_device_class_is_absent(self) -> None:
+        from custom_components.solar_sanity.coordinator import (
+            KIND_ENERGY,
+            KIND_POWER,
+            channel_kind,
+        )
+
+        assert channel_kind(self._state(1, "W")) == KIND_POWER
+        assert channel_kind(self._state(1, "kWh")) == KIND_ENERGY
+
+    def test_unknown_unit_yields_nothing_rather_than_a_raw_number(self) -> None:
+        """Passing a value through unconverted is how the predecessor read a
+        kilowatt-hour forecast as "1.2 watts" and broke its own thresholds."""
+        from custom_components.solar_sanity.coordinator import read_channel
+
+        value, kind = read_channel(self._state(42, "bananas"))
+        assert value is None
+        assert kind is None
+
+    @pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "unavailable", "unknown", ""])
+    def test_non_finite_and_non_numeric_states_are_rejected(self, bad: str) -> None:
+        """float() accepts 'nan' and 'inf'; neither may reach arithmetic."""
+        from homeassistant.core import State
+
+        from custom_components.solar_sanity.coordinator import read_channel
+
+        state = State("sensor.x", bad, {"unit_of_measurement": "W", "device_class": "power"})
+        value, _ = read_channel(state)
+        assert value is None
+
+
+class TestEnergyAccumulation:
+    """A cumulative sensor must be differenced, and a reset must not be guessed."""
+
+    def test_energy_delta_is_what_lands_in_the_bucket(self) -> None:
+        """A daily total climbing 10.0 -> 10.4 kWh contributes 400 Wh, not 10400."""
+        readings = [10.0, 10.1, 10.25, 10.4]
+        accumulated = 0.0
+        previous = None
+        for kwh in readings:
+            wh = kwh * 1000.0
+            if previous is not None:
+                delta = wh - previous
+                if delta >= 0:
+                    accumulated += delta
+            previous = wh
+        assert accumulated == pytest.approx(400.0)
+
+    def test_a_reset_is_marked_suspect_not_counted(self) -> None:
+        """At midnight a daily total drops to zero. That is not negative energy."""
+        readings = [24.8, 24.9, 0.0, 0.2]
+        accumulated = 0.0
+        previous = None
+        suspect = False
+        for kwh in readings:
+            wh = kwh * 1000.0
+            if previous is not None:
+                delta = wh - previous
+                if delta < 0:
+                    suspect = True
+                else:
+                    accumulated += delta
+            previous = wh
+        assert suspect is True
+        # The rollover interval contributes nothing; only the real rises count.
+        assert accumulated == pytest.approx(300.0)
+
+    def test_first_reading_only_establishes_a_baseline(self) -> None:
+        """The opening value of a cumulative sensor is not an hour of energy."""
+        accumulated = 0.0
+        previous = None
+        for kwh in [15.0]:
+            if previous is not None:
+                accumulated += kwh * 1000.0 - previous
+            previous = kwh * 1000.0
+        assert accumulated == 0.0
+
+
+class TestDuplicateEntityRejected:
+    """One sensor cannot be on both sides of the identity.
+
+    Discovery could suggest the same entity for two roles, and nothing rejected
+    it. The entity then cancels itself out of the balance, and the live tripwire
+    reports it flowing two ways at once — naming the same sensor twice in one
+    sentence.
+    """
+
+    def test_duplicate_is_found(self) -> None:
+        from custom_components.solar_sanity.config_flow import _duplicate_entity
+
+        assert (
+            _duplicate_entity(
+                {
+                    "pv": "sensor.a",
+                    "load": "sensor.b",
+                    "grid_import": "sensor.c",
+                    "grid_export": "sensor.c",
+                }
+            )
+            == "sensor.c"
+        )
+
+    def test_distinct_mapping_is_accepted(self) -> None:
+        from custom_components.solar_sanity.config_flow import _duplicate_entity
+
+        assert _duplicate_entity({"pv": "sensor.a", "load": "sensor.b"}) is None
+
+
+class TestLocalDays:
+    """Buckets must group into local days, not UTC ones."""
+
+    def test_offset_shifts_the_day_boundary(self) -> None:
+        """At UTC-8 a UTC day starts at 16:00 local, splitting the solar curve."""
+        from datetime import UTC, datetime
+
+        from custom_components.solar_sanity.analysis.model import (
+            Bucket,
+            BucketSource,
+            ChannelSpec,
+            LossModel,
+            Quality,
+            Role,
+        )
+        from custom_components.solar_sanity.analysis.residual import build_days
+
+        specs = (
+            ChannelSpec("pv", Role.PV, "sensor.pv", "PV", "Wh"),
+            ChannelSpec("load", Role.LOAD, "sensor.load", "Load", "Wh"),
+        )
+        buckets = tuple(
+            Bucket(
+                start_utc=datetime(2026, 3, 1, hour, tzinfo=UTC),
+                seconds=3600,
+                wh={"pv": 100.0, "load": 100.0},
+                quality={"pv": Quality.OK, "load": Quality.OK},
+                source={
+                    "pv": BucketSource.OWN_INTEGRAL,
+                    "load": BucketSource.OWN_INTEGRAL,
+                },
+            )
+            for hour in range(24)
+        )
+
+        utc_days = build_days(buckets, specs, LossModel(), 0.0)
+        shifted = build_days(buckets, specs, LossModel(), -8.0)
+
+        # A full UTC day is one day at UTC; at -8 it straddles two, so neither
+        # part reaches the 20-bucket minimum and both are dropped.
+        assert len(utc_days) == 1
+        assert len(shifted) == 0
