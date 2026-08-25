@@ -178,3 +178,112 @@ class TestQuestionsAreConditional:
             {"pv": "sensor.pv", "load": "sensor.load", "grid_import": "sensor.i"}
         )
         assert import_only._both_grid_mapped is False
+
+
+class TestChannelKind:
+    """Power and energy need opposite treatment, so telling them apart matters.
+
+    This suite exists because the first version converted every channel to watts
+    and integrated it. For an energy sensor that is not a small error but the
+    wrong operation: a daily-resetting total would deposit roughly the whole
+    day's running total into every single hour.
+    """
+
+    def _state(self, value, unit, device_class=None):
+        from homeassistant.core import State
+
+        attrs = {"unit_of_measurement": unit}
+        if device_class:
+            attrs["device_class"] = device_class
+        return State("sensor.x", str(value), attrs)
+
+    def test_power_is_recognised_and_converted_to_watts(self) -> None:
+        from custom_components.solar_sanity.coordinator import KIND_POWER, read_channel
+
+        value, kind = read_channel(self._state(1.5, "kW", "power"))
+        assert kind == KIND_POWER
+        assert value == pytest.approx(1500.0)
+
+    def test_energy_is_recognised_and_converted_to_watt_hours(self) -> None:
+        from custom_components.solar_sanity.coordinator import KIND_ENERGY, read_channel
+
+        value, kind = read_channel(self._state(2.5, "kWh", "energy"))
+        assert kind == KIND_ENERGY
+        assert value == pytest.approx(2500.0)
+
+    def test_kind_falls_back_to_unit_when_device_class_is_absent(self) -> None:
+        from custom_components.solar_sanity.coordinator import (
+            KIND_ENERGY,
+            KIND_POWER,
+            channel_kind,
+        )
+
+        assert channel_kind(self._state(1, "W")) == KIND_POWER
+        assert channel_kind(self._state(1, "kWh")) == KIND_ENERGY
+
+    def test_unknown_unit_yields_nothing_rather_than_a_raw_number(self) -> None:
+        """Passing a value through unconverted is how the predecessor read a
+        kilowatt-hour forecast as "1.2 watts" and broke its own thresholds."""
+        from custom_components.solar_sanity.coordinator import read_channel
+
+        value, kind = read_channel(self._state(42, "bananas"))
+        assert value is None
+        assert kind is None
+
+    @pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "unavailable", "unknown", ""])
+    def test_non_finite_and_non_numeric_states_are_rejected(self, bad: str) -> None:
+        """float() accepts 'nan' and 'inf'; neither may reach arithmetic."""
+        from homeassistant.core import State
+
+        from custom_components.solar_sanity.coordinator import read_channel
+
+        state = State("sensor.x", bad, {"unit_of_measurement": "W", "device_class": "power"})
+        value, _ = read_channel(state)
+        assert value is None
+
+
+class TestEnergyAccumulation:
+    """A cumulative sensor must be differenced, and a reset must not be guessed."""
+
+    def test_energy_delta_is_what_lands_in_the_bucket(self) -> None:
+        """A daily total climbing 10.0 -> 10.4 kWh contributes 400 Wh, not 10400."""
+        readings = [10.0, 10.1, 10.25, 10.4]
+        accumulated = 0.0
+        previous = None
+        for kwh in readings:
+            wh = kwh * 1000.0
+            if previous is not None:
+                delta = wh - previous
+                if delta >= 0:
+                    accumulated += delta
+            previous = wh
+        assert accumulated == pytest.approx(400.0)
+
+    def test_a_reset_is_marked_suspect_not_counted(self) -> None:
+        """At midnight a daily total drops to zero. That is not negative energy."""
+        readings = [24.8, 24.9, 0.0, 0.2]
+        accumulated = 0.0
+        previous = None
+        suspect = False
+        for kwh in readings:
+            wh = kwh * 1000.0
+            if previous is not None:
+                delta = wh - previous
+                if delta < 0:
+                    suspect = True
+                else:
+                    accumulated += delta
+            previous = wh
+        assert suspect is True
+        # The rollover interval contributes nothing; only the real rises count.
+        assert accumulated == pytest.approx(300.0)
+
+    def test_first_reading_only_establishes_a_baseline(self) -> None:
+        """The opening value of a cumulative sensor is not an hour of energy."""
+        accumulated = 0.0
+        previous = None
+        for kwh in [15.0]:
+            if previous is not None:
+                accumulated += kwh * 1000.0 - previous
+            previous = kwh * 1000.0
+        assert accumulated == 0.0

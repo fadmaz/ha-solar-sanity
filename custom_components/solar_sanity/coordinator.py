@@ -24,7 +24,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -49,6 +51,7 @@ from .analysis.model import (
 )
 from .const import (
     ANALYSIS_INTERVAL,
+    BUCKET_INTERVAL,
     CONF_CHANNELS,
     CONF_ENTITY_ID,
     CONF_FORECAST_ENTRIES,
@@ -103,6 +106,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._buckets: list[Bucket] = []
         self._snapshots: list[LiveSnapshot] = []
         self._accumulator: dict[str, float] = {}
+        #: Previous reading per energy channel, for differencing.
+        self._last_energy: dict[str, float] = {}
+        #: Channels whose current hour saw a reset and cannot be trusted.
+        self._suspect: set[str] = set()
         self._accumulator_start: datetime | None = None
         self._loss_model: LossModel | None = None
         self._store = Store[dict[str, Any]](
@@ -185,7 +192,13 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
         for spec in specs:
             state = self.hass.states.get(spec.entity_id)
-            value = _state_as_watts(state)
+            value, kind = read_channel(state)
+            if kind != KIND_POWER:
+                # The tripwire looks for two flows happening at the same instant.
+                # An energy sensor cannot answer that — it reports an amount, not
+                # a rate — so a mixed system simply has no live tier rather than
+                # a misleading one.
+                return
             age = (now - state.last_updated).total_seconds() if state else 1e9
             watts[spec.key] = value
             ages[spec.key] = age
@@ -202,7 +215,22 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
     # -- hourly integrator --------------------------------------------------
 
     def accumulate(self) -> None:
-        """Integrate current power into the open hourly bucket."""
+        """Add this sample to the open hourly bucket.
+
+        The two kinds need opposite treatment, and this is the whole reason the
+        method exists rather than a one-line integration:
+
+        * **Power** is integrated over the sampling interval to become energy.
+        * **Energy** is *differenced* — the reading is already energy, so the
+          bucket wants how much it advanced, not the reading itself. Integrating
+          a cumulative sensor would put roughly the running total into every
+          hour.
+
+        A daily-resetting total (very common — "Daily Generation" and friends)
+        goes backwards at midnight. That interval is not a negative amount of
+        energy, it is a reset, so the bucket is marked suspect and dropped
+        rather than guessed at.
+        """
         specs = self.specs
         if not specs:
             return
@@ -216,14 +244,36 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             self._close_bucket(self._accumulator_start)
             self._accumulator_start = hour
 
+        interval_hours = BUCKET_INTERVAL.total_seconds() / 3600.0
+
         for spec in specs:
             state = self.hass.states.get(spec.entity_id)
-            watts = _state_as_watts(state)
-            if watts is None:
+            value, kind = read_channel(state)
+            if value is None or kind is None:
                 continue
-            # Rectangular integration over the sampling interval. Good enough at
-            # five-minute granularity, and it never invents a value it did not see.
-            self._accumulator[spec.key] = self._accumulator.get(spec.key, 0.0) + watts / 12.0
+
+            if kind == KIND_POWER:
+                # Rectangular integration. Never invents a value it did not see.
+                self._accumulator[spec.key] = (
+                    self._accumulator.get(spec.key, 0.0) + value * interval_hours
+                )
+                continue
+
+            previous = self._last_energy.get(spec.key)
+            self._last_energy[spec.key] = value
+            if previous is None:
+                # No baseline yet — the first reading establishes one rather
+                # than being mistaken for an hour's worth of energy.
+                continue
+
+            delta = value - previous
+            if delta < 0:
+                # A meter reset or a daily rollover. Either way this interval's
+                # energy is unknowable, so the hour is not trustworthy.
+                self._suspect.add(spec.key)
+                continue
+
+            self._accumulator[spec.key] = self._accumulator.get(spec.key, 0.0) + delta
 
     def _close_bucket(self, start: datetime) -> None:
         specs = self.specs
@@ -234,7 +284,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         for spec in specs:
             value = self._accumulator.get(spec.key)
             wh[spec.key] = value
-            quality[spec.key] = Quality.OK if value is not None else Quality.MISSING
+            if spec.key in self._suspect:
+                quality[spec.key] = Quality.RESET_SUSPECT
+            elif value is None:
+                quality[spec.key] = Quality.MISSING
+            else:
+                quality[spec.key] = Quality.OK
             source[spec.key] = BucketSource.OWN_INTEGRAL
 
         self._buckets.append(
@@ -249,6 +304,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         if len(self._buckets) > MAX_BUCKETS:
             del self._buckets[: len(self._buckets) - MAX_BUCKETS]
         self._accumulator.clear()
+        self._suspect.clear()
 
     def ingest_backfill(self, series: dict[str, list[tuple[datetime, float]]]) -> None:
         """Seed the window from long-term statistics at setup.
@@ -399,37 +455,76 @@ def _unit_of(state: State | None) -> str:
     return unit if isinstance(unit, str) else ""
 
 
-def _state_as_watts(state: State | None) -> float | None:
-    """Convert a power state to watts, or return ``None``.
+#: What a channel measures. Power must be integrated over time to become energy;
+#: energy must be differenced. Treating one as the other is not a small error —
+#: it is the wrong operation entirely.
+KIND_POWER = "power"
+KIND_ENERGY = "energy"
 
-    An unrecognised unit returns ``None`` rather than the raw number. Silently
-    passing a value through unconverted is precisely how the predecessor turned
-    a kilowatt-hour forecast into "1.2 watts" and broke its own thresholds.
+
+def channel_kind(state: State | None) -> str | None:
+    """Return ``power``, ``energy``, or ``None`` when it cannot be determined.
+
+    Device class first, because it is the sensor's own declaration of what it
+    is. Unit is the fallback for sensors that set one without the other.
     """
     if state is None:
         return None
 
+    device_class = state.attributes.get("device_class")
+    if device_class == SensorDeviceClass.POWER:
+        return KIND_POWER
+    if device_class == SensorDeviceClass.ENERGY:
+        return KIND_ENERGY
+
+    unit = _unit_of(state)
+    if unit in PowerConverter.VALID_UNITS:
+        return KIND_POWER
+    if unit in EnergyConverter.VALID_UNITS:
+        return KIND_ENERGY
+    return None
+
+
+def _numeric_state(state: State | None) -> float | None:
+    """Parse a state, rejecting anything that is not a finite number.
+
+    ``float()`` accepts ``"nan"`` and ``"inf"``. Neither may reach arithmetic —
+    a NaN silently makes every threshold comparison false.
+    """
+    if state is None:
+        return None
     try:
         value = float(state.state)
     except (TypeError, ValueError):
         return None
     if not math.isfinite(value):
-        # float() accepts 'nan' and 'inf'. Neither may reach arithmetic.
         return None
+    return value
 
+
+def read_channel(state: State | None) -> tuple[float | None, str | None]:
+    """Return ``(value, kind)``: watts for power, watt-hours for energy.
+
+    An unrecognised unit yields ``None`` rather than the raw number. Passing a
+    value through unconverted is exactly how the predecessor turned a
+    kilowatt-hour forecast into "1.2 watts" and broke its own thresholds.
+    """
+    value = _numeric_state(state)
+    if value is None:
+        return None, None
+
+    kind = channel_kind(state)
     unit = _unit_of(state)
-    if not unit:
-        return None
 
     try:
-        return PowerConverter.convert(value, unit, "W")
+        if kind == KIND_POWER:
+            return PowerConverter.convert(value, unit, UnitOfPower.WATT), kind
+        if kind == KIND_ENERGY:
+            return EnergyConverter.convert(value, unit, UnitOfEnergy.WATT_HOUR), kind
     except (ValueError, TypeError, KeyError):
-        pass
-    try:
-        # Some inverters expose an energy-per-hour sensor; treat Wh/h as W.
-        return EnergyConverter.convert(value, unit, "Wh")
-    except (ValueError, TypeError, KeyError):
-        return None
+        return None, kind
+
+    return None, None
 
 
 def _loss_to_dict(loss: LossModel | None) -> dict[str, float] | None:
