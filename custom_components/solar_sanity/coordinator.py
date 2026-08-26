@@ -504,6 +504,22 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         return self._expected_tomorrow_kwh
 
     @property
+    def has_live_tier(self) -> bool:
+        """Whether an instantaneous residual is possible at all.
+
+        It needs every balance channel to report a rate. One energy channel is
+        enough to rule it out — an amount cannot answer "what is flowing right
+        now" — so on those systems the entity is not created rather than created
+        and permanently blank.
+        """
+        specs = [s for s in self.specs if s.role.in_balance]
+        if not specs:
+            return False
+        return all(
+            channel_kind(self.hass.states.get(spec.entity_id)) == KIND_POWER for spec in specs
+        )
+
+    @property
     def live_residual_w(self) -> float | None:
         """Sources minus sinks right now, in watts.
 

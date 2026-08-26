@@ -429,3 +429,26 @@ class TestLiveSensorsAreNotFrozen:
 
         source = inspect.getsource(async_setup_entry)
         assert "notify_live_entities" in source, "the sampling tick does not refresh live entities"
+
+
+class TestLiveResidualEntityIsConditional:
+    """Do not create an entity that can never hold a value.
+
+    `live_residual` needs every balance channel to report a rate. One energy
+    channel rules it out — an amount cannot answer "what is flowing right now" —
+    so on a mixed system the entity should be absent rather than present and
+    permanently blank. Being disabled by default hid this rather than fixing it.
+    """
+
+    def test_setup_filters_the_entity_out(self) -> None:
+        import inspect
+
+        from custom_components.solar_sanity.sensor import async_setup_entry
+
+        source = inspect.getsource(async_setup_entry)
+        assert "has_live_tier" in source
+
+    def test_coordinator_exposes_the_predicate(self) -> None:
+        from custom_components.solar_sanity.coordinator import SolarSanityCoordinator
+
+        assert isinstance(SolarSanityCoordinator.has_live_tier, property)
