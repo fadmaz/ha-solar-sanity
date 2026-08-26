@@ -50,6 +50,7 @@ from .analysis.model import (
     Role,
     Status,
 )
+from .analysis.residual import MIN_VALID_BUCKETS_PER_DAY
 from .const import (
     ANALYSIS_INTERVAL,
     BUCKET_INTERVAL,
@@ -118,6 +119,11 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         #: Entity ids the recorder holds no statistics for. Their sensors
         #: carry no state_class, so no history exists to backfill from.
         self.unrecorded_entities: tuple[str, ...] = ()
+        #: How the recorder classified each mapped entity at the last
+        #: backfill: "sum", "mean", or "absent". Empty until it has run.
+        self.statistics_classes: dict[str, str] = {}
+        #: Hourly rows the last backfill actually returned, per entity id.
+        self.backfill_rows: dict[str, int] = {}
         self._accumulator_start: datetime | None = None
         self._loss_model: LossModel | None = None
         self._store = Store[dict[str, Any]](
@@ -577,6 +583,74 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             1 for spec in specs if read_channel(self.hass.states.get(spec.entity_id))[0] is not None
         )
         return round(readable / len(specs) * 100)
+
+    def coverage_snapshot(self) -> dict[str, Any]:
+        """Everything needed to explain a verdict, in one downloadable place.
+
+        This exists because "Not enough data yet" is unfalsifiable from the
+        outside. Every backfill defect so far was diagnosed by asking a user to
+        read state attributes back one at a time, which is slow and gets the
+        wrong answer when the attribute they read is not the one at fault. The
+        button that produces this file is on the same page as the sensor, and
+        it answers the whole question at once.
+        """
+        specs = self.specs
+        keys = tuple(spec.key for spec in specs if spec.role.in_balance)
+        buckets = tuple(self._buckets)
+
+        channels: list[dict[str, Any]] = []
+        for spec in specs:
+            state = self.hass.states.get(spec.entity_id)
+            value, kind = read_channel(state)
+            channels.append(
+                {
+                    "key": spec.key,
+                    "entity_id": spec.entity_id,
+                    "in_balance": spec.role.in_balance,
+                    "exists_now": state is not None,
+                    "state_now": None if state is None else state.state,
+                    "unit": spec.declared_unit,
+                    "kind": kind,
+                    "readable_now": value is not None,
+                    "statistics": self.statistics_classes.get(spec.entity_id, "unknown"),
+                    "backfilled_rows": self.backfill_rows.get(spec.entity_id, 0),
+                    "hours_with_value": sum(
+                        1 for bucket in buckets if bucket.value(spec.key) is not None
+                    ),
+                    "origin": spec.origin,
+                }
+            )
+
+        whole = [b for b in buckets if b.seconds == 3600 and not b.is_dst_transition]
+        valid = [b for b in whole if all(b.value(key) is not None for key in keys)]
+
+        offset = timedelta(hours=self._utc_offset_hours())
+        per_day: dict[str, int] = {}
+        for bucket in valid:
+            day = (bucket.start_utc + offset).date().isoformat()
+            per_day[day] = per_day.get(day, 0) + 1
+
+        return {
+            "channels": channels,
+            "balance_keys": list(keys),
+            "unrecorded_entities": list(self.unrecorded_entities),
+            "utc_offset_hours": self._utc_offset_hours(),
+            "buckets": {
+                "held": len(buckets),
+                "whole_hours": len(whole),
+                # A whole hour counts only if every balance channel has a value
+                # in it. The gap between these two numbers is the entire
+                # question whenever the status will not leave insufficient_data.
+                "valid_hours": len(valid),
+                "first_utc": buckets[0].start_utc.isoformat() if buckets else None,
+                "last_utc": buckets[-1].start_utc.isoformat() if buckets else None,
+            },
+            "valid_hours_per_local_day": dict(sorted(per_day.items())),
+            "days_meeting_minimum": sum(
+                1 for count in per_day.values() if count >= MIN_VALID_BUCKETS_PER_DAY
+            ),
+            "minimum_hours_per_day": MIN_VALID_BUCKETS_PER_DAY,
+        }
 
     @property
     def report(self) -> AnalysisReport | None:
