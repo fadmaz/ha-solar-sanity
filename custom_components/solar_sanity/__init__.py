@@ -114,17 +114,42 @@ async def async_unload_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry)
 
 
 async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinator) -> None:
-    """Seed the analysis window from long-term statistics."""
+    """Seed the analysis window from long-term statistics.
+
+    Power and energy statistics must be asked for differently — power sensors
+    have no sum, so requesting `change` returns nothing at all. Splitting them
+    here is what makes "an answer on day one" true rather than aspirational.
+    """
     specs = coordinator.specs
     if not specs:
         return
 
     from homeassistant.util import dt as dt_util
 
+    from .coordinator import KIND_ENERGY, KIND_POWER, channel_kind
+
+    power_ids: set[str] = set()
+    energy_ids: set[str] = set()
+    for spec in specs:
+        kind = channel_kind(hass.states.get(spec.entity_id))
+        if kind == KIND_POWER:
+            power_ids.add(spec.entity_id)
+        elif kind == KIND_ENERGY:
+            energy_ids.add(spec.entity_id)
+
+    if not power_ids and not energy_ids:
+        return
+
     start, end = utc_day_bounds(dt_util.utcnow(), BACKFILL_DAYS)
-    series = await async_hourly_series(hass, {spec.entity_id for spec in specs}, start, end)
+    series = await async_hourly_series(hass, power_ids, energy_ids, start, end)
     if series:
         coordinator.ingest_backfill(series)
+        _LOGGER.debug(
+            "backfilled %d ids (%d power, %d energy)",
+            len(series),
+            len(power_ids),
+            len(energy_ids),
+        )
 
 
 def _async_register_services(hass: HomeAssistant) -> None:

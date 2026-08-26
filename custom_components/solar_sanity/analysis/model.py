@@ -155,9 +155,15 @@ class Bucket:
     solar_elevation_deg: float | None = None
     is_dst_transition: bool = False
 
+    #: Qualities whose value may still be used. A mean-derived reading is
+    #: usable but weaker — the tolerance is widened for it and it cannot support
+    #: a certain finding — so it must not be discarded outright the way a
+    #: missing, stale or reset-suspect reading is.
+    _USABLE = (Quality.OK, Quality.DERIVED_FROM_MEAN)
+
     def value(self, key: str) -> float | None:
-        """Return the trustworthy value for ``key``, or ``None``."""
-        if self.quality.get(key, Quality.MISSING) is not Quality.OK:
+        """Return the usable value for ``key``, or ``None``."""
+        if self.quality.get(key, Quality.MISSING) not in self._USABLE:
             return None
         return self.wh.get(key)
 
