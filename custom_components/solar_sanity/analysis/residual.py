@@ -59,8 +59,19 @@ ACTIONABLE_DAILY_FLOOR_WH = 800.0
 #: are biased, so their tolerance is widened and they cannot support certainty.
 MEAN_SOURCE_TOLERANCE_FACTOR = 1.6
 
-#: A day needs this many valid hours to be usable at all (>= 83% coverage).
-MIN_VALID_BUCKETS_PER_DAY = 20
+#: A day needs this many valid hours to be usable at all (75% coverage).
+#:
+#: The identity is summed rather than averaged, and the residual and the
+#: throughput it is normalised against are both computed over the same valid
+#: hours, so a short day stays internally consistent. The floor exists only to
+#: reject samples too small to mean anything.
+#:
+#: It was 20, which is a cliff rather than a floor: 20 valid hours produced a
+#: full month of usable days and 19 produced none at all. Because a bucket
+#: needs *every* channel, each channel's outages union together — five
+#: channels each missing a different hour is five lost hours. On an
+#: MQTT-backed system that is an ordinary day, not a bad one.
+MIN_VALID_BUCKETS_PER_DAY = 18
 
 #: Below this there is not enough signal to attribute anything.
 MIN_SIGNAL_WH = 3000.0

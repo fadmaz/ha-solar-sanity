@@ -71,6 +71,29 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             deferred=tuple(h.code for h in hits[1:]),
         )
 
+    # --- A channel with no history can never form a valid hour ---------------
+    # Every bucket needs every balance channel, so one unrecorded channel
+    # invalidates all of them. Reporting that as "not enough data yet" is true
+    # and useless: waiting will not help, and the user cannot act on it without
+    # being told which sensor.
+    unrecorded = [
+        key
+        for key in request.unrecorded_keys
+        if (spec := request.spec(key)) is not None and spec.role.in_balance
+    ]
+    if unrecorded:
+        names = ", ".join(
+            spec.friendly_name for key in unrecorded if (spec := request.spec(key)) is not None
+        )
+        return AnalysisReport(
+            status=Status.NOT_CHECKABLE,
+            reason=(
+                f"Home Assistant keeps no history for {names}. Those sensors have "
+                "no state class, so nothing is recorded for them and the balance "
+                "cannot be checked against the past."
+            ),
+        )
+
     # --- Closure: can the identity say anything? -----------------------------
     closure = topology.check_closure(specs, request.declared)
     if closure.state is Closure.NOT_CHECKABLE:
@@ -86,7 +109,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     if len(provisional) < MIN_ACTIONABLE_DAYS:
         return AnalysisReport(
             status=Status.INSUFFICIENT_DATA,
-            reason=f"Only {len(provisional)} complete days of data so far.",
+            reason=_shortage_reason(len(provisional), buckets, specs),
             residual=_summarise(provisional),
         )
 
@@ -157,6 +180,36 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         residual=summary,
         stale_corrections=_stale_corrections(days, request.active_corrections),
     )
+
+
+def _shortage_reason(days: int, buckets: tuple[Bucket, ...], specs: tuple[ChannelSpec, ...]) -> str:
+    """Explain a shortage in terms the user can act on.
+
+    "Only 0 complete days" is true and unhelpful. If one channel is present in
+    far fewer hours than the others, that channel is the reason, and saying so
+    turns a wait into a fix.
+    """
+    if not buckets:
+        return "No measurements yet."
+
+    coverage = {
+        spec.key: sum(1 for b in buckets if b.value(spec.key) is not None)
+        for spec in specs
+        if spec.role.in_balance
+    }
+    if coverage:
+        worst_key = min(coverage, key=lambda k: coverage[k])
+        best = max(coverage.values())
+        if best and coverage[worst_key] < best * 0.5:
+            spec = next((s for s in specs if s.key == worst_key), None)
+            name = spec.friendly_name if spec else worst_key
+            return (
+                f"{days} complete days so far. {name} has data for only "
+                f"{coverage[worst_key]} of {best} hours, and an hour needs every "
+                "sensor, so it is holding everything else back."
+            )
+
+    return f"Only {days} complete days of data so far."
 
 
 def _apply_corrections(

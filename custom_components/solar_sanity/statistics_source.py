@@ -128,7 +128,8 @@ async def async_hourly_series(
             series.append(
                 (dt_util.utc_from_timestamp(float(started)), float(change) * 1000.0, False)
             )
-        out[statistic_id] = series
+        if series:
+            out[statistic_id] = series
 
     power_raw = await _fetch(power_ids, {"mean"}, {"power": "W"})
     for statistic_id, rows in (power_raw or {}).items():
@@ -140,7 +141,8 @@ async def async_hourly_series(
                 continue
             # Mean watts over an hour is watt-hours.
             series.append((dt_util.utc_from_timestamp(float(started)), float(mean), True))
-        out[statistic_id] = series
+        if series:
+            out[statistic_id] = series
 
     return out
 
@@ -184,11 +186,21 @@ async def async_classify_statistics(
             continue
         if meta.get("has_sum"):
             sum_backed.add(statistic_id)
-        else:
-            # `has_mean` was replaced by `mean_type`; anything not NONE has one.
-            mean_type = meta.get("mean_type")
-            if mean_type is None or int(mean_type) != 0:
-                mean_backed.add(statistic_id)
+            continue
+
+        # `has_mean` was replaced by `mean_type`; anything not NONE has one.
+        mean_type = meta.get("mean_type")
+        if mean_type is not None and int(mean_type) == 0:
+            continue
+
+        # Only power may be mean-queried. Asking for an energy statistic in
+        # watts applies no conversion at all, so a kWh mean would be stored as
+        # though it were watt-hours — a thousandfold error that produces
+        # perfectly valid-looking buckets.
+        if meta.get("unit_class") == "energy":
+            continue
+
+        mean_backed.add(statistic_id)
 
     absent = statistic_ids - sum_backed - mean_backed
     return sum_backed, mean_backed, absent

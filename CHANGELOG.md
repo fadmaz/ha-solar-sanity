@@ -2,6 +2,34 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.2.2] - 2026-08-26
+
+### Fixed
+
+- **A channel with no recorded history reported "Not enough data yet" forever.**
+  A bucket needs every balance channel, so one unrecorded sensor invalidated all
+  720 of them — and the guard only bailed when *every* channel was unrecorded.
+  The status now reports `not_checkable` and names the sensor, because waiting
+  cannot fix a sensor nobody is recording.
+- **The 20-valid-hours-per-day requirement was a cliff, not a floor.** Twenty
+  valid hours yielded a full month of usable days; nineteen yielded none. Since
+  a bucket needs every channel, each channel's outages union together, so five
+  channels each missing a different hour lost the whole day. Lowered to 18.
+- **An energy statistic could be mean-queried as though it were power**, which
+  applies no unit conversion and stores a kWh mean as watt-hours — a
+  thousandfold error producing valid-looking buckets.
+- The backfill treated a dict of empty lists as success, and logged the number
+  of statistic ids rather than rows, so its log actively misled during exactly
+  the investigation it existed to support.
+
+### Added
+
+- Shortage reasons name the limiting channel: "Grid import has data for only 14
+  of 720 hours, and an hour needs every sensor."
+- Tests for the coverage-gap path. Every backfill bug so far shipped through
+  that hole — nothing built a bucket from statistics-shaped data and checked
+  what the engine concluded.
+
 ## [0.2.1] - 2026-08-26
 
 ### Fixed
