@@ -40,7 +40,7 @@ class SolarSanitySensorDescription(SensorEntityDescription):
     """A sensor described by a function, not by a branch in a long if/elif."""
 
     value_fn: Callable[[SolarSanityCoordinator], StateType]
-    attrs_fn: Callable[[AnalysisReport | None], dict[str, Any]] | None = None
+    attrs_fn: Callable[[SolarSanityCoordinator], dict[str, Any]] | None = None
 
 
 def _status(coordinator: SolarSanityCoordinator) -> StateType:
@@ -63,6 +63,24 @@ def _status_attrs(report: AnalysisReport | None) -> dict[str, Any]:
         "days_of_data": report.residual.valid_days,
         "deferred": list(report.deferred),
     }
+
+
+def _status_attrs_for(coordinator: SolarSanityCoordinator) -> dict[str, Any]:
+    """Status attributes, plus anything the user needs in order to act.
+
+    `unrecorded_entities` is the one that saves a support round-trip: if Home
+    Assistant is not keeping statistics for a sensor, no amount of waiting will
+    produce a verdict from history and the user needs to know which sensor.
+    """
+    attrs = _status_attrs(coordinator.report)
+    if coordinator.unrecorded_entities:
+        attrs["unrecorded_entities"] = list(coordinator.unrecorded_entities)
+        attrs["unrecorded_note"] = (
+            "These sensors have no state_class, so Home Assistant keeps no "
+            "history for them. Solar Sanity must collect its own, which takes "
+            "about a week."
+        )
+    return attrs
 
 
 def _completeness(coordinator: SolarSanityCoordinator) -> StateType:
@@ -88,7 +106,7 @@ SENSORS: tuple[SolarSanitySensorDescription, ...] = (
         device_class=SensorDeviceClass.ENUM,
         options=[s.value for s in Status],
         value_fn=_status,
-        attrs_fn=_status_attrs,
+        attrs_fn=_status_attrs_for,
     ),
     SolarSanitySensorDescription(
         key="data_completeness",
@@ -174,4 +192,4 @@ class SolarSanitySensor(SolarSanityEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         if self.entity_description.attrs_fn is None:
             return {}
-        return self.entity_description.attrs_fn(self.coordinator.report)
+        return self.entity_description.attrs_fn(self.coordinator)
