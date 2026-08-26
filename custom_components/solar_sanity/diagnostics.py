@@ -29,6 +29,10 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Any) ->
 
     return {
         "entry": async_redact_data(entry.as_dict(), TO_REDACT),
+        # Why the verdict is what it is. Without this, a report of "Not
+        # enough data yet" carries no evidence at all and the only way to
+        # investigate is to ask the user to read attributes back one by one.
+        "coverage": data.coordinator.coverage_snapshot() if data else None,
         "status": report.status.value if report else None,
         "reason": report.reason if report else None,
         "finding": (

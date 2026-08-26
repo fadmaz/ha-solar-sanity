@@ -2,6 +2,28 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.2.3] - 2026-08-26
+
+### Added
+
+- **Diagnostics now explain the verdict.** "Download diagnostics" on the device
+  page carries per-channel coverage: which sensors the recorder holds
+  statistics for, how many hourly rows each contributed to the backfill, how
+  many hours hold a value, and how many hours of each local day are complete.
+  Three backfill defects have been diagnosed by asking a user to read state
+  attributes back one at a time; that button is on the same page as the sensor
+  and answers the whole question at once.
+
+### Fixed
+
+- Data completeness and Live residual read 0% for five minutes after every
+  restart — they refreshed only on the five-minute tick, so they showed exactly
+  the failure they exist to report, at the moment a user is most likely to look
+  at them. They now refresh on the 30-second tick.
+- The backfill log counted statistic ids rather than hourly rows. Ids are never
+  zero once classification succeeds, so it read as success during an
+  investigation into why nothing had been backfilled.
+
 ## [0.2.2] - 2026-08-26
 
 ### Fixed

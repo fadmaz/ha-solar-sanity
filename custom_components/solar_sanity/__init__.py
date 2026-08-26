@@ -80,9 +80,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
 
     # The live tripwire. Cheap, and the only way to see instantaneous
     # impossibilities that average out inside an hourly bucket.
-    entry.async_on_unload(
-        async_track_time_interval(hass, lambda _now: coordinator.capture_live(), LIVE_INTERVAL)
-    )
+    def _tripwire(_now: Any) -> None:
+        coordinator.capture_live()
+        # Also on this tick, not only the five-minute one. Completeness and the
+        # live residual describe *now*, and after a restart they read 0% for a
+        # full five minutes — which looks exactly like the failure they exist to
+        # report, at the moment a user is most likely to be looking at them.
+        coordinator.notify_live_entities()
+
+    entry.async_on_unload(async_track_time_interval(hass, _tripwire, LIVE_INTERVAL))
 
     def _sample(_now: Any) -> None:
         coordinator.accumulate()
@@ -139,6 +145,11 @@ async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinat
     sum_backed, mean_backed, absent = await async_classify_statistics(hass, wanted)
 
     coordinator.unrecorded_entities = tuple(sorted(absent))
+    coordinator.statistics_classes = (
+        dict.fromkeys(sum_backed, "sum")
+        | dict.fromkeys(mean_backed, "mean")
+        | dict.fromkeys(absent, "absent")
+    )
 
     if absent:
         # Not our bug to fix, but the user cannot act on what they cannot see.
@@ -155,10 +166,15 @@ async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinat
 
     start, end = utc_day_bounds(dt_util.utcnow(), BACKFILL_DAYS)
     series = await async_hourly_series(hass, mean_backed, sum_backed, start, end)
+    coordinator.backfill_rows = {entity_id: len(rows) for entity_id, rows in series.items()}
     if series:
         coordinator.ingest_backfill(series)
+        # Rows, not ids. The previous message counted statistic ids, which is
+        # never zero once classification succeeds, so it read as success during
+        # an investigation into why nothing had been backfilled.
         _LOGGER.debug(
-            "backfilled %d ids (%d sum-backed, %d mean-backed)",
+            "backfilled %d hourly rows across %d ids (%d sum-backed, %d mean-backed)",
+            sum(coordinator.backfill_rows.values()),
             len(series),
             len(sum_backed),
             len(mean_backed),
