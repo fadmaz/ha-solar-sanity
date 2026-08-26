@@ -36,7 +36,11 @@ from .const import (
 )
 from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .repairs import async_sync_issues
-from .statistics_source import async_hourly_series, utc_day_bounds
+from .statistics_source import (
+    async_classify_statistics,
+    async_hourly_series,
+    utc_day_bounds,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -116,9 +120,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry)
 async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinator) -> None:
     """Seed the analysis window from long-term statistics.
 
-    Power and energy statistics must be asked for differently — power sensors
-    have no sum, so requesting `change` returns nothing at all. Splitting them
-    here is what makes "an answer on day one" true rather than aspirational.
+    Which query to run depends on what the recorder holds, not on what the state
+    machine currently says. Sum-backed statistics answer `change` exactly;
+    mean-backed ones only answer `mean`, and asking the wrong one returns
+    nothing at all.
+
+    Classifying from the entity's live state looked equivalent and was not: an
+    MQTT-backed inverter publishes after Home Assistant starts, so at setup
+    every channel classified as neither and the backfill quietly did nothing.
     """
     specs = coordinator.specs
     if not specs:
@@ -126,29 +135,33 @@ async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinat
 
     from homeassistant.util import dt as dt_util
 
-    from .coordinator import KIND_ENERGY, KIND_POWER, channel_kind
+    wanted = {spec.entity_id for spec in specs}
+    sum_backed, mean_backed, absent = await async_classify_statistics(hass, wanted)
 
-    power_ids: set[str] = set()
-    energy_ids: set[str] = set()
-    for spec in specs:
-        kind = channel_kind(hass.states.get(spec.entity_id))
-        if kind == KIND_POWER:
-            power_ids.add(spec.entity_id)
-        elif kind == KIND_ENERGY:
-            energy_ids.add(spec.entity_id)
+    coordinator.unrecorded_entities = tuple(sorted(absent))
 
-    if not power_ids and not energy_ids:
+    if absent:
+        # Not our bug to fix, but the user cannot act on what they cannot see.
+        _LOGGER.warning(
+            "No recorded history for %s. Those sensors have no state_class, so "
+            "Home Assistant is not keeping statistics for them and Solar Sanity "
+            "must collect its own — expect a verdict in about a week rather than "
+            "immediately.",
+            ", ".join(sorted(absent)),
+        )
+
+    if not sum_backed and not mean_backed:
         return
 
     start, end = utc_day_bounds(dt_util.utcnow(), BACKFILL_DAYS)
-    series = await async_hourly_series(hass, power_ids, energy_ids, start, end)
+    series = await async_hourly_series(hass, mean_backed, sum_backed, start, end)
     if series:
         coordinator.ingest_backfill(series)
         _LOGGER.debug(
-            "backfilled %d ids (%d power, %d energy)",
+            "backfilled %d ids (%d sum-backed, %d mean-backed)",
             len(series),
-            len(power_ids),
-            len(energy_ids),
+            len(sum_backed),
+            len(mean_backed),
         )
 
 
@@ -159,8 +172,12 @@ def _async_register_services(hass: HomeAssistant) -> None:
     async def _validate_now(call: ServiceCall) -> None:
         for entry in hass.config_entries.async_entries(DOMAIN):
             data = getattr(entry, "runtime_data", None)
-            if data is not None:
-                await data.coordinator.async_request_refresh()
+            if data is None:
+                continue
+            # Re-run the backfill too. Statistics may have appeared since setup,
+            # and needing a restart to find out is a poor way to diagnose.
+            await _async_backfill(hass, data.coordinator)
+            await data.coordinator.async_request_refresh()
 
     async def _export_report(call: ServiceCall) -> dict[str, Any]:
         """Return a plain-language summary.

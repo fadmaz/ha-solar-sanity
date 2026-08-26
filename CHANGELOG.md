@@ -2,6 +2,25 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.2.1] - 2026-08-26
+
+### Fixed
+
+- **The backfill still did nothing**, for a second reason. It classified each
+  channel by reading the entity's live state at setup — but an MQTT-backed
+  inverter publishes after Home Assistant starts, so every channel classified
+  as neither power nor energy and no query ran at all. It now asks the recorder
+  what statistics it holds, which describes history that already exists and
+  does not care whether the entity has loaded.
+
+### Added
+
+- `Status` lists `unrecorded_entities` when a mapped sensor has no recorded
+  history, with a note explaining why. Without statistics no verdict can come
+  from history at all, and the user needs to know which sensor.
+- `solar_sanity.validate_now` re-runs the backfill as well as the analysis, so
+  diagnosing this no longer needs a restart.
+
 ## [0.2.0] - 2026-08-26
 
 ### Fixed

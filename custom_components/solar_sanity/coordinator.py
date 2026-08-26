@@ -115,6 +115,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._first_sample_at: datetime | None = None
         #: Latest forecast total for tomorrow, in kWh.
         self._expected_tomorrow_kwh: float | None = None
+        #: Entity ids the recorder holds no statistics for. Their sensors
+        #: carry no state_class, so no history exists to backfill from.
+        self.unrecorded_entities: tuple[str, ...] = ()
         self._accumulator_start: datetime | None = None
         self._loss_model: LossModel | None = None
         self._store = Store[dict[str, Any]](

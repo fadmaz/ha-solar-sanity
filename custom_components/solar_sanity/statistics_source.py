@@ -145,6 +145,55 @@ async def async_hourly_series(
     return out
 
 
+async def async_classify_statistics(
+    hass: HomeAssistant, statistic_ids: set[str]
+) -> tuple[set[str], set[str], set[str]]:
+    """Split ids into ``(sum_backed, mean_backed, absent)``.
+
+    Asks the recorder what it actually holds rather than asking the state
+    machine what kind of sensor something is. That distinction matters: an
+    MQTT-backed inverter publishes its entities *after* Home Assistant starts,
+    so at setup time the state machine knows nothing and every channel would be
+    classified as neither — which is exactly how the backfill silently did
+    nothing.
+
+    Statistics metadata is available regardless, because it describes history
+    that already exists.
+
+    ``absent`` is the useful third answer: no statistics at all, which means the
+    source sensor carries no ``state_class`` and its history is not being
+    recorded by anyone.
+    """
+    if not recorder_available(hass) or not statistic_ids:
+        return set(), set(), set(statistic_ids)
+
+    from homeassistant.components.recorder.statistics import async_list_statistic_ids
+
+    try:
+        metas = await async_list_statistic_ids(hass, statistic_ids)
+    except Exception:
+        _LOGGER.debug("async_list_statistic_ids failed", exc_info=True)
+        return set(), set(), set(statistic_ids)
+
+    sum_backed: set[str] = set()
+    mean_backed: set[str] = set()
+
+    for meta in metas or []:
+        statistic_id = meta.get("statistic_id")
+        if statistic_id not in statistic_ids:
+            continue
+        if meta.get("has_sum"):
+            sum_backed.add(statistic_id)
+        else:
+            # `has_mean` was replaced by `mean_type`; anything not NONE has one.
+            mean_type = meta.get("mean_type")
+            if mean_type is None or int(mean_type) != 0:
+                mean_backed.add(statistic_id)
+
+    absent = statistic_ids - sum_backed - mean_backed
+    return sum_backed, mean_backed, absent
+
+
 def forecast_statistic_id(provider_key: str) -> str:
     """External statistic id for one forecast provider.
 
