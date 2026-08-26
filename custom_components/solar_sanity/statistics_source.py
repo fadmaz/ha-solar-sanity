@@ -73,45 +73,75 @@ async def async_energy_between(
 
 
 async def async_hourly_series(
-    hass: HomeAssistant, statistic_ids: set[str], start: datetime, end: datetime
-) -> dict[str, list[tuple[datetime, float]]]:
-    """Hourly ``change`` per statistic id, for backfilling the analysis window.
+    hass: HomeAssistant,
+    power_ids: set[str],
+    energy_ids: set[str],
+    start: datetime,
+    end: datetime,
+) -> dict[str, list[tuple[datetime, float, bool]]]:
+    """Hourly energy per statistic id, in Wh, for backfilling the window.
 
-    This is what gives a brand-new install an answer on day one instead of day
-    seven. Our own integrator supersedes it as soon as it has enough history.
+    Returns ``(hour, wh, from_mean)`` per id.
+
+    The two kinds have to be asked for differently, and getting this wrong is
+    why the backfill previously produced nothing usable:
+
+    * **Energy** statistics have a sum, so ``change`` gives the energy in each
+      hour exactly, reset-compensated. Never difference ``sum`` by hand.
+    * **Power** statistics have no sum at all — they are ``measurement`` class,
+      so they carry mean/min/max. Asking for ``change`` returns ``None`` for
+      every row. The hourly ``mean`` multiplied by an hour is the energy, and
+      it is a far better estimate than our own five-minute polling because the
+      recorder saw every state change rather than one in three hundred.
+
+    Mean-derived values are flagged so the analysis can widen its tolerance and
+    refuse to call a finding certain on them.
     """
-    if not recorder_available(hass) or not statistic_ids:
+    if not recorder_available(hass):
         return {}
 
     from homeassistant.components.recorder import get_instance
     from homeassistant.components.recorder.statistics import statistics_during_period
 
-    try:
-        raw = await get_instance(hass).async_add_executor_job(
-            statistics_during_period,
-            hass,
-            start,
-            end,
-            statistic_ids,
-            "hour",
-            {"energy": "kWh"},
-            {"change"},
-        )
-    except Exception:
-        _LOGGER.debug("statistics_during_period failed", exc_info=True)
-        return {}
+    out: dict[str, list[tuple[datetime, float, bool]]] = {}
 
-    out: dict[str, list[tuple[datetime, float]]] = {}
-    for statistic_id, rows in (raw or {}).items():
-        series: list[tuple[datetime, float]] = []
+    async def _fetch(ids: set[str], types: set[str], units: dict[str, str] | None):
+        if not ids:
+            return {}
+        try:
+            return await get_instance(hass).async_add_executor_job(
+                statistics_during_period, hass, start, end, ids, "hour", units, types
+            )
+        except Exception:
+            _LOGGER.debug("statistics_during_period failed for %s", types, exc_info=True)
+            return {}
+
+    energy_raw = await _fetch(energy_ids, {"change"}, {"energy": "kWh"})
+    for statistic_id, rows in (energy_raw or {}).items():
+        series: list[tuple[datetime, float, bool]] = []
         for row in rows:
             change = row.get("change")
-            start_ts = row.get("start")
-            if change is None or start_ts is None:
+            started = row.get("start")
+            if change is None or started is None:
                 # A gap is a gap. It is not zero.
                 continue
-            series.append((dt_util.utc_from_timestamp(float(start_ts)), float(change) * 1000.0))
+            series.append(
+                (dt_util.utc_from_timestamp(float(started)), float(change) * 1000.0, False)
+            )
         out[statistic_id] = series
+
+    power_raw = await _fetch(power_ids, {"mean"}, {"power": "W"})
+    for statistic_id, rows in (power_raw or {}).items():
+        series = []
+        for row in rows:
+            mean = row.get("mean")
+            started = row.get("start")
+            if mean is None or started is None:
+                continue
+            # Mean watts over an hour is watt-hours.
+            series.append((dt_util.utc_from_timestamp(float(started)), float(mean), True))
+        out[statistic_id] = series
+
     return out
 
 

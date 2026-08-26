@@ -2,6 +2,28 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.2.0] - 2026-08-26
+
+### Fixed
+
+- **The statistics backfill produced nothing whenever a power sensor was
+  mapped**, so "an answer on day one rather than day seven" was aspirational
+  rather than true. It asked for `change`, which only exists for statistics
+  with a sum; power sensors are `measurement` class and have none, so every row
+  came back empty and one missing channel invalidated the whole hour.
+
+  Power channels are now read as the hourly `mean` and multiplied by the hour.
+  That is a better figure than our own sampling — the recorder observed every
+  state change, where polling sees one in three hundred.
+
+- **Mean-derived readings were discarded rather than graded.** `Bucket.value`
+  treated anything that was not `OK` as absent, so even once the backfill
+  returned data it would have been thrown away. They are now usable but weaker:
+  the tolerance widens and no finding built on them can be called certain.
+  `Quality.DERIVED_FROM_MEAN` and `BucketSource.LTS_MEAN` finally have a writer.
+
+Closes #5.
+
 ## [0.1.6] - 2026-08-25
 
 ### Changed

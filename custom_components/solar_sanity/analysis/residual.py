@@ -35,6 +35,7 @@ from .model import (
     BucketSource,
     ChannelSpec,
     LossModel,
+    Quality,
     Role,
 )
 
@@ -235,7 +236,7 @@ def build_days(
         tp = tuple(throughput(b, specs) for b in day_buckets)
         from_mean = any(
             src is BucketSource.LTS_MEAN for b in day_buckets for src in b.source.values()
-        )
+        ) or any(q is Quality.DERIVED_FROM_MEAN for b in day_buckets for q in b.quality.values())
 
         residual = DayResidual(
             day=day,

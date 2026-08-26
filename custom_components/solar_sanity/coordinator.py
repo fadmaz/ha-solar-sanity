@@ -338,36 +338,50 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._accumulator.clear()
         self._suspect.clear()
 
-    def ingest_backfill(self, series: dict[str, list[tuple[datetime, float]]]) -> None:
+    def ingest_backfill(self, series: dict[str, list[tuple[datetime, float, bool]]]) -> None:
         """Seed the window from long-term statistics at setup.
 
-        Marked as ``LTS_SUM`` so a finding that rests on it can be graded
-        accordingly — a backfilled bucket is good evidence, but it is not our own
-        measurement.
+        Mean-derived buckets are tagged ``LTS_MEAN`` so the analysis widens its
+        tolerance and refuses to call a finding certain on them: an arithmetic
+        hourly mean over an event-reporting sensor over-weights volatile hours.
+        Sum-derived ones are exact and tagged ``LTS_SUM``.
         """
         specs = self.specs
         by_key = {s.key: s.entity_id for s in specs}
-        merged: dict[datetime, dict[str, float]] = {}
+        merged: dict[datetime, dict[str, tuple[float, bool]]] = {}
 
         for key, entity_id in by_key.items():
-            for when, value in series.get(entity_id, []):
-                merged.setdefault(when, {})[key] = value
+            for when, value, from_mean in series.get(entity_id, []):
+                merged.setdefault(when, {})[key] = (value, from_mean)
+
+        existing = {bucket.start_utc for bucket in self._buckets}
 
         for when in sorted(merged):
+            if when in existing:
+                # Our own measurement is preferred where we have it.
+                continue
             values = merged[when]
             wh: dict[str, float | None] = {}
             quality: dict[str, Quality] = {}
             source: dict[str, BucketSource] = {}
             for spec in specs:
-                value = values.get(spec.key)
+                entry = values.get(spec.key)
+                if entry is None:
+                    wh[spec.key] = None
+                    quality[spec.key] = Quality.MISSING
+                    source[spec.key] = BucketSource.LTS_SUM
+                    continue
+                value, from_mean = entry
                 wh[spec.key] = value
-                quality[spec.key] = Quality.OK if value is not None else Quality.MISSING
-                source[spec.key] = BucketSource.LTS_SUM
+                quality[spec.key] = Quality.DERIVED_FROM_MEAN if from_mean else Quality.OK
+                source[spec.key] = BucketSource.LTS_MEAN if from_mean else BucketSource.LTS_SUM
             self._buckets.append(
                 Bucket(start_utc=when, seconds=3600, wh=wh, quality=quality, source=source)
             )
 
         self._buckets.sort(key=lambda b: b.start_utc)
+        if len(self._buckets) > MAX_BUCKETS:
+            del self._buckets[: len(self._buckets) - MAX_BUCKETS]
 
     # -- forecast capture ---------------------------------------------------
 
