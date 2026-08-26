@@ -285,6 +285,10 @@ class AnalysisRequest:
     active_corrections: tuple[Correction, ...] = ()
     suppressed_codes: tuple[str, ...] = ()
     loss_model: LossModel | None = None
+    #: Channels the recorder holds no history for. One of these makes every
+    #: bucket invalid, because a bucket needs every balance channel — so the
+    #: honest answer is to name it rather than report a shortage of days.
+    unrecorded_keys: tuple[str, ...] = ()
     #: The installation's UTC offset, so buckets group into *local* days.
     #: Grouping by UTC splits the solar curve across two days anywhere far
     #: from Greenwich, which breaks the storage probe, the standby fit and

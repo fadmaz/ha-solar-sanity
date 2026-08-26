@@ -465,6 +465,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             active_corrections=self.corrections,
             suppressed_codes=self.suppressed,
             loss_model=self._loss_model,
+            unrecorded_keys=self._unrecorded_keys(),
             utc_offset_hours=self._utc_offset_hours(),
         )
 
@@ -475,6 +476,11 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
         await self._async_persist(report)
         return report
+
+    def _unrecorded_keys(self) -> tuple[str, ...]:
+        """Channel keys whose entity the recorder holds no statistics for."""
+        unrecorded = set(self.unrecorded_entities)
+        return tuple(spec.key for spec in self.specs if spec.entity_id in unrecorded)
 
     def _utc_offset_hours(self) -> float:
         """The instance's current offset from UTC, in hours.
