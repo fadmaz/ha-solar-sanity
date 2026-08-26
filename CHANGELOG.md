@@ -2,6 +2,16 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.1.6] - 2026-08-25
+
+### Changed
+
+- `Live residual` is no longer created on systems where it cannot report. It
+  needs every balance channel to give a rate, so one energy channel rules it
+  out — an amount cannot answer "what is flowing right now". Previously the
+  entity existed and was permanently blank; being disabled by default hid that
+  rather than fixing it.
+
 ## [0.1.5] - 2026-08-25
 
 ### Fixed

@@ -136,8 +136,19 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     data: SolarSanityData = entry.runtime_data
+    coordinator = data.coordinator
+
+    # An entity that can never hold a value is the same small dishonesty as one
+    # that returns None from a placeholder. The live residual needs every
+    # channel to report a rate; one energy channel rules it out.
+    descriptions = [
+        description
+        for description in SENSORS
+        if description.key != "live_residual" or coordinator.has_live_tier
+    ]
+
     async_add_entities(
-        SolarSanitySensor(data.coordinator, entry, description) for description in SENSORS
+        SolarSanitySensor(coordinator, entry, description) for description in descriptions
     )
 
 
