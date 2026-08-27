@@ -2,6 +2,17 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.3.2] - 2026-08-27
+
+### Fixed
+
+- **Deleting an installation left its repair card behind**, offering to fix a
+  configuration that no longer exists and able to do nothing but abort when
+  clicked. It cleared on the next restart, which is exactly when a user is least
+  likely to connect the two events. Issues are now removed with the entry — on
+  removal, not on unload, since a reload unloads too and flapping the issue
+  would lose the user's dismissal.
+
 ## [0.3.1] - 2026-08-27
 
 ### Added

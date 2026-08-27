@@ -12,6 +12,9 @@ in CI and are absent when working on the pure engine locally.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import pytest
 
 pytest.importorskip("homeassistant", reason="Home Assistant not installed")
@@ -131,3 +134,46 @@ class TestAmbiguousDiscovery:
         weakest = 30 + max(5, 20 - (len(KEYWORDS[Role.BATTERY_CHARGE]) - 1) * 3)
 
         assert weakest - AMBIGUOUS_PENALTY >= MIN_SCORE
+
+
+class TestIssueOwnership:
+    """A removed installation must not leave a repair card behind."""
+
+    def test_issue_ids_are_matched_by_entry(self) -> None:
+        """Entry ids are ULIDs, so a suffix test cannot collide."""
+        from custom_components.solar_sanity.const import DOMAIN
+        from custom_components.solar_sanity.repairs import issue_ids_for_entry
+
+        mine = "01M0X6H534EZXNCW0X86RXE1D3"
+        theirs = "01M113N4N74WEFYB26341HJ8W4"
+        issues = {
+            f"signed_net_battery_slot_{mine}": DOMAIN,
+            f"missing_export_channel_{mine}": DOMAIN,
+            f"signed_net_battery_slot_{theirs}": DOMAIN,
+            f"something_{mine}": "other_domain",
+        }
+
+        class _Issue:
+            def __init__(self, issue_id: str, domain: str) -> None:
+                self.issue_id = issue_id
+                self.domain = domain
+
+        registry = SimpleNamespace(
+            issues={k: _Issue(k, v) for k, v in issues.items()},
+        )
+        with patch(
+            "custom_components.solar_sanity.repairs.ir.async_get",
+            return_value=registry,
+        ):
+            found = issue_ids_for_entry(object(), mine)
+
+        assert found == {
+            f"signed_net_battery_slot_{mine}",
+            f"missing_export_channel_{mine}",
+        }
+
+    def test_removal_is_wired_up(self) -> None:
+        """Home Assistant calls this by name; a rename would silently disable it."""
+        from custom_components.solar_sanity import async_remove_entry
+
+        assert callable(async_remove_entry)
