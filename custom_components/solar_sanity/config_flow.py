@@ -5,7 +5,10 @@ whole job is remapping sensors:
 
 * **Reconfigure.** Everything chosen at setup lived in ``entry.data``, which the
   options flow never touched, so correcting a mis-mapped sensor meant deleting
-  the entry and orphaning every entity's history.
+  the entry and orphaning every entity's history. Reconfigure covers the
+  topology answers and the forecast providers too — they were write-once, and a
+  setting that can only be changed by starting again is how two installations
+  end up fighting over one forecast archive.
 * **A unique id**, so a second entry for the same installation is caught.
 
 No update listener is registered. Combining one with
@@ -98,6 +101,110 @@ def _channel_schema(discovery: Discovery, current: dict[str, str]) -> vol.Schema
     return vol.Schema(fields)
 
 
+def _battery_mapped(channels: dict[str, str]) -> bool:
+    return Role.BATTERY_CHARGE.key in channels or Role.BATTERY_DISCHARGE.key in channels
+
+
+def _both_grid_mapped(channels: dict[str, str]) -> bool:
+    return Role.GRID_IMPORT.key in channels and Role.GRID_EXPORT.key in channels
+
+
+def _topology_schema(
+    channels: dict[str, str],
+    providers: list[tuple[str, str]],
+    current: dict[str, Any],
+) -> vol.Schema:
+    """The questions worth asking, given what the mapping already answers.
+
+    Shared by setup and reconfigure so the two cannot drift. Asking "do you have
+    a battery?" of someone who just mapped two battery sensors is the kind of
+    question that makes software feel stupid, and it would be worse the second
+    time.
+    """
+    fields: dict[Any, Any] = {}
+
+    if not _battery_mapped(channels):
+        fields[vol.Required(CONF_HAS_BATTERY, default=current.get(CONF_HAS_BATTERY, "unknown"))] = (
+            _TRISTATE
+        )
+
+    # Only ambiguous when import is mapped alone. Both mapped means two
+    # dedicated sensors; neither mapped means there is nothing to interpret.
+    import_only = Role.GRID_IMPORT.key in channels and Role.GRID_EXPORT.key not in channels
+    if import_only:
+        fields[vol.Required(CONF_GRID_IS_NET, default=current.get(CONF_GRID_IS_NET, "unknown"))] = (
+            _TRISTATE
+        )
+
+    # Not inferable from the mapping at all — a backup-panel sensor looks exactly
+    # like a whole-house one until the residual says otherwise.
+    fields[
+        vol.Required(CONF_LOAD_WHOLE_HOUSE, default=current.get(CONF_LOAD_WHOLE_HOUSE, "unknown"))
+    ] = _TRISTATE
+
+    # ConfigEntrySelector takes a single entry and has no `multiple` option, so
+    # the providers are listed by name instead — which is better anyway, since
+    # the user recognises "Forecast.Solar" and not a UUID. The field is omitted
+    # entirely when there is nothing to pick.
+    if providers:
+        fields[
+            vol.Optional(
+                CONF_FORECAST_ENTRIES, default=list(current.get(CONF_FORECAST_ENTRIES) or [])
+            )
+        ] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(value=entry_id, label=label)
+                    for entry_id, label in providers
+                ],
+                multiple=True,
+                mode=selector.SelectSelectorMode.LIST,
+            )
+        )
+
+    return vol.Schema(fields)
+
+
+def _topology_values(user_input: dict[str, Any], channels: dict[str, str]) -> dict[str, Any]:
+    """The answers to store, filling in what the mapping settles outright."""
+    return {
+        # A mapped battery answers the question outright; likewise two dedicated
+        # grid sensors mean it is not a net meter.
+        CONF_HAS_BATTERY: user_input.get(
+            CONF_HAS_BATTERY, "yes" if _battery_mapped(channels) else "unknown"
+        ),
+        CONF_GRID_IS_NET: user_input.get(
+            CONF_GRID_IS_NET, "no" if _both_grid_mapped(channels) else "unknown"
+        ),
+        CONF_LOAD_WHOLE_HOUSE: user_input.get(CONF_LOAD_WHOLE_HOUSE, "unknown"),
+        CONF_FORECAST_ENTRIES: user_input.get(CONF_FORECAST_ENTRIES, []),
+    }
+
+
+def _channel_records(
+    channels: dict[str, str], previous: list[dict[str, str]]
+) -> list[dict[str, str]]:
+    """Channel records, keeping the origin of anything left alone.
+
+    Origin is not cosmetic: an autodetected channel has its findings downgraded
+    one confidence step, because a mapping nobody confirmed is weaker evidence
+    than one somebody chose. Stamping every channel "user" on the way through a
+    reconfigure would silently promote every channel the user never looked at,
+    and a run through the form without changing anything would quietly raise the
+    confidence of the whole installation.
+    """
+    was = {
+        record[CONF_ROLE]: (record[CONF_ENTITY_ID], record.get(CONF_ORIGIN, "user"))
+        for record in previous
+    }
+    records: list[dict[str, str]] = []
+    for role_key, entity_id in channels.items():
+        before = was.get(role_key)
+        origin = before[1] if before is not None and before[0] == entity_id else "user"
+        records.append({CONF_ROLE: role_key, CONF_ENTITY_ID: entity_id, CONF_ORIGIN: origin})
+    return records
+
+
 class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
     """Discover, review, confirm."""
 
@@ -161,61 +268,15 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                         }
                         for role_key, entity_id in self._channels.items()
                     ],
-                    # A mapped battery answers the question outright; likewise
-                    # two dedicated grid sensors mean it is not a net meter.
-                    CONF_HAS_BATTERY: user_input.get(
-                        CONF_HAS_BATTERY, "yes" if self._battery_mapped else "unknown"
-                    ),
-                    CONF_GRID_IS_NET: user_input.get(
-                        CONF_GRID_IS_NET, "no" if self._both_grid_mapped else "unknown"
-                    ),
-                    CONF_LOAD_WHOLE_HOUSE: user_input.get(CONF_LOAD_WHOLE_HOUSE, "unknown"),
-                    CONF_FORECAST_ENTRIES: user_input.get(CONF_FORECAST_ENTRIES, []),
+                    **_topology_values(user_input, self._channels),
                 },
             )
 
-        # Ask only what the user actually knows and we cannot work out. Asking
-        # "do you have a battery?" of someone who just mapped two battery
-        # sensors is the kind of question that makes software feel stupid.
-        fields: dict[Any, Any] = {}
-
-        battery_mapped = (
-            Role.BATTERY_CHARGE.key in self._channels
-            or Role.BATTERY_DISCHARGE.key in self._channels
-        )
-        if not battery_mapped:
-            fields[vol.Required(CONF_HAS_BATTERY, default="unknown")] = _TRISTATE
-
-        # Only ambiguous when import is mapped alone. Both mapped means two
-        # dedicated sensors; neither mapped means there is nothing to interpret.
-        import_only = (
-            Role.GRID_IMPORT.key in self._channels and Role.GRID_EXPORT.key not in self._channels
-        )
-        if import_only:
-            fields[vol.Required(CONF_GRID_IS_NET, default="unknown")] = _TRISTATE
-
-        # Not inferable from the mapping at all — a backup-panel sensor looks
-        # exactly like a whole-house one until the residual says otherwise.
-        fields[vol.Required(CONF_LOAD_WHOLE_HOUSE, default="unknown")] = _TRISTATE
-
-        # ConfigEntrySelector takes a single entry and has no `multiple` option,
-        # so the providers are listed by name instead — which is better anyway,
-        # since the user recognises "Forecast.Solar" and not a UUID. The field is
-        # omitted entirely when there is nothing to pick.
         providers = await async_forecast_providers(self.hass)
-        if providers:
-            fields[vol.Optional(CONF_FORECAST_ENTRIES, default=[])] = selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(value=entry_id, label=label)
-                        for entry_id, label in providers
-                    ],
-                    multiple=True,
-                    mode=selector.SelectSelectorMode.LIST,
-                )
-            )
-
-        return self.async_show_form(step_id="topology", data_schema=vol.Schema(fields))
+        return self.async_show_form(
+            step_id="topology",
+            data_schema=_topology_schema(self._channels, providers, {}),
+        )
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -248,31 +309,43 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                     data_schema=_channel_schema(self._discovery, channels),
                     errors={"base": error},
                 )
-            return self.async_update_reload_and_abort(
-                entry,
-                data_updates={
-                    CONF_CHANNELS: [
-                        {CONF_ROLE: role_key, CONF_ENTITY_ID: entity_id, CONF_ORIGIN: "user"}
-                        for role_key, entity_id in channels.items()
-                    ]
-                },
-            )
+            self._channels = channels
+            return await self.async_step_reconfigure_topology()
 
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=_channel_schema(self._discovery, current),
         )
 
-    @property
-    def _battery_mapped(self) -> bool:
-        return (
-            Role.BATTERY_CHARGE.key in self._channels
-            or Role.BATTERY_DISCHARGE.key in self._channels
-        )
+    async def async_step_reconfigure_topology(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The same questions setup asks, answerable again.
 
-    @property
-    def _both_grid_mapped(self) -> bool:
-        return Role.GRID_IMPORT.key in self._channels and Role.GRID_EXPORT.key in self._channels
+        Everything here was previously write-once. A user who added a forecast
+        provider after setup, or realised their consumption sensor covers only
+        the backup panel, had no way to say so — and the only route that
+        appeared to work was adding a second entry, which is how two
+        installations end up fighting over one forecast archive.
+        """
+        entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            return self.async_update_reload_and_abort(
+                entry,
+                data_updates={
+                    CONF_CHANNELS: _channel_records(
+                        self._channels, entry.data.get(CONF_CHANNELS, [])
+                    ),
+                    **_topology_values(user_input, self._channels),
+                },
+            )
+
+        providers = await async_forecast_providers(self.hass)
+        return self.async_show_form(
+            step_id="reconfigure_topology",
+            data_schema=_topology_schema(self._channels, providers, dict(entry.data)),
+        )
 
     def _unique_id(self) -> str:
         """Identify an installation by the channels it monitors."""

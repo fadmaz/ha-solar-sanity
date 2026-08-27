@@ -145,39 +145,40 @@ class TestQuestionsAreConditional:
     a worse answer than the one we already had.
     """
 
-    def _flow(self, channels: dict[str, str]):
-        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
-
-        flow = SolarSanityConfigFlow()
-        flow._channels = channels
-        return flow
-
     def test_battery_question_is_skipped_when_battery_is_mapped(self) -> None:
-        flow = self._flow(
-            {"pv": "sensor.pv", "load": "sensor.load", "battery_charge": "sensor.chg"}
+        from custom_components.solar_sanity.config_flow import _battery_mapped
+
+        assert (
+            _battery_mapped(
+                {"pv": "sensor.pv", "load": "sensor.load", "battery_charge": "sensor.chg"}
+            )
+            is True
         )
-        assert flow._battery_mapped is True
 
     def test_battery_question_is_asked_when_no_battery_is_mapped(self) -> None:
-        flow = self._flow({"pv": "sensor.pv", "load": "sensor.load"})
-        assert flow._battery_mapped is False
+        from custom_components.solar_sanity.config_flow import _battery_mapped
+
+        assert _battery_mapped({"pv": "sensor.pv", "load": "sensor.load"}) is False
 
     def test_grid_net_question_only_matters_when_import_is_alone(self) -> None:
         """Both mapped means two dedicated sensors — nothing to interpret."""
-        both = self._flow(
-            {
-                "pv": "sensor.pv",
-                "load": "sensor.load",
-                "grid_import": "sensor.i",
-                "grid_export": "sensor.e",
-            }
-        )
-        assert both._both_grid_mapped is True
+        from custom_components.solar_sanity.config_flow import _both_grid_mapped
 
-        import_only = self._flow(
-            {"pv": "sensor.pv", "load": "sensor.load", "grid_import": "sensor.i"}
+        assert (
+            _both_grid_mapped(
+                {
+                    "pv": "sensor.pv",
+                    "load": "sensor.load",
+                    "grid_import": "sensor.i",
+                    "grid_export": "sensor.e",
+                }
+            )
+            is True
         )
-        assert import_only._both_grid_mapped is False
+        assert (
+            _both_grid_mapped({"pv": "sensor.pv", "load": "sensor.load", "grid_import": "sensor.i"})
+            is False
+        )
 
 
 class TestChannelKind:
@@ -452,3 +453,168 @@ class TestLiveResidualEntityIsConditional:
         from custom_components.solar_sanity.coordinator import SolarSanityCoordinator
 
         assert isinstance(SolarSanityCoordinator.has_live_tier, property)
+
+
+class TestReconfigureCoversEverything:
+    """Setup asks four things and reconfigure used to change only one.
+
+    A user who added a forecast provider afterwards, or realised their
+    consumption sensor covers only the backup panel, had no way to say so. The
+    only route that appeared to work was adding a second entry — which is how
+    two installations end up fighting over one forecast archive.
+    """
+
+    def test_the_step_exists(self) -> None:
+        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
+
+        assert hasattr(SolarSanityConfigFlow, "async_step_reconfigure_topology")
+
+    def test_the_mapping_step_hands_on_rather_than_finishing(self) -> None:
+        import inspect
+
+        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
+
+        source = inspect.getsource(SolarSanityConfigFlow.async_step_reconfigure)
+        assert "async_step_reconfigure_topology" in source
+
+    def test_it_writes_every_topology_answer(self) -> None:
+        import inspect
+
+        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
+
+        source = inspect.getsource(SolarSanityConfigFlow.async_step_reconfigure_topology)
+        assert "_topology_values" in source
+        assert "data_updates" in source
+
+    def test_both_steps_have_copy(self) -> None:
+        """A step with no strings entry renders as a raw key."""
+        import json
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "solar_sanity"
+        for name in ("strings.json", "translations/en.json"):
+            data = json.loads((root / name).read_text(encoding="utf-8"))
+            steps = data["config"]["step"]
+            assert "reconfigure_topology" in steps, f"{name} has no copy for the step"
+            assert set(steps["reconfigure_topology"]["data"]) == {
+                "has_battery",
+                "grid_is_net",
+                "load_whole_house",
+                "forecast_entries",
+            }
+
+
+class TestTopologySchemaIsShared:
+    """Setup and reconfigure must ask the same questions or they will drift."""
+
+    @staticmethod
+    def _keys(channels, providers=(), current=None):
+        from custom_components.solar_sanity.config_flow import _topology_schema
+
+        schema = _topology_schema(dict(channels), list(providers), dict(current or {}))
+        return {str(key.schema) for key in schema.schema}
+
+    def test_a_mapped_battery_is_not_asked_about(self) -> None:
+        keys = self._keys({"load": "sensor.l", "pv": "sensor.p", "battery_charge": "sensor.c"})
+
+        assert "has_battery" not in keys
+
+    def test_an_unmapped_battery_is(self) -> None:
+        keys = self._keys({"load": "sensor.l", "pv": "sensor.p"})
+
+        assert "has_battery" in keys
+
+    def test_net_grid_is_asked_only_when_import_is_alone(self) -> None:
+        alone = self._keys({"load": "sensor.l", "pv": "sensor.p", "grid_import": "sensor.i"})
+        both = self._keys(
+            {
+                "load": "sensor.l",
+                "pv": "sensor.p",
+                "grid_import": "sensor.i",
+                "grid_export": "sensor.e",
+            }
+        )
+
+        assert "grid_is_net" in alone
+        assert "grid_is_net" not in both
+
+    def test_the_provider_field_is_omitted_when_there_are_none(self) -> None:
+        assert "forecast_entries" not in self._keys({"load": "sensor.l"})
+
+    def test_the_provider_field_appears_when_there_are_some(self) -> None:
+        keys = self._keys({"load": "sensor.l"}, providers=[("abc", "Forecast.Solar")])
+
+        assert "forecast_entries" in keys
+
+    def test_load_coverage_is_always_asked(self) -> None:
+        """Nothing in a mapping can settle it — a backup panel looks whole."""
+        keys = self._keys({"load": "sensor.l", "pv": "sensor.p"})
+
+        assert "load_whole_house" in keys
+
+
+class TestTopologyValues:
+    """What the mapping settles outright is not left as "not sure"."""
+
+    @staticmethod
+    def _values(user_input, channels):
+        from custom_components.solar_sanity.config_flow import _topology_values
+
+        return _topology_values(dict(user_input), dict(channels))
+
+    def test_a_mapped_battery_answers_yes(self) -> None:
+        values = self._values({}, {"battery_discharge": "sensor.d"})
+
+        assert values["has_battery"] == "yes"
+
+    def test_two_grid_sensors_answer_not_net(self) -> None:
+        values = self._values({}, {"grid_import": "sensor.i", "grid_export": "sensor.e"})
+
+        assert values["grid_is_net"] == "no"
+
+    def test_the_user_answer_wins_where_one_was_asked(self) -> None:
+        values = self._values({"has_battery": "no"}, {})
+
+        assert values["has_battery"] == "no"
+
+    def test_unanswered_is_not_sure_rather_than_a_guess(self) -> None:
+        values = self._values({}, {})
+
+        assert values["has_battery"] == "unknown"
+        assert values["load_whole_house"] == "unknown"
+
+
+class TestReconfigureKeepsOrigin:
+    """Origin decides confidence, so a pass through the form must not inflate it."""
+
+    @staticmethod
+    def _records(channels, previous):
+        from custom_components.solar_sanity.config_flow import _channel_records
+
+        return {r["role"]: r["origin"] for r in _channel_records(dict(channels), list(previous))}
+
+    def test_an_untouched_autodetected_channel_stays_autodetected(self) -> None:
+        previous = [{"role": "pv", "entity_id": "sensor.p", "origin": "autodetected"}]
+        origins = self._records({"pv": "sensor.p"}, previous)
+
+        assert origins["pv"] == "autodetected", "a pass through the form promoted a guess"
+
+    def test_a_changed_channel_becomes_the_user_s(self) -> None:
+        previous = [{"role": "pv", "entity_id": "sensor.old", "origin": "autodetected"}]
+        origins = self._records({"pv": "sensor.new"}, previous)
+
+        assert origins["pv"] == "user"
+
+    def test_a_new_channel_is_the_user_s(self) -> None:
+        origins = self._records({"grid_export": "sensor.e"}, [])
+
+        assert origins["grid_export"] == "user"
+
+    def test_a_removed_channel_is_gone(self) -> None:
+        previous = [
+            {"role": "pv", "entity_id": "sensor.p", "origin": "user"},
+            {"role": "grid_export", "entity_id": "sensor.e", "origin": "user"},
+        ]
+        origins = self._records({"pv": "sensor.p"}, previous)
+
+        assert "grid_export" not in origins
