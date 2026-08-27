@@ -21,6 +21,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 from . import frontend
@@ -33,6 +34,8 @@ from .const import (
     PLATFORMS,
     SERVICE_EXPORT_REPORT,
     SERVICE_VALIDATE_NOW,
+    STORAGE_KEY_STATE,
+    STORAGE_VERSION,
 )
 from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .repairs import async_remove_issues, async_sync_issues
@@ -132,6 +135,14 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     exactly when a user is least likely to connect the two events.
     """
     await async_remove_issues(hass, entry.entry_id)
+
+    # And its state file. One per entry now, so leaving it behind would
+    # accumulate dead kilobytes that Home Assistant preloads at every boot.
+    store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY_STATE}.{entry.entry_id}")
+    try:
+        await store.async_remove()
+    except Exception:
+        _LOGGER.debug("could not remove state for %s", entry.entry_id, exc_info=True)
 
 
 async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinator) -> None:

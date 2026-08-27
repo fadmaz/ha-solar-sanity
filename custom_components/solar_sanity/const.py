@@ -68,6 +68,23 @@ LIVE_MAX_AGE_SECONDS: Final = 120
 FORECAST_CAPTURE_INTERVAL: Final = timedelta(minutes=30)
 FORECAST_STATISTIC_PREFIX: Final = f"{DOMAIN}:forecast_"
 
+#: The day-ahead archive, kept separately from the rolling one above.
+#:
+#: A provider revises its forecast all day, and the rolling series keeps only
+#: the latest revision for each hour — so by the time an hour has passed, what
+#: is stored for it was issued minutes before, not the day before. Scoring that
+#: and calling it a day-ahead forecast would flatter every provider equally and
+#: mean nothing. An hour lands here on its first sighting at real lead time and
+#: is never revised afterwards.
+FORECAST_DAYAHEAD_PREFIX: Final = f"{DOMAIN}:dayahead_"
+
+#: How far ahead an hour must still be to count as forecast rather than nowcast.
+DAYAHEAD_MIN_LEAD_HOURS: Final = 12
+
+#: How far back to look for a running total to resume from. Beyond this a gap is
+#: treated as unresumable rather than restarted at zero.
+FORECAST_SUM_LOOKBACK_DAYS: Final = 7
+
 # --- events ----------------------------------------------------------------
 EVENT_FINDING_RAISED: Final = f"{DOMAIN}_finding_raised"
 EVENT_FINDING_CLEARED: Final = f"{DOMAIN}_finding_cleared"
