@@ -302,3 +302,94 @@ class TestLoadsAsHomeAssistantLoadsIt:
             "absolute self-import resolves only under pytest and breaks a real "
             "install: " + "; ".join(offenders)
         )
+
+
+class TestSampleFloorsAgree:
+    """The two floors for attribution must be derived, not written down twice.
+
+    They were written down twice, drifted to five days and seven, and every
+    installation then spent two days being told no explanation was convincing —
+    when in fact none had been generated. The engine reached attribution, the
+    snap table could not produce a single candidate from the hours available,
+    and the same sentence covered both.
+    """
+
+    def test_the_hour_floor_matches_what_the_ratio_floor_actually_needs(self) -> None:
+        """Computed from percentile itself, not from a comment about it.
+
+        ``estimate_gamma`` keeps only the upper quartile by magnitude before
+        taking a median, so ``MIN_RATIO_SAMPLES`` is counted in upper-quartile
+        hours and needs roughly four times as many hours to exist.
+        """
+        from analysis.hypotheses import MIN_HOURS_FOR_SNAP, MIN_RATIO_SAMPLES
+        from analysis.linalg import percentile
+
+        needed = None
+        for count in range(4, 400):
+            magnitudes = [float(i) for i in range(count)]
+            cutoff = percentile(magnitudes, 75)
+            if cutoff is None:
+                continue
+            if sum(1 for m in magnitudes if m >= cutoff) >= MIN_RATIO_SAMPLES:
+                needed = count
+                break
+
+        assert needed is not None, "the upper quartile never reaches the ratio floor"
+        assert needed <= MIN_HOURS_FOR_SNAP, (
+            f"{MIN_HOURS_FOR_SNAP} hours cannot yield {MIN_RATIO_SAMPLES} "
+            f"upper-quartile ratios; {needed} are required"
+        )
+        assert MIN_HOURS_FOR_SNAP - needed < 24, (
+            "the hour floor is more than a day above what is required, which "
+            "delays every finding for no stated reason"
+        )
+
+    def test_the_day_floor_is_derived_from_the_hour_floor(self) -> None:
+        from analysis.hypotheses import MIN_DAYS_FOR_SNAP, MIN_HOURS_FOR_SNAP
+
+        assert MIN_DAYS_FOR_SNAP * 24 >= MIN_HOURS_FOR_SNAP
+        assert (MIN_DAYS_FOR_SNAP - 1) * 24 < MIN_HOURS_FOR_SNAP, "rounded up too far"
+
+    def test_a_channel_hypothesis_is_held_to_the_longer_floor(self) -> None:
+        from analysis.hypotheses import MIN_DAYS_FOR_SNAP, Hypothesis, days_needed
+        from analysis.model import Confidence
+
+        snap = Hypothesis(
+            code="x",
+            channel_keys=("pv",),
+            a=2.0,
+            gamma=-1.0,
+            gamma_iqr=0.1,
+            confidence=Confidence.HIGH,
+            correction_kind=None,
+            has_free_parameter=False,
+        )
+
+        assert days_needed(snap) == MIN_DAYS_FOR_SNAP
+
+    def test_a_structural_hypothesis_is_not(self) -> None:
+        """It rests on shape, which is answerable from far less data."""
+        from analysis.hypotheses import MIN_DAYS_EVALUATED, Hypothesis, days_needed
+        from analysis.model import Confidence
+
+        structural = Hypothesis(
+            code="x",
+            channel_keys=(),
+            a=None,
+            gamma=None,
+            gamma_iqr=None,
+            confidence=Confidence.HIGH,
+            correction_kind=None,
+            has_free_parameter=True,
+        )
+
+        assert days_needed(structural) == MIN_DAYS_EVALUATED
+
+    def test_the_engine_quotes_the_same_number_it_enforces(self) -> None:
+        """The shortage message must not name a floor nothing checks."""
+        import inspect
+
+        from analysis import engine
+
+        source = inspect.getsource(engine._unattributed_reason)
+        assert "MIN_HOURS_FOR_SNAP" in source
