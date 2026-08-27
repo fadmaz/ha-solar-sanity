@@ -45,6 +45,10 @@ class Closure(Enum):
 class ClosureResult:
     state: Closure
     reason: str = ""
+    #: Open specifically because nothing measures energy leaving the house.
+    #: Worth distinguishing: it is the one open boundary that can be worked
+    #: around, because there are hours in which nothing *can* leave.
+    unmeasured_export: bool = False
 
 
 def check_closure(specs: tuple[ChannelSpec, ...], declared: DeclaredTopology) -> ClosureResult:
@@ -97,6 +101,7 @@ def check_closure(specs: tuple[ChannelSpec, ...], declared: DeclaredTopology) ->
             Closure.OPEN,
             "Nothing measures energy leaving the house. Anything exported will "
             "look like generation that went missing.",
+            unmeasured_export=True,
         )
 
     if not battery_mapped:

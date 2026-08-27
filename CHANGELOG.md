@@ -2,6 +2,41 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.4.0] - 2026-08-27
+
+### Fixed
+
+- **Four of the six inferred fault types crashed the analysis at the moment
+  they were found.** Both half-coverage variants and both unit-scale variants
+  needed copy fields the inferred renderer never supplied, so each raised
+  `KeyError` on the way out. Inside Home Assistant that takes the coordinator
+  update with it and every entity goes unavailable — on precisely the
+  installations the product exists to help. `faults.render` raises on a missing
+  field deliberately, which is right only if the crash happens in CI; no test
+  had ever driven those codes as far as a rendered finding. There is now a
+  suite that reads the placeholders out of every template and checks them
+  against the field set each renderer actually builds.
+
+### Added
+
+- **A verdict for houses that cannot close their balance.** With no export
+  meter there is no measurement separating energy that left from a sensor
+  reading high — in a surplus hour those are the same number, and no amount of
+  waiting produces a third one. "Still looking" was a promise that could never
+  be kept.
+
+  The hours with no generation are ordinary arithmetic: nothing can be
+  exported, so import plus discharge really does have to equal consumption.
+  Those hours are now checked on their own, and the status says exactly what
+  the verdict covers — including that the generation sensor is not part of it,
+  since it only produces energy during the hours that cannot be checked.
+
+  A fault visible at night is found this way even on a system whose daylight
+  hours are unfalsifiable.
+- The status sensor carries `notes`: never a fault, never a Repairs issue, never
+  an alarm — what a verdict does *not* cover. A clean status that quietly
+  covered half the hours is worse than no status.
+
 ## [0.3.2] - 2026-08-27
 
 ### Fixed

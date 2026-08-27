@@ -39,6 +39,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Any) ->
         # the same, so without this the two are indistinguishable from outside.
         "identity_fails": report.identity_fails if report else None,
         "reason": report.reason if report else None,
+        "notes": list(report.notes) if report else [],
         "finding": (
             {
                 "code": report.finding.code,

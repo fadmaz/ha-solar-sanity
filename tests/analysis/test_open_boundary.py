@@ -243,3 +243,69 @@ def test_every_magnitude_role_screened_has_copy() -> None:
         headline, detail, fix = render(code, name="Test sensor")
         assert "Test sensor" in headline or "Test sensor" in detail
         assert fix
+
+
+class TestVerifiableHoursOnly:
+    """When the open path cannot be closed, check the hours it cannot reach.
+
+    A house with no export meter has no measurement that separates energy that
+    left from energy a sensor over-reported — in a surplus hour those are the
+    same number, and no amount of waiting produces a third one. Telling that
+    user "still looking" is a promise that cannot be kept.
+
+    The hours with no generation are ordinary arithmetic, and checking them is
+    the difference between a verdict about part of the system and none at all.
+    """
+
+    @staticmethod
+    def _report(series, seed_specs=NO_EXPORT):
+        return analyse(to_request(series, specs=specs_for(seed_specs), declared=DECLARED))
+
+    @pytest.mark.parametrize("seed", [1, 3])
+    def test_a_healthy_house_gets_a_verdict_instead_of_a_wait(self, seed: int) -> None:
+        report = self._report(house.build(days=30, seed=seed))
+
+        assert report.status is Status.OK
+        assert report.notes, "an OK covering only half the hours must say so"
+
+    def test_the_note_says_what_was_not_checked(self) -> None:
+        report = self._report(house.build(days=30, seed=1))
+        joined = " ".join(report.notes)
+
+        assert "no generation" in joined
+        assert "generation sensor is not covered" in joined
+
+    def test_the_note_quantifies_the_unexplained_surplus(self) -> None:
+        """A number the user can check against their own meter or bill."""
+        report = self._report(house.build(days=30, seed=1))
+
+        assert any("kWh a day is unaccounted for" in note for note in report.notes)
+
+    @pytest.mark.parametrize("seed", [1, 3])
+    def test_a_fault_visible_at_night_is_still_found(self, seed: int) -> None:
+        """The point of the exercise: half a system checked beats none."""
+        series = house.halve(house.build(days=30, seed=seed), "load")
+        report = self._report(series)
+
+        assert report.finding is not None
+        assert report.finding.code == Code.PARTIAL_COVERAGE
+        assert report.notes
+
+    @pytest.mark.parametrize("noise_pct", [0.0, 0.03, 0.05])
+    @pytest.mark.parametrize("seed", range(6))
+    def test_a_healthy_house_is_never_blamed(self, seed: int, noise_pct: float) -> None:
+        """The restricted pass must not become a new false-positive surface."""
+        series = house.build(days=30, seed=seed)
+        if noise_pct:
+            series = house.add_noise(series, noise_pct, seed=seed + 300)
+        report = self._report(series)
+
+        assert report.finding is None or report.finding.code == Code.MISSING_EXPORT, (
+            f"seed={seed} noise={noise_pct}: {report.finding.code} on a healthy house"
+        )
+
+    def test_a_closed_boundary_gets_no_notes(self) -> None:
+        """Nothing is restricted when everything is measured."""
+        report = analyse(to_request(house.build(days=30, seed=1), declared=DECLARED))
+
+        assert report.notes == ()

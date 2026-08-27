@@ -334,6 +334,12 @@ class AnalysisReport:
     #: status alone cannot tell them apart, so the entity layer would have to
     #: re-derive the difference from engine internals to answer honestly.
     identity_fails: bool = False
+    #: Things worth saying that are not findings: never a fault, never a
+    #: Repairs issue, never an alarm. What a system's own shape makes
+    #: uncheckable belongs here — it is not a defect and there may be nothing
+    #: the user can do about it, but leaving it unsaid means a verdict that
+    #: quietly covers less than the user thinks.
+    notes: tuple[str, ...] = ()
     deferred: tuple[str, ...] = ()
     topology: TopologyEstimate = field(default_factory=TopologyEstimate)
     loss_model: LossModel | None = None

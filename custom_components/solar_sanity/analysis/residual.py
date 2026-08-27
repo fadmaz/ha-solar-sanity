@@ -76,6 +76,15 @@ MIN_VALID_BUCKETS_PER_DAY = 18
 #: Below this there is not enough signal to attribute anything.
 MIN_SIGNAL_WH = 3000.0
 
+#: Generation at or below this counts as none at all, for the purpose of
+#: deciding whether an hour could have exported anything.
+PV_NEGLIGIBLE_WH = 50.0
+
+#: A day needs this many *verifiable* hours when the boundary is open. Far
+#: lower than the ordinary floor because it is counting only the hours in which
+#: nothing can leave — a summer night is barely nine of them.
+MIN_VERIFIABLE_BUCKETS_PER_DAY = 6
+
 
 @dataclass(frozen=True, slots=True)
 class DayResidual:
@@ -214,14 +223,27 @@ def build_days(
     specs: tuple[ChannelSpec, ...],
     loss: LossModel,
     utc_offset_hours: float = 0.0,
+    verifiable_only: bool = False,
 ) -> tuple[DayResidual, ...]:
     """Group buckets into local days and compute each day's residual.
 
     Days with a DST transition are dropped entirely rather than special-cased:
     a 23- or 25-hour day breaks the standby term and there are only two a year.
+
+    ``verifiable_only`` keeps only the hours in which an unmeasured export path
+    cannot have carried anything — those with no generation at all. On a house
+    with no export meter every daylight hour is unfalsifiable, because the
+    energy that appears to be missing and the energy that actually left are the
+    same number. The hours either side of that are ordinary arithmetic, and
+    checking them is the difference between a verdict about half a system and no
+    verdict at all.
     """
     keys = balance_keys(specs)
     if not keys:
+        return ()
+
+    pv_key = next((s.key for s in specs if s.role is Role.PV), None)
+    if verifiable_only and pv_key is None:
         return ()
 
     offset = timedelta(hours=utc_offset_hours)
@@ -232,13 +254,19 @@ def build_days(
             continue
         if not bucket_is_valid(bucket, keys):
             continue
+        if verifiable_only:
+            generation = bucket.value(pv_key) if pv_key else None
+            if generation is None or generation > PV_NEGLIGIBLE_WH:
+                continue
         local_day = (bucket.start_utc + offset).date()
         grouped.setdefault(local_day, []).append(bucket)
+
+    minimum = MIN_VERIFIABLE_BUCKETS_PER_DAY if verifiable_only else MIN_VALID_BUCKETS_PER_DAY
 
     days: list[DayResidual] = []
     for day in sorted(grouped):
         day_buckets = sorted(grouped[day], key=lambda b: b.start_utc)
-        if len(day_buckets) < MIN_VALID_BUCKETS_PER_DAY:
+        if len(day_buckets) < minimum:
             continue
 
         r = tuple(signed_sum(b, specs) for b in day_buckets)
