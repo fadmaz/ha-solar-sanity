@@ -278,6 +278,19 @@ def screen_cumulative(
     return hits
 
 
+#: One-directional roles whose values must be magnitudes, and the copy that
+#: applies when they are not. PV and LOAD are deliberately absent: a generation
+#: sensor reading slightly below zero overnight is an offset, not a net meter,
+#: and there is no net slot to redirect either of them to — so naming them here
+#: would buy a false-positive surface and offer nothing to do about it.
+_MAGNITUDE_ROLES: dict[Role, str] = {
+    Role.GRID_IMPORT: Code.SIGNED_NET_IN_DEDICATED,
+    Role.GRID_EXPORT: Code.SIGNED_NET_IN_DEDICATED,
+    Role.BATTERY_CHARGE: Code.SIGNED_NET_BATTERY,
+    Role.BATTERY_DISCHARGE: Code.SIGNED_NET_BATTERY,
+}
+
+
 def screen_signed_net(
     buckets: tuple[Bucket, ...], specs: tuple[ChannelSpec, ...]
 ) -> list[ScreenHit]:
@@ -285,12 +298,20 @@ def screen_signed_net(
 
     Requires sustained, repeated negatives — not a single noisy sample, and not
     a CT drifting a few watts below zero at 3am.
+
+    This is decidable from a couple of days of ordinary hours: no statistics, no
+    gamma, no waiting for the residual to stabilise. It used to cover the grid
+    roles only, which left the case it was written for — a battery published as
+    one signed figure and mapped to the charging slot — to fall through to the
+    inferential stage, where it cannot be named because the sign has already
+    been absorbed into the arithmetic.
     """
     hits: list[ScreenHit] = []
     ordered = sorted(buckets, key=lambda b: b.start_utc)
 
     for spec in specs:
-        if spec.role not in (Role.GRID_IMPORT, Role.GRID_EXPORT):
+        code = _MAGNITUDE_ROLES.get(spec.role)
+        if code is None:
             continue
 
         values = _raw_series(tuple(ordered), spec.key)
@@ -313,10 +334,16 @@ def screen_signed_net(
 
         hits.append(
             ScreenHit(
-                code=Code.SIGNED_NET_IN_DEDICATED,
+                code=code,
                 channel_keys=(spec.key,),
                 confidence=Confidence.CERTAIN,
-                correction_kind="reinterpret_as_net",
+                # Only the grid has a net slot to be reinterpreted into. For a
+                # battery the fix is a remap, and offering an internal override
+                # that silently drops half the channel would be worse than
+                # saying nothing.
+                correction_kind=(
+                    "reinterpret_as_net" if code == Code.SIGNED_NET_IN_DEDICATED else None
+                ),
                 fields={"name": spec.friendly_name},
             )
         )
@@ -397,8 +424,17 @@ def run_all(
     if stuck:
         return stuck
 
+    # Signed before unit-scale, and short-circuiting, for the same reason:
+    # screen_unit_scale measures a channel against the others' order of
+    # magnitude, and a channel whose values cancel around zero reads as a
+    # thousandfold error. That finding ships with a one-click correction that
+    # would multiply the channel by 1000 — a wrong answer with a destructive
+    # button attached is worse than a slower right one.
+    signed = screen_signed_net(buckets, specs)
+    if signed:
+        return signed
+
     hits: list[ScreenHit] = []
     hits.extend(screen_unit_scale(buckets, specs))
-    hits.extend(screen_signed_net(buckets, specs))
     hits.extend(screen_simultaneous_flow(snapshots, specs))
     return hits

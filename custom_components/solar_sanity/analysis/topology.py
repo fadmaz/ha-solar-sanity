@@ -84,6 +84,21 @@ def check_closure(specs: tuple[ChannelSpec, ...], declared: DeclaredTopology) ->
             "You told us there is a battery but nothing measures it.",
         )
 
+    # Export is a real path across the boundary, and an import-only mapping does
+    # not measure it. Treating that as closed asserts every path is accounted
+    # for on a system that is provably sending energy the other way — and the
+    # unmeasured export then arrives in the residual, one-signed and large,
+    # looking exactly like a fault.
+    #
+    # A single signed meter is the exception: it carries both directions in one
+    # channel, so import alone is complete.
+    if Role.GRID_EXPORT not in roles and declared.grid_is_single_net_sensor is not Answer.YES:
+        return ClosureResult(
+            Closure.OPEN,
+            "Nothing measures energy leaving the house. Anything exported will "
+            "look like generation that went missing.",
+        )
+
     if not battery_mapped:
         # Battery absent or unknown: still run the storage probe as a falsifier.
         return ClosureResult(Closure.OPEN, "No battery channel mapped.")
@@ -94,18 +109,27 @@ def check_closure(specs: tuple[ChannelSpec, ...], declared: DeclaredTopology) ->
 def _gamma_for_role(
     days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...], role: Role
 ) -> float | None:
-    """Median ratio of residual to a role's contribution, across all hours."""
+    """Median ratio of residual to a role's contribution, across all hours.
+
+    Measured against the *raw* residual ``r``, never the loss-corrected ``dr``.
+    The distinction is the whole stability of the fit: ``dr`` already has the
+    previous model subtracted, so fitting against it estimates the loss that
+    remains rather than the loss that is there. Carried forward as the next
+    run's prior, that alternates — a full estimate, then near zero, then a full
+    estimate again — and the reported status oscillates with it on every
+    refresh. Against ``r`` the fit is idempotent.
+    """
     spec = next((s for s in specs if s.role is role), None)
     if spec is None:
         return None
 
     ratios: list[float] = []
     for day in days:
-        for bucket, dr in zip(day.buckets, day.dr, strict=True):
+        for bucket, raw in zip(day.buckets, day.r, strict=True):
             value = bucket.value(spec.key)
             if value is None or value <= 0:
                 continue
-            ratios.append(dr / value)
+            ratios.append(raw / value)
     if len(ratios) < 50:
         return None
     return median(ratios)
@@ -125,10 +149,13 @@ def fit_loss_model(
     if len(days) < 3:
         return prior or LossModel()
 
+    established: list[str] = []
+
     pv_gamma = _gamma_for_role(days, specs, Role.PV)
     pv_dc = 0.0
     if pv_gamma is not None and DC_MEASUREMENT_WINDOW[0] <= pv_gamma <= DC_MEASUREMENT_WINDOW[1]:
         pv_dc = pv_gamma
+        established.append("pv_dc")
 
     charge_gamma = _gamma_for_role(days, specs, Role.BATTERY_CHARGE)
     discharge_gamma = _gamma_for_role(days, specs, Role.BATTERY_DISCHARGE)
@@ -141,14 +168,18 @@ def fit_loss_model(
             fitted = median(both)
             if fitted is not None:
                 battery_dc = fitted
+                established.append("battery_dc")
 
     standby = _fit_standby(days, specs)
+    if standby > 0.0:
+        established.append("standby")
 
     return LossModel(
         pv_dc_gamma=pv_dc,
         battery_dc_gamma=battery_dc,
         standby_w=standby,
         samples=len(days),
+        fitted_terms=tuple(established),
     )
 
 
@@ -162,14 +193,17 @@ def _fit_standby(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) 
 
     samples: list[float] = []
     for day in days:
-        for bucket, dr in zip(day.buckets, day.dr, strict=True):
+        # Raw residual, for the same reason as _gamma_for_role: fitting against
+        # a residual the previous model has already been subtracted from makes
+        # the fit oscillate rather than converge.
+        for bucket, raw in zip(day.buckets, day.r, strict=True):
             generation = bucket.value(pv.key)
             if generation is None or generation > 0:
                 continue
             throughput = sum(v for k in battery_keys if (v := bucket.value(k)) is not None)
             if throughput > STANDBY_MAX_BATTERY_WH:
                 continue
-            samples.append(dr / (bucket.seconds / 3600.0))
+            samples.append(raw / (bucket.seconds / 3600.0))
 
     if len(samples) < MIN_STANDBY_SAMPLES:
         return 0.0
@@ -204,7 +238,10 @@ def infer(
             elif abs(gamma) < DC_MEASUREMENT_MAX_IQR:
                 pv_dc = False
 
-    battery_dc = loss.battery_dc_gamma > 0.0 if loss.fitted else None
+    # Only claim a direction for a term the fit actually established. A
+    # rejected term also leaves the gamma at 0.0, and reporting that as
+    # "measured on the AC side" states as fact something never measured.
+    battery_dc = loss.battery_dc_gamma > 0.0 if loss.established("battery_dc") else None
 
     coupling = Coupling.UNKNOWN
     if pv_dc is True or battery_dc is True:

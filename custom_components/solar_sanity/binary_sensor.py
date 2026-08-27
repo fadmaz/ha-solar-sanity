@@ -29,12 +29,22 @@ def _data_healthy(report: AnalysisReport | None) -> bool | None:
 
     A binary sensor that reports "fine" while it has no data is lying, and this
     one is the entity most likely to be wired into somebody's automation.
+
+    ``identity_fails`` is the other half of that. "Still looking" is reached two
+    ways — the numbers move around, and the numbers demonstrably do not add up —
+    and only the report knows which. Judged on ``finding`` alone, an
+    installation whose energy balance had been shown to miss by 40% on five of
+    the last seven days reported no problem, purely because no single sensor
+    could yet be blamed for it. Not knowing the cause is not the same as there
+    not being one.
     """
     if report is None or report.status in (
         Status.INSUFFICIENT_DATA,
         Status.NOT_CHECKABLE,
     ):
         return None
+    if report.identity_fails:
+        return False
     return report.finding is None or report.finding.severity is Severity.NOTE
 
 

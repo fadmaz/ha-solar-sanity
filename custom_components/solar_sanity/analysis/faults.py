@@ -32,6 +32,7 @@ class Code:
     UNIT_SCALE_1000 = "unit_scale_1000"
     CUMULATIVE_IN_PERIODIC = "cumulative_in_periodic_field"
     SIGNED_NET_IN_DEDICATED = "signed_net_in_dedicated_slot"
+    SIGNED_NET_BATTERY = "signed_net_battery_slot"
     CHANNELS_SWAPPED = "channels_swapped"
     DUPLICATE_CHANNEL = "duplicate_channel_pair"
     SIMULTANEOUS_FLOW = "simultaneous_opposing_flow"
@@ -160,6 +161,18 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
         "being counted as a negative.",
         "Map it to the net-grid slot instead, and leave the opposite slot empty. "
         "Solar Sanity will split it correctly.",
+    ),
+    Code.SIGNED_NET_BATTERY: (
+        "{name} measures both directions at once",
+        "{name} goes negative for part of most days. A sensor mapped to one "
+        "battery direction should only ever report that direction; one that "
+        "swings both ways is a net figure, so charging and discharging cancel "
+        "each other out inside a single channel and neither is counted "
+        "properly.",
+        "Map your battery's charge and discharge sensors separately — most "
+        "inverters expose both. If yours only publishes the net figure, leave "
+        "the other slot empty rather than mapping a second sensor alongside it, "
+        "or the same energy is counted twice.",
     ),
     Code.CHANNELS_SWAPPED: (
         "{name} and {other} look swapped",

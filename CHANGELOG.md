@@ -2,6 +2,62 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.3.0] - 2026-08-27
+
+Everything here came out of one real installation sitting at a 40% energy
+imbalance while the integration reported "Still looking" and its **Data problem**
+sensor reported **OK**.
+
+### Fixed
+
+- **A house with no export sensor was treated as fully measured.** Closure
+  checked that *a* grid sensor existed, not that both directions were covered,
+  so an import-only mapping was called closed — while every exported watt-hour
+  arrived in the residual as generation that had gone missing. It is now
+  reported as an open boundary, and the reason reaches the user instead of being
+  computed and discarded.
+- **"You appear to be exporting, but nothing measures it" could never be
+  said.** The fault code and its copy have shipped since the first release with
+  nothing able to emit them. There is now a hypothesis behind it, discriminating
+  on *when* the energy goes missing: export cannot happen while consumption
+  exceeds generation, and a miscounted sensor does not care what time it is.
+- **The `Data problem` binary sensor reported OK on a proven imbalance.** It
+  judged only whether a sensor had been named, so an installation whose balance
+  had been shown to miss by more than a tenth of throughput on five of the last
+  seven days read as healthy. Not knowing the cause is not the same as there not
+  being one. This is the entity most likely to be in somebody's automation, and
+  nothing had ever tested it.
+- **A battery published as one signed figure was invisible.** The check for a
+  net meter in a one-way slot covered the grid roles only, so a battery sensor
+  swinging both ways passed every categorical screen and had its sign quietly
+  absorbed into the arithmetic. It is now caught from ordinary hours, with no
+  waiting and no statistics.
+- **The loss model oscillated instead of converging.** It was fitted against the
+  residual the previous model had already been subtracted from, so it estimated
+  the loss that *remained* rather than the loss that was there — then that was
+  persisted and fed back as the next prior. The reported status alternated with
+  it on every refresh. The fit now runs against the raw residual and is
+  idempotent.
+- **A rejected fit was indistinguishable from a genuine result.** Every term
+  defaults to `0.0`, so "we could not establish this" and "there is no loss
+  here" were the same answer — and the second was then asserted downstream as
+  fact ("battery measured on the AC side"). Terms now record whether they were
+  established.
+- **A categorical fault could be asserted at full confidence on hourly means.**
+  The inferred path has always widened its uncertainty for mean-derived data;
+  the screen path never did.
+- **Discovery created the exact fault this product exists to detect.** A sensor
+  named for both battery directions scored a confident match for each, because
+  every role was scored in isolation, and the one listed first in the keyword
+  table simply took it — leaving the other direction to a second sensor and the
+  same energy counted twice. Such a name is now demoted below the auto-pick
+  threshold: still offered, never chosen without a human.
+- A shortage no longer accuses a sensor whose history merely starts later. A
+  channel with gaps and a channel that is younger look identical in a coverage
+  count and mean opposite things: one resolves by waiting, the other does not.
+- When no explanation has been *generated* — as opposed to generated and
+  rejected — the status now says so rather than implying candidates were weighed.
+
 ## [0.2.3] - 2026-08-26
 
 ### Added

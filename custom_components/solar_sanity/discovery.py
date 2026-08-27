@@ -67,6 +67,28 @@ KEYWORDS: dict[Role, tuple[str, ...]] = {
 #: original would return whatever scored highest even when nothing matched.
 MIN_SCORE = 25
 
+#: Roles that measure opposite directions of the same physical flow. A name
+#: matching both sides describes a net figure, not either half of one.
+OPPOSITE_ROLE: dict[Role, Role] = {
+    Role.GRID_IMPORT: Role.GRID_EXPORT,
+    Role.GRID_EXPORT: Role.GRID_IMPORT,
+    Role.BATTERY_CHARGE: Role.BATTERY_DISCHARGE,
+    Role.BATTERY_DISCHARGE: Role.BATTERY_CHARGE,
+}
+
+#: Enough to drop a clean 50 below CONFIDENT_SCORE, not enough to drop a
+#: weak match below MIN_SCORE. The point is to stop it being chosen
+#: automatically, not to hide it.
+AMBIGUOUS_PENALTY = 10
+
+
+def _also_matches_opposite(role: Role, haystack: str) -> bool:
+    """Whether this name matches the keywords of the opposing direction too."""
+    opposite = OPPOSITE_ROLE.get(role)
+    if opposite is None:
+        return False
+    return any(matches(keyword, haystack) for keyword in KEYWORDS[opposite])
+
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
@@ -76,9 +98,11 @@ class Candidate:
     score: int
     reasons: tuple[str, ...]
 
-    #: Maximum achievable score: 30 for the unit/device-class match plus 20 for
-    #: a first-choice keyword. The old threshold of 60 was unreachable, which
-    #: silently disabled the de-duplication that depends on it.
+    #: What a clean match scores: 30 for the unit or device class plus 20 for a
+    #: first-choice keyword, so 50. This threshold sits just under that, which
+    #: lets a demoted candidate still be offered without being auto-claimed. The
+    #: old value of 60 was above anything reachable, which silently disabled the
+    #: de-duplication that depends on it.
     CONFIDENT_SCORE = 45
 
     @property
@@ -308,6 +332,19 @@ def _rank(
                 score += max(5, 20 - index * 3)
                 reasons.append(f"name mentions {keyword!r}")
                 break
+
+        # A name carrying *both* directions belongs to neither slot on its own
+        # evidence. Each role was scored in isolation, so a single signed sensor
+        # named for both scored a confident 50 for each, and the one that came
+        # first in the keyword table simply took it — leaving the other role to
+        # a second sensor, and the same energy counted twice.
+        #
+        # Demoted rather than rejected: "Battery Charge Discharge Power" is a
+        # real name for a real net sensor, and it should still be offered. It
+        # just must not be chosen without a human looking at it.
+        if _also_matches_opposite(role, haystack):
+            score -= AMBIGUOUS_PENALTY
+            reasons.append("name mentions both directions")
 
         if score < MIN_SCORE or len(reasons) < 2:
             # A unit match alone is not evidence of *which* role this is.
