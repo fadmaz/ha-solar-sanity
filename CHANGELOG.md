@@ -2,6 +2,26 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.5.1] - 2026-08-27
+
+### Fixed
+
+- **Reconfigure could only change the sensor mapping.** The three topology
+  answers and the forecast provider selection were write-once at setup, so a
+  user who added a forecast integration afterwards, or realised their
+  consumption sensor covers only the backup panel, had no way to say so. The
+  only route that appeared to work was adding a second entry — which is how two
+  installations end up fighting over one forecast archive. Reconfigure now has a
+  second step asking exactly what setup asks, pre-filled from what is stored.
+- **Reconfigure stamped every channel as the user's own**, including the ones
+  they never touched. Origin is not cosmetic: an autodetected channel has its
+  findings downgraded one confidence step, because a mapping nobody confirmed is
+  weaker evidence than one somebody chose. A pass through the form without
+  changing anything quietly promoted the confidence of the whole installation.
+  A channel now keeps its origin unless its entity actually changed.
+- The conditional question logic is shared between setup and reconfigure rather
+  than written twice, so the two cannot drift into asking different things.
+
 ## [0.5.0] - 2026-08-27
 
 Forecast scoring was designed, and the design's first conclusion was that the

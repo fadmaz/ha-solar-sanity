@@ -38,7 +38,7 @@
       },
       "reconfigure": {
         "title": "Change which sensors are used",
-        "description": "Correct a mapping without losing any history.",
+        "description": "Correct a mapping without losing any history. The next screen lets you change the rest of your setup too.",
         "data": {
           "pv": "Solar generation",
           "load": "House consumption",
@@ -46,6 +46,20 @@
           "grid_export": "Grid export",
           "battery_charge": "Battery charging",
           "battery_discharge": "Battery discharging"
+        }
+      },
+      "reconfigure_topology": {
+        "title": "The rest of your setup",
+        "description": "The same questions asked at setup, answerable again. Anything your mapping already settles is not asked.",
+        "data": {
+          "has_battery": "Do you have a home battery?",
+          "grid_is_net": "Is your grid connection one sensor that goes negative when exporting?",
+          "load_whole_house": "Does your consumption sensor cover the whole house?",
+          "forecast_entries": "Solar forecast integrations to keep history for"
+        },
+        "data_description": {
+          "load_whole_house": "Answer \"No\" if it only covers a backup or critical-loads panel.",
+          "forecast_entries": "Home Assistant discards yesterday's forecast, so Solar Sanity records it as it is issued. Removing a provider here stops new history being kept for it; what is already recorded stays."
         }
       }
     },
@@ -124,13 +138,23 @@
           "fault_found": "Something does not add up"
         }
       },
-      "data_completeness": { "name": "Data completeness" },
-      "corrections_active": { "name": "Corrections in effect" },
-      "expected_tomorrow": { "name": "Forecast tomorrow" },
-      "live_residual": { "name": "Live residual" }
+      "data_completeness": {
+        "name": "Data completeness"
+      },
+      "corrections_active": {
+        "name": "Corrections in effect"
+      },
+      "expected_tomorrow": {
+        "name": "Forecast tomorrow"
+      },
+      "live_residual": {
+        "name": "Live residual"
+      }
     },
     "binary_sensor": {
-      "data_healthy": { "name": "Data problem" }
+      "data_healthy": {
+        "name": "Data problem"
+      }
     }
   },
   "services": {
