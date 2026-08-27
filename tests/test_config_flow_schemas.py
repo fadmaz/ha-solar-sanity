@@ -145,39 +145,40 @@ class TestQuestionsAreConditional:
     a worse answer than the one we already had.
     """
 
-    def _flow(self, channels: dict[str, str]):
-        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
-
-        flow = SolarSanityConfigFlow()
-        flow._channels = channels
-        return flow
-
     def test_battery_question_is_skipped_when_battery_is_mapped(self) -> None:
-        flow = self._flow(
-            {"pv": "sensor.pv", "load": "sensor.load", "battery_charge": "sensor.chg"}
+        from custom_components.solar_sanity.config_flow import _battery_mapped
+
+        assert (
+            _battery_mapped(
+                {"pv": "sensor.pv", "load": "sensor.load", "battery_charge": "sensor.chg"}
+            )
+            is True
         )
-        assert flow._battery_mapped is True
 
     def test_battery_question_is_asked_when_no_battery_is_mapped(self) -> None:
-        flow = self._flow({"pv": "sensor.pv", "load": "sensor.load"})
-        assert flow._battery_mapped is False
+        from custom_components.solar_sanity.config_flow import _battery_mapped
+
+        assert _battery_mapped({"pv": "sensor.pv", "load": "sensor.load"}) is False
 
     def test_grid_net_question_only_matters_when_import_is_alone(self) -> None:
         """Both mapped means two dedicated sensors — nothing to interpret."""
-        both = self._flow(
-            {
-                "pv": "sensor.pv",
-                "load": "sensor.load",
-                "grid_import": "sensor.i",
-                "grid_export": "sensor.e",
-            }
-        )
-        assert both._both_grid_mapped is True
+        from custom_components.solar_sanity.config_flow import _both_grid_mapped
 
-        import_only = self._flow(
-            {"pv": "sensor.pv", "load": "sensor.load", "grid_import": "sensor.i"}
+        assert (
+            _both_grid_mapped(
+                {
+                    "pv": "sensor.pv",
+                    "load": "sensor.load",
+                    "grid_import": "sensor.i",
+                    "grid_export": "sensor.e",
+                }
+            )
+            is True
         )
-        assert import_only._both_grid_mapped is False
+        assert (
+            _both_grid_mapped({"pv": "sensor.pv", "load": "sensor.load", "grid_import": "sensor.i"})
+            is False
+        )
 
 
 class TestChannelKind:
