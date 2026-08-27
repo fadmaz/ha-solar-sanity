@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 from typing import Any
@@ -27,8 +28,9 @@ from typing import Any
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy, UnitOfPower
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -54,7 +56,6 @@ from .analysis.model import (
 from .analysis.residual import MIN_VALID_BUCKETS_PER_DAY
 from .const import (
     ANALYSIS_INTERVAL,
-    BUCKET_INTERVAL,
     CONF_CHANNELS,
     CONF_ENTITY_ID,
     CONF_FORECAST_ENTRIES,
@@ -68,6 +69,7 @@ from .const import (
     LIVE_MAX_AGE_SECONDS,
     OPT_CORRECTIONS,
     OPT_SUPPRESSED,
+    POWER_GAP_TOLERANCE_SECONDS,
     STORAGE_KEY_STATE,
     STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
@@ -114,6 +116,13 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._accumulator: dict[str, float] = {}
         #: Previous reading per energy channel, for differencing.
         self._last_energy: dict[str, float] = {}
+        #: Per power channel: the watts last seen, and when. Power is integrated
+        #: over the durations the sensor actually held its values, not sampled.
+        self._live_power: dict[str, tuple[float, datetime]] = {}
+        #: When a power channel went unreadable, if it currently is.
+        self._gap_since: dict[str, datetime] = {}
+        #: How much of the open hour each power channel has been unreadable for.
+        self._gap_seconds: dict[str, float] = {}
         #: Channels whose current hour saw a reset and cannot be trusted.
         self._suspect: set[str] = set()
         #: When sampling began, so a partial first hour is labelled honestly.
@@ -275,8 +284,6 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             self._accumulator_start = hour
             self._first_sample_at = None
 
-        interval_hours = BUCKET_INTERVAL.total_seconds() / 3600.0
-
         for spec in specs:
             state = self.hass.states.get(spec.entity_id)
             value, kind = read_channel(state)
@@ -284,10 +291,15 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 continue
 
             if kind == KIND_POWER:
-                # Rectangular integration. Never invents a value it did not see.
-                self._accumulator[spec.key] = (
-                    self._accumulator.get(spec.key, 0.0) + value * interval_hours
-                )
+                # Not integrated here. Sampling a power sensor every five
+                # minutes and assuming it held that value throughout is where
+                # the noise came from: on an event-reporting load channel it
+                # put a standard deviation of about 570 Wh into a day, enough
+                # to make a healthy system read "still looking" half the time.
+                #
+                # The tick only establishes a starting value, for a sensor that
+                # has not changed since setup and so has produced no event.
+                self._live_power.setdefault(spec.key, (value, now))
                 continue
 
             if not energy_is_cumulative(state):
@@ -312,6 +324,95 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
             self._accumulator[spec.key] = self._accumulator.get(spec.key, 0.0) + delta
 
+    @callback
+    def async_track_power(self) -> Callable[[], None]:
+        """Integrate power channels on their own state changes.
+
+        Left-Riemann over the duration each value was actually held, which is
+        what Home Assistant's own integration helper does and what makes the
+        result exact for a step-shaped signal rather than merely close.
+
+        Every mapped entity is subscribed, not only the ones that look like
+        power today. An MQTT-backed inverter publishes after Home Assistant
+        starts, so at setup there is nothing to inspect — deciding then would
+        subscribe to nothing at all on exactly the installations this is
+        written for.
+        """
+        entities = [spec.entity_id for spec in self.specs]
+        if not entities:
+            return lambda: None
+
+        return async_track_state_change_event(self.hass, entities, self._async_power_changed)
+
+    @callback
+    def _async_power_changed(self, event: Any) -> None:
+        key = self._key_for_entity(event.data.get("entity_id"))
+        if key is None:
+            return
+
+        state = event.data.get("new_state")
+        # The event's own timestamp, not the clock. They differ by however long
+        # the event loop took to reach us, and that difference lands directly in
+        # the integral — which is the quantity this whole path exists to get
+        # right rather than nearly right.
+        fired = getattr(event, "time_fired", None)
+        when = fired if isinstance(fired, datetime) else dt_util.utcnow()
+        value, kind = read_channel(state)
+
+        held = self._live_power.get(key)
+        if held is not None:
+            self._integrate(key, held[0], held[1], when)
+
+        if kind == KIND_POWER and value is not None:
+            self._close_gap(key, when)
+            self._live_power[key] = (value, when)
+            return
+
+        if held is None:
+            # Never was a power channel as far as this path is concerned —
+            # energy is differenced on the tick, exactly, at any rate.
+            return
+
+        # It was readable and now is not. Nothing is added for the time it is
+        # away; how long that lasts decides whether the hour survives.
+        self._live_power.pop(key, None)
+        self._gap_since.setdefault(key, when)
+
+    def _key_for_entity(self, entity_id: str | None) -> str | None:
+        if entity_id is None:
+            return None
+        return next((s.key for s in self.specs if s.entity_id == entity_id), None)
+
+    def _integrate(self, key: str, watts: float, since: datetime, until: datetime) -> None:
+        """Add one held value's contribution to the open bucket."""
+        seconds = (until - since).total_seconds()
+        if seconds <= 0:
+            return
+        self._accumulator[key] = self._accumulator.get(key, 0.0) + watts * seconds / 3600.0
+
+    def _close_gap(self, key: str, when: datetime) -> None:
+        started = self._gap_since.pop(key, None)
+        if started is None:
+            return
+        self._gap_seconds[key] = self._gap_seconds.get(key, 0.0) + (when - started).total_seconds()
+
+    def _settle_power(self, until: datetime) -> None:
+        """Bring every power channel up to the end of the bucket.
+
+        Without this, the last value of the hour contributes only up to its own
+        event — so a load that settles at eight in the evening and stays there
+        would have its whole night silently missing.
+        """
+        for key, (watts, since) in list(self._live_power.items()):
+            self._integrate(key, watts, since, until)
+            self._live_power[key] = (watts, until)
+
+        for key, started in list(self._gap_since.items()):
+            self._gap_seconds[key] = (
+                self._gap_seconds.get(key, 0.0) + (until - started).total_seconds()
+            )
+            self._gap_since[key] = until
+
     def notify_live_entities(self) -> None:
         """Write live-state entities without re-running the analysis.
 
@@ -326,6 +427,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
     def _close_bucket(self, start: datetime, end: datetime | None = None) -> None:
         specs = self.specs
+        self._settle_power(end or (start + timedelta(hours=1)))
         # The first bucket after a restart covers only part of an hour.
         # Claiming otherwise applies a full hour of standby draw to it and
         # silently degrades the day; build_days drops anything not 3600s.
@@ -338,6 +440,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
         for spec in specs:
             value = self._accumulator.get(spec.key)
+            gap = self._gap_seconds.get(spec.key, 0.0)
+            if gap > POWER_GAP_TOLERANCE_SECONDS:
+                # Part of this hour is simply unknown. An hour with a hole in it
+                # is not an hour with less energy in it, and the difference is
+                # the whole product.
+                value = None
             wh[spec.key] = value
             if spec.key in self._suspect:
                 quality[spec.key] = Quality.RESET_SUSPECT
@@ -363,6 +471,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             del self._buckets[: len(self._buckets) - MAX_BUCKETS]
         self._accumulator.clear()
         self._suspect.clear()
+        self._gap_seconds.clear()
 
     def ingest_backfill(self, series: dict[str, list[tuple[datetime, float, bool]]]) -> None:
         """Seed the window from long-term statistics at setup.

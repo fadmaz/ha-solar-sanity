@@ -50,6 +50,12 @@ LIVE_INTERVAL: Final = timedelta(seconds=30)
 #: Our own hourly integrator closes a bucket on the hour.
 BUCKET_INTERVAL: Final = timedelta(minutes=5)
 
+#: How much of an hour a power channel may be unreadable before the hour is
+#: discarded rather than filled in. A momentary blip is not worth throwing an
+#: hour away; three minutes of silence is a hole nobody can honestly fill, and
+#: filling it with zero is the exact move this product exists to catch.
+POWER_GAP_TOLERANCE_SECONDS: Final = 180.0
+
 #: The full analysis. Nightly is plenty — nothing here changes minute to minute.
 ANALYSIS_INTERVAL: Final = timedelta(hours=6)
 

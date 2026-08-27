@@ -93,6 +93,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
 
     entry.async_on_unload(async_track_time_interval(hass, _tripwire, LIVE_INTERVAL))
 
+    # Power is integrated on its own state changes rather than sampled. A timer
+    # cannot see a kettle that ran for ninety seconds between two ticks, and
+    # assuming the last reading held for five minutes is where the noise came
+    # from that made a healthy system read "still looking" half the time.
+    entry.async_on_unload(coordinator.async_track_power())
+
     def _sample(_now: Any) -> None:
         coordinator.accumulate()
         # Sensors describing live state must not wait for the six-hourly
