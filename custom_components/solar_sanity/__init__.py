@@ -35,7 +35,7 @@ from .const import (
     SERVICE_VALIDATE_NOW,
 )
 from .coordinator import SolarSanityCoordinator, SolarSanityData
-from .repairs import async_sync_issues
+from .repairs import async_remove_issues, async_sync_issues
 from .statistics_source import (
     async_classify_statistics,
     async_hourly_series,
@@ -121,6 +121,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
 async def async_unload_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) -> bool:
     """Unload. ``runtime_data`` is cleared for us, so there is no bookkeeping."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Take this entry's Repairs issues with it.
+
+    Nothing did, so deleting an installation left its repair card behind —
+    offering to fix a configuration that no longer exists, and able to do
+    nothing but abort when clicked. It cleared on the next restart, which is
+    exactly when a user is least likely to connect the two events.
+    """
+    await async_remove_issues(hass, entry.entry_id)
 
 
 async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinator) -> None:
