@@ -2,6 +2,42 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.4.1] - 2026-08-27
+
+### Fixed
+
+- **The standby term could never be fitted on a house with a battery.** It was
+  estimated from night hours in which the battery was *also* idle, and on a
+  house whose battery carries the load overnight those hours do not exist. So
+  the term that exists to absorb an inverter's own draw was unmeasurable on
+  exactly the systems that have one, and its energy stayed in the residual
+  looking like a fault. It is now fitted jointly with the battery's conversion
+  loss: at night the residual is a straight line in battery throughput, and the
+  slope and intercept are the two numbers wanted.
+- **The battery's DC conversion loss needed daylight to be established**, which
+  is precisely what an open boundary makes unusable. It can now be taken from
+  the night slope — but only once generation has independently been shown to be
+  measured DC-side, since on such a system a DC-measured battery is the
+  expected topology rather than a coincidence.
+- **A day's absolute tolerance floor was applied at full-day size to a partial
+  day.** The verifiable-hours check feeds it eleven-hour windows, so a night
+  running a quarter out for a month was judged against a whole day's worth of
+  "not enough energy in play to care" and read as quiet. The floor is now
+  prorated by the hours actually covered.
+
+### Added
+
+- **A continuous unmetered draw is reported rather than absorbed.** The loss
+  model refuses anything larger than an inverter idles at, which is right —
+  quietly subtracting a kilowatt-hour a day as "normal" would hide the thing
+  most worth knowing. Having measured it and said nothing was no better, so it
+  now appears as a note: *"Something draws about 200 W continuously that nothing
+  measures — roughly 4.8 kWh a day."*
+- A guard so a consumption sensor reading half cannot be absorbed as standby.
+  At 250 W of night load, half the house is a plausible-looking 125 W and no
+  absolute bound separates them; the share of the load it would have to
+  represent does.
+
 ## [0.4.0] - 2026-08-27
 
 ### Fixed
