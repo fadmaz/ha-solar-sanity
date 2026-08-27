@@ -41,14 +41,30 @@ SPEC = ChannelSpec(
 )
 
 
-def _stub():
-    return SimpleNamespace(
-        specs=(SPEC,),
-        _accumulator={},
-        _live_power={},
-        _gap_since={},
-        _gap_seconds={},
-    )
+class _Stub:
+    """The state the integration path touches, borrowing the real methods.
+
+    Listed one by one on purpose: this is the surface under test, and anything
+    the path starts reaching for that is not here fails loudly rather than
+    silently taking a stand-in's word for it.
+    """
+
+    specs = (SPEC,)
+    _key_for_entity = SolarSanityCoordinator._key_for_entity
+    _integrate = SolarSanityCoordinator._integrate
+    _close_gap = SolarSanityCoordinator._close_gap
+    _settle_power = SolarSanityCoordinator._settle_power
+    _async_power_changed = SolarSanityCoordinator._async_power_changed
+
+    def __init__(self) -> None:
+        self._accumulator: dict[str, float] = {}
+        self._live_power: dict[str, tuple[float, datetime]] = {}
+        self._gap_since: dict[str, datetime] = {}
+        self._gap_seconds: dict[str, float] = {}
+
+
+def _stub() -> _Stub:
+    return _Stub()
 
 
 def _state(watts):
@@ -71,10 +87,8 @@ def _event(watts, at):
 def _feed(stub, steps):
     """Replay ``(minute, watts)`` changes, then settle to the end of the hour."""
     for minute, watts in steps:
-        SolarSanityCoordinator._async_power_changed(
-            stub, _event(watts, START + timedelta(minutes=minute))
-        )
-    SolarSanityCoordinator._settle_power(stub, START + timedelta(hours=1))
+        stub._async_power_changed(_event(watts, START + timedelta(minutes=minute)))
+    stub._settle_power(START + timedelta(hours=1))
     return stub._accumulator.get(SPEC.key)
 
 
@@ -164,7 +178,7 @@ class TestEnergyIsLeftAlone:
             },
             time_fired=START,
         )
-        SolarSanityCoordinator._async_power_changed(stub, event)
+        stub._async_power_changed(event)
 
         assert stub._accumulator == {}
         assert stub._live_power == {}
@@ -175,7 +189,7 @@ class TestEnergyIsLeftAlone:
             data={"entity_id": "sensor.someone_elses", "new_state": _state(500.0)},
             time_fired=START,
         )
-        SolarSanityCoordinator._async_power_changed(stub, event)
+        stub._async_power_changed(event)
 
         assert stub._accumulator == {}
 
@@ -185,19 +199,19 @@ class TestSettleIsIdempotent:
 
     def test_settling_twice_adds_nothing(self) -> None:
         stub = _stub()
-        SolarSanityCoordinator._async_power_changed(stub, _event(500.0, START))
-        SolarSanityCoordinator._settle_power(stub, START + timedelta(hours=1))
+        stub._async_power_changed(_event(500.0, START))
+        stub._settle_power(START + timedelta(hours=1))
         once = stub._accumulator[SPEC.key]
-        SolarSanityCoordinator._settle_power(stub, START + timedelta(hours=1))
+        stub._settle_power(START + timedelta(hours=1))
 
         assert stub._accumulator[SPEC.key] == pytest.approx(once)
 
     def test_the_next_hour_starts_from_the_held_value(self) -> None:
         """A sensor that never changes again still contributes every hour."""
         stub = _stub()
-        SolarSanityCoordinator._async_power_changed(stub, _event(500.0, START))
-        SolarSanityCoordinator._settle_power(stub, START + timedelta(hours=1))
+        stub._async_power_changed(_event(500.0, START))
+        stub._settle_power(START + timedelta(hours=1))
         stub._accumulator.clear()
-        SolarSanityCoordinator._settle_power(stub, START + timedelta(hours=2))
+        stub._settle_power(START + timedelta(hours=2))
 
         assert stub._accumulator[SPEC.key] == pytest.approx(500.0)
