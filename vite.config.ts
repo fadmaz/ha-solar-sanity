@@ -1,10 +1,15 @@
 import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 
-const pkg = JSON.parse(readFileSync("./package.json", "utf8"));
+const manifest = JSON.parse(
+  readFileSync("./custom_components/solar_sanity/manifest.json", "utf8"),
+);
 
 export default defineConfig({
-  define: { __SS_VERSION__: JSON.stringify(pkg.version) },
+  // From the integration's manifest, not package.json. The two drifted to
+  // 0.1.0 and 0.7.0, so the card reported a version six minors stale — and
+  // anything built on comparing them would have been broken from the start.
+  define: { __SS_VERSION__: JSON.stringify(manifest.version) },
   build: {
     target: "es2022",
     minify: "esbuild",

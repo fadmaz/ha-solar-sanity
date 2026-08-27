@@ -4,7 +4,7 @@
  * Vendored rather than taken from `custom-card-helpers`, which is effectively
  * unmaintained and ships a stale `HomeAssistant` type along with a websocket
  * dependency we do not need. Structural typing means this keeps working as
- * Home Assistant adds fields, and it costs nothing at runtime.
+ * Home Assistant adds fields, and it is free at runtime.
  */
 
 export interface HassEntity {

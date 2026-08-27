@@ -29,7 +29,8 @@ import type {
 } from "./types/hass";
 
 const ENTITY_PREFIX = "sensor.";
-const STATUS_SUFFIX = "_status";
+//: Anywhere in the id, not at the end: a second entry appends `_2`.
+const STATUS_SEGMENT = /_status(_\d+)?$/;
 
 interface StatusCardConfig extends LovelaceCardConfig {
   entity?: string;
@@ -54,7 +55,11 @@ interface Verdict {
  * well-meaning refactor.
  */
 export function verdictFor(
-  status: SolarSanityStatus | undefined,
+  // Not `SolarSanityStatus`. An entity's state is also `unavailable` or
+  // `unknown`, and typing it as only the five the engine emits was a claim the
+  // runtime does not honour — which is how those two ended up sharing a branch
+  // with "not installed" and telling the user to install what they already had.
+  status: SolarSanityStatus | "unavailable" | "unknown" | undefined,
   attrs: SolarSanityStatusAttributes,
 ): Verdict {
   switch (status) {
@@ -101,6 +106,17 @@ export function verdictFor(
           attrs.reason ??
           "Something needed for the arithmetic is missing, so any verdict would be meaningless.",
         action: { label: "Configure", href: "/config/integrations" },
+      };
+
+    case "unavailable":
+    case "unknown":
+      // Present but not answering. Telling this user to install the thing they
+      // already have is worse than saying nothing: it sends them to add a
+      // second copy, which is its own well-documented mess.
+      return {
+        glyph: "unknown",
+        headline: "Not answering right now",
+        body: "Solar Sanity is installed but its status is unavailable. This usually clears by itself after a restart.",
       };
 
     default:
@@ -155,14 +171,27 @@ export class SolarSanityCard extends LitElement {
     return { type: "custom:solar-sanity-card" };
   }
 
+  /**
+   * Every status entity this integration owns, in a stable order.
+   *
+   * Matched on the `_status` segment rather than on the end of the id: a second
+   * installation gets `_status_2`, and a user who renames the entity keeps the
+   * segment while losing the suffix. Both used to fall through to "Solar Sanity
+   * is not set up yet" — an assertion about the world that the card had no
+   * grounds for, on a product whose whole rule is not to overclaim.
+   */
+  private get _candidates(): string[] {
+    if (!this.hass) return [];
+    return Object.keys(this.hass.states)
+      .filter((id) => id.startsWith(ENTITY_PREFIX) && STATUS_SEGMENT.test(id))
+      .sort();
+  }
+
   private get _entity(): HassEntity | undefined {
     if (!this.hass) return undefined;
     if (this._config?.entity) return this.hass.states[this._config.entity];
 
-    const found = Object.keys(this.hass.states).find(
-      (id) => id.startsWith(ENTITY_PREFIX) && id.endsWith(STATUS_SUFFIX) &&
-        id.includes("solar_sanity"),
-    );
+    const found = this._candidates[0];
     return found ? this.hass.states[found] : undefined;
   }
 
@@ -183,8 +212,19 @@ export class SolarSanityCard extends LitElement {
       });
     }
 
+    const candidates = this._candidates;
+    if (!this._config?.entity && candidates.length > 1) {
+      // Picking one silently would show a verdict about a house the reader may
+      // not be looking at, with nothing on screen to say which.
+      return this._shell({
+        glyph: "unknown",
+        headline: "More than one installation",
+        body: `This card found ${candidates.length}. Set \`entity:\` to the one you want.`,
+      });
+    }
+
     const entity = this._entity;
-    const status = entity?.state as SolarSanityStatus | undefined;
+    const status = entity?.state as Parameters<typeof verdictFor>[0];
     const attrs = (entity?.attributes ?? {}) as SolarSanityStatusAttributes;
 
     return this._shell(verdictFor(status, attrs));
