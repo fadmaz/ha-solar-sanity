@@ -13,13 +13,16 @@ from homeassistant.core import HomeAssistant
 
 from .coordinator import SolarSanityData
 
+#: ``unique_id`` is deliberately absent. It held a join of the mapped entity
+#: ids, which appear unredacted two lines below inside the entry's own data — so
+#: redacting it concealed nothing while hiding which identity scheme an entry
+#: was created under, which is exactly what a duplicate-entry report needs.
 TO_REDACT = {
     "latitude",
     "longitude",
     "api_key",
     "token",
     "password",
-    "unique_id",
 }
 
 

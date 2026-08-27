@@ -618,3 +618,138 @@ class TestReconfigureKeepsOrigin:
         origins = self._records({"pv": "sensor.p"}, previous)
 
         assert "grid_export" not in origins
+
+
+class TestDuplicateInstallations:
+    """Two entries watching one house, caught by what they measure.
+
+    The unique id was a join of the mapped entity ids, so remapping a single
+    channel minted a new house and the duplicate went uncaught — while the user,
+    whose whole reason for adding a second entry was that they needed to change
+    something, got no warning at all. Both entries then wrote the same forecast
+    archive, each resuming its running total from what the other left.
+    """
+
+    @staticmethod
+    def _entry(entry_id: str, title: str, channels: dict[str, str]):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            entry_id=entry_id,
+            title=title,
+            data={
+                "channels": [
+                    {"role": role, "entity_id": entity, "origin": "user"}
+                    for role, entity in channels.items()
+                ]
+            },
+        )
+
+    def _existing(self):
+        return [
+            self._entry(
+                "A",
+                "Solar Sanity",
+                {"load": "sensor.l", "pv": "sensor.p", "grid_import": "sensor.g"},
+            )
+        ]
+
+    def test_a_shared_consumption_sensor_is_decisive(self) -> None:
+        """The identity is defined around load, so two claims on it are one house."""
+        from custom_components.solar_sanity._identity import find_overlap
+
+        found = find_overlap(self._existing(), {"load": "sensor.l", "pv": "sensor.x"})
+
+        assert found is not None
+        assert found.decisive is True
+        assert found.title == "Solar Sanity"
+
+    def test_a_shared_meter_is_reported_but_not_decisive(self) -> None:
+        """One grid meter serving two sub-systems is a real arrangement."""
+        from custom_components.solar_sanity._identity import find_overlap
+
+        found = find_overlap(self._existing(), {"load": "sensor.other", "grid_import": "sensor.g"})
+
+        assert found is not None
+        assert found.decisive is False
+
+    def test_the_same_entity_in_a_different_role_is_not_decisive(self) -> None:
+        """Two load channels is the case; a load sensor reused elsewhere is not."""
+        from custom_components.solar_sanity._identity import find_overlap
+
+        found = find_overlap(self._existing(), {"grid_export": "sensor.l"})
+
+        assert found is not None
+        assert found.decisive is False
+
+    def test_a_separate_house_is_left_alone(self) -> None:
+        from custom_components.solar_sanity._identity import find_overlap
+
+        assert find_overlap(self._existing(), {"load": "sensor.other", "pv": "sensor.q"}) is None
+
+    def test_an_entry_does_not_clash_with_itself(self) -> None:
+        """Otherwise reconfigure would refuse every mapping it already had."""
+        from custom_components.solar_sanity._identity import find_overlap
+
+        assert find_overlap(self._existing(), {"load": "sensor.l"}, ignore_entry_id="A") is None
+
+    def test_no_existing_entries_is_no_clash(self) -> None:
+        from custom_components.solar_sanity._identity import find_overlap
+
+        assert find_overlap([], {"load": "sensor.l"}) is None
+
+
+class TestTheFlowActsOnIt:
+    """Wiring, and the deliberate refusal to abort."""
+
+    def test_setup_checks_before_moving_on(self) -> None:
+        import inspect
+
+        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
+
+        source = inspect.getsource(SolarSanityConfigFlow.async_step_user)
+        assert "find_overlap" in source
+        assert "load_already_monitored" in source
+
+    def test_reconfigure_checks_too_and_ignores_itself(self) -> None:
+        import inspect
+
+        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
+
+        source = inspect.getsource(SolarSanityConfigFlow.async_step_reconfigure)
+        assert "find_overlap" in source
+        assert "ignore_entry_id" in source
+
+    def test_a_non_decisive_clash_is_a_choice_not_an_abort(self) -> None:
+        """``already_configured`` is terminal, and a dead end is what caused this."""
+        import inspect
+
+        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
+
+        source = inspect.getsource(SolarSanityConfigFlow)
+        # The call, not the word — the docstring says why it is not made.
+        assert "async_abort(" not in source
+        assert "_abort_if_unique_id_configured" not in source
+        assert hasattr(SolarSanityConfigFlow, "async_step_overlap")
+
+    def test_the_unique_id_scheme_is_gone(self) -> None:
+        """It changed whenever the mapping did, which is when it was needed."""
+        import inspect
+
+        from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
+
+        source = inspect.getsource(SolarSanityConfigFlow)
+        assert "async_set_unique_id" not in source
+        assert not hasattr(SolarSanityConfigFlow, "_unique_id")
+
+    def test_both_new_messages_have_copy(self) -> None:
+        import json
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "solar_sanity"
+        for name in ("strings.json", "translations/en.json"):
+            data = json.loads((root / name).read_text(encoding="utf-8"))
+            assert "overlap" in data["config"]["step"], name
+            assert "load_already_monitored" in data["config"]["error"], name
+            described = data["config"]["step"]["overlap"]["description"]
+            assert "{entity_id}" in described and "{other}" in described

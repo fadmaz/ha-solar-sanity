@@ -61,17 +61,20 @@
           "load_whole_house": "Answer \"No\" if it only covers a backup or critical-loads panel.",
           "forecast_entries": "Home Assistant discards yesterday's forecast, so Solar Sanity records it as it is issued. Removing a provider here stops new history being kept for it; what is already recorded stays."
         }
+      },
+      "overlap": {
+        "title": "That sensor is already being watched",
+        "description": "{entity_id} is already mapped by “{other}”.\n\nIf this is the same installation, go back and set it up once — you can change any of its sensors afterwards with Reconfigure, without losing history. If these really are two separate systems that share a meter, carry on."
       }
     },
     "error": {
       "load_required": "A consumption sensor is required. Without one the balance closes by definition and Solar Sanity cannot check anything.",
       "pv_required": "A generation sensor is required.",
-      "duplicate_entity": "The same sensor is mapped to two different roles. One sensor cannot be on both sides of the calculation — it would cancel itself out."
+      "duplicate_entity": "The same sensor is mapped to two different roles. One sensor cannot be on both sides of the calculation — it would cancel itself out.",
+      "load_already_monitored": "Another Solar Sanity installation already measures consumption with this sensor, so the two describe the same house. Reconfigure that one instead — every sensor it uses can be changed without losing any history."
     },
     "abort": {
-      "already_configured": "These sensors are already being monitored.",
-      "reconfigure_successful": "Sensor mapping updated.",
-      "unique_id_mismatch": "These sensors belong to a different installation."
+      "reconfigure_successful": "Sensor mapping updated."
     }
   },
   "options": {
