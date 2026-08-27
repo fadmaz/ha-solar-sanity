@@ -727,7 +727,9 @@ class TestTheFlowActsOnIt:
         from custom_components.solar_sanity.config_flow import SolarSanityConfigFlow
 
         source = inspect.getsource(SolarSanityConfigFlow)
-        assert "already_configured" not in source
+        # The call, not the word — the docstring says why it is not made.
+        assert "async_abort(" not in source
+        assert "_abort_if_unique_id_configured" not in source
         assert hasattr(SolarSanityConfigFlow, "async_step_overlap")
 
     def test_the_unique_id_scheme_is_gone(self) -> None:
