@@ -128,7 +128,7 @@ class TestPartialDayFloor:
 
     @staticmethod
     def _day(hours: int, residual_wh: float, throughput_wh: float):
-        days, specs = _days(house.build(days=3, seed=1))
+        days, _ = _days(house.build(days=3, seed=1))
         template = days[0]
         per_hour = residual_wh / hours
         return type(template)(
