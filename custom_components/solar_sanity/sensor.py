@@ -61,6 +61,10 @@ def _status_attrs(report: AnalysisReport | None) -> dict[str, Any]:
         "confidence": finding.confidence.value if finding else None,
         "channels": list(finding.channel_keys) if finding else [],
         "days_of_data": report.residual.valid_days,
+        # Never a fault and never an alarm — what this verdict does not cover.
+        # A user who is not told that half their hours were unverifiable will
+        # read a clean status as covering the whole house.
+        "notes": list(report.notes),
         "deferred": list(report.deferred),
     }
 

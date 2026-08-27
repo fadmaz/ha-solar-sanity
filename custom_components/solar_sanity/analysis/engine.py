@@ -15,6 +15,7 @@ from __future__ import annotations
 from . import faults, hypotheses, screen, topology
 from .faults import Code
 from .hypotheses import MIN_HOURS_FOR_SNAP, Hypothesis
+from .linalg import median
 from .model import (
     AnalysisReport,
     AnalysisRequest,
@@ -30,6 +31,7 @@ from .model import (
     ResidualSummary,
     Severity,
     Status,
+    TopologyEstimate,
 )
 from .residual import (
     MIN_SIGNAL_WH,
@@ -140,6 +142,17 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         )
 
     if sum(1 for d in recent if d.band == "actionable") < MIN_ACTIONABLE_DAYS:
+        restricted = _restricted_report(
+            request,
+            specs,
+            buckets,
+            loss=loss,
+            estimate=estimate,
+            full_days=days,
+            closure=closure,
+        )
+        if restricted is not None:
+            return restricted
         return AnalysisReport(
             status=Status.INVESTIGATING,
             reason=_with_closure(
@@ -165,6 +178,17 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     scored = hypotheses.score(days, candidates)
 
     if not scored or not hypotheses.passes_gates(scored[0], len(days)):
+        restricted = _restricted_report(
+            request,
+            specs,
+            buckets,
+            loss=loss,
+            estimate=estimate,
+            full_days=days,
+            closure=closure,
+        )
+        if restricted is not None:
+            return restricted
         return AnalysisReport(
             status=Status.INVESTIGATING,
             # Reached only after the identity has been shown to miss by more
@@ -189,6 +213,128 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         residual=summary,
         stale_corrections=_stale_corrections(days, request.active_corrections),
     )
+
+
+def _restricted_report(
+    request: AnalysisRequest,
+    specs: tuple[ChannelSpec, ...],
+    buckets: tuple[Bucket, ...],
+    *,
+    loss: LossModel,
+    estimate: TopologyEstimate,
+    full_days: tuple[DayResidual, ...],
+    closure: topology.ClosureResult,
+) -> AnalysisReport | None:
+    """A verdict from the hours in which nothing can leave unmeasured.
+
+    On a house with no export meter, the energy that appears to be missing in a
+    surplus hour and the energy that actually left are the same number — there
+    is no measurement that separates them, and no amount of waiting produces
+    one. Reporting "still looking" is then a promise that cannot be kept.
+
+    But the hours either side of that are ordinary arithmetic. With no
+    generation there is nothing to export, so the identity closes, and import
+    plus discharge really does have to equal consumption. That is a real
+    verdict about a real part of the system, and it is the difference between
+    saying something true and saying nothing for as long as the house stands.
+
+    Returns ``None`` when even those hours are too few, so the caller keeps its
+    own answer.
+    """
+    if not closure.unmeasured_export:
+        return None
+
+    days = build_days(buckets, specs, loss, request.utc_offset_hours, verifiable_only=True)
+    if len(days) < MIN_ACTIONABLE_DAYS:
+        return None
+
+    summary = _summarise(days)
+    notes = _unverifiable_notes(days, full_days)
+    recent = days[-7:]
+
+    common = {
+        "notes": notes,
+        "topology": estimate,
+        "loss_model": loss,
+        "residual": summary,
+    }
+
+    if sum(1 for d in recent if d.band == "clean") >= min(CLEAN_DAYS_FOR_OK, len(recent)):
+        return AnalysisReport(status=Status.OK, **common)
+
+    if sum(1 for d in recent if d.band == "actionable") < MIN_ACTIONABLE_DAYS:
+        return AnalysisReport(
+            status=Status.INVESTIGATING,
+            reason="The numbers move around but not consistently enough to name.",
+            **common,
+        )
+
+    if total_abs_residual(recent) < MIN_SIGNAL_WH:
+        return AnalysisReport(
+            status=Status.INSUFFICIENT_DATA,
+            reason="Not enough energy in play to attribute the difference.",
+            **common,
+        )
+
+    # The boundary is closed *within these hours*, so the probes that exist to
+    # explain an open one have nothing to offer and must not be generated.
+    candidates = [
+        c for c in hypotheses.generate(days, specs, False) if c.code not in request.suppressed_codes
+    ]
+    scored = hypotheses.score(days, candidates)
+
+    if not scored or not hypotheses.passes_gates(scored[0], len(days)):
+        return AnalysisReport(
+            status=Status.INVESTIGATING,
+            identity_fails=True,
+            reason=_unattributed_reason(days, scored),
+            deferred=tuple(h.code for h in scored[:3]),
+            **common,
+        )
+
+    return AnalysisReport(
+        status=Status.FAULT_FOUND,
+        identity_fails=True,
+        finding=_render_hypothesis(scored[0], specs, days, summary),
+        deferred=tuple(h.code for h in scored[1:3]),
+        **common,
+    )
+
+
+def _unverifiable_notes(
+    days: tuple[DayResidual, ...], full_days: tuple[DayResidual, ...]
+) -> tuple[str, ...]:
+    """Say exactly what this verdict does and does not cover."""
+    hours = sum(len(day.buckets) for day in days) / len(days)
+    notes = [
+        f"Nothing measures what leaves your house, so only the {hours:.0f} hours "
+        "a day with no generation could be checked — in those, nothing can be "
+        "exported and the arithmetic has to close. Your generation sensor is "
+        "not covered by this, because it only produces energy during the hours "
+        "that cannot be checked."
+    ]
+
+    surplus = _surplus_kwh_per_day(full_days)
+    if surplus is not None and surplus > 0.1:
+        notes.append(
+            f"About {surplus:.1f} kWh a day is unaccounted for while you have a "
+            "surplus. With no export meter that is most likely what you are "
+            "sending to the grid, but it cannot be told apart from a generation "
+            "sensor reading high."
+        )
+    return tuple(notes)
+
+
+def _surplus_kwh_per_day(days: tuple[DayResidual, ...]) -> float | None:
+    """Energy unaccounted for in hours when generation exceeded consumption."""
+    if not days:
+        return None
+    total = 0.0
+    for day in days:
+        for surplus, value in zip(hypotheses.surplus_mask(day), day.dr, strict=True):
+            if surplus and value > 0:
+                total += value
+    return total / len(days) / 1000.0
 
 
 def _with_closure(reason: str, closure: topology.ClosureResult) -> str:
@@ -407,6 +553,65 @@ def _render_screen_hit(
     )
 
 
+def _snap_fields(
+    hyp: Hypothesis, specs: tuple[ChannelSpec, ...], days: tuple[DayResidual, ...]
+) -> dict[str, object]:
+    """Fields a snap-table template needs that the hypothesis does not carry.
+
+    Screens compute these while they work; the inferred path never did, so four
+    of the six snap entries — both half-coverage variants and both unit-scale
+    variants — raised ``KeyError`` from ``faults.render`` at the moment they
+    won. In Home Assistant that surfaces as the whole integration going
+    unavailable, on exactly the installations it most needed to help.
+    """
+    if hyp.a is None or not hyp.channel_keys:
+        return {}
+
+    key = hyp.channel_keys[0]
+    fields: dict[str, object] = {}
+
+    if hyp.code == Code.PARTIAL_COVERAGE:
+        fields["fraction"] = _as_fraction(hyp.a)
+    elif hyp.code == Code.UNIT_SCALE_1000:
+        observed, expected = _magnitudes(days, specs, key)
+        if observed is None or expected is None:
+            # Better to say nothing than to invent a comparison. The caller's
+            # render will raise, which the template-coverage test exists to
+            # make impossible, but a fabricated number would ship silently.
+            return {}
+        fields["observed"] = observed
+        fields["expected"] = expected
+
+    return fields
+
+
+def _as_fraction(a: float) -> str:
+    """How much of the truth a channel with this correction factor is seeing."""
+    if abs(a - 2.0) < 0.01:
+        return "half"
+    if abs(a - 3.0) < 0.01:
+        return "a third"
+    return f"1/{a:.0f}"
+
+
+def _magnitudes(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...], key: str
+) -> tuple[float | None, float | None]:
+    """Typical hourly size of one channel, and of the others it sits beside."""
+    own: list[float] = []
+    others: list[float] = []
+    for day in days:
+        for bucket in day.buckets:
+            for spec in specs:
+                if not spec.role.in_balance:
+                    continue
+                value = bucket.value(spec.key)
+                if value is None or value <= 0:
+                    continue
+                (own if spec.key == key else others).append(value)
+    return median(own), median(others)
+
+
 def _render_hypothesis(
     hyp: Hypothesis,
     specs: tuple[ChannelSpec, ...],
@@ -426,6 +631,7 @@ def _render_hypothesis(
             fields["name"] = spec.friendly_name
             if spec.autodetected:
                 confidence = confidence.downgrade()
+        fields.update(_snap_fields(hyp, specs, days))
     if hyp.extra:
         fields.update(hyp.extra)
 
