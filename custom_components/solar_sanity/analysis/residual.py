@@ -317,6 +317,30 @@ def build_days(
     return tuple(days)
 
 
+def median_daily_pct(days: tuple[DayResidual, ...]) -> float | None:
+    """Signed version of the same figure.
+
+    The sign is the first thing anyone diagnosing a residual asks for, and the
+    absolute figure discards it — energy going missing and energy appearing from
+    nowhere are opposite problems reported as the same number.
+    """
+    ratios = []
+    for day in days:
+        ratio = safe_ratio(day.net, day.total_throughput)
+        if ratio is not None:
+            ratios.append(ratio * 100.0)
+    return median(ratios)
+
+
+def band_counts(days: tuple[DayResidual, ...]) -> dict[str, int]:
+    """How many days fell in each band, not merely what the last one did."""
+    counts = {"clean": 0, "watch": 0, "actionable": 0}
+    for day in days:
+        if day.band in counts:
+            counts[day.band] += 1
+    return counts
+
+
 def median_daily_abs_pct(days: tuple[DayResidual, ...]) -> float | None:
     """Typical daily residual as a percentage of throughput.
 

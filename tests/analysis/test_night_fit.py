@@ -26,6 +26,8 @@ from analysis.topology import STANDBY_PLAUSIBLE_W, fit_loss_model, unmetered_dra
 from tests.synth import house
 from tests.synth.adapt import specs_for, to_request
 
+NO_EXPORT = ("pv", "grid_import", "battery_charge", "battery_discharge", "load")
+
 DECLARED = DeclaredTopology(
     has_battery=Answer.YES,
     grid_is_single_net_sensor=Answer.NO,
@@ -161,3 +163,47 @@ class TestPartialDayFloor:
         day = self._day(8, ACTIONABLE_DAILY_FLOOR_WH * 0.5, 1000.0)
 
         assert classify_day(day) == "actionable"
+
+
+class TestMeasurementsAreReported:
+    """A rejected fit must say what it saw, not just that it found nothing."""
+
+    @staticmethod
+    def _report(series):
+        from analysis.engine import analyse
+
+        return analyse(
+            to_request(
+                series,
+                specs=specs_for(
+                    ("pv", "grid_import", "battery_charge", "battery_discharge", "load")
+                ),
+                declared=DECLARED,
+            )
+        )
+
+    def test_the_night_slope_is_reported_even_when_accepted(self) -> None:
+        series = house.measure_battery_dc(
+            house.measure_pv_dc(house.build(days=30, seed=1), 0.96), 0.95
+        )
+        report = self._report(series)
+
+        assert report.measurements["night_slope"] == pytest.approx(0.05, abs=0.01)
+        assert report.measurements["night_hours"] > 200
+
+    def test_the_signed_residual_survives(self) -> None:
+        """Energy going missing and energy appearing are opposite problems."""
+        report = self._report(house.build(days=30, seed=1))
+
+        assert "median_daily_pct_signed" in report.measurements
+
+    def test_band_counts_beat_the_last_day(self) -> None:
+        report = self._report(house.build(days=30, seed=1))
+        counts = {k: v for k, v in report.measurements.items() if k.startswith("days_")}
+
+        assert sum(counts.values()) == report.residual.valid_days
+
+    def test_the_night_load_is_reported_so_the_share_guard_is_checkable(self) -> None:
+        report = self._report(house.build(days=30, seed=1))
+
+        assert report.measurements["median_night_load_w"] > 0

@@ -40,6 +40,9 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Any) ->
         "identity_fails": report.identity_fails if report else None,
         "reason": report.reason if report else None,
         "notes": list(report.notes) if report else [],
+        # Measured, then not acted on. Without these, "nothing could be
+        # established" is unfalsifiable from outside the process.
+        "measurements": dict(report.measurements) if report else {},
         "finding": (
             {
                 "code": report.finding.code,
