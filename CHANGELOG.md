@@ -2,6 +2,43 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.7.0] - 2026-08-27
+
+### Fixed
+
+- **Power channels are integrated over the durations they were actually held,
+  not sampled every five minutes.** Assuming a reading held until the next tick
+  put a standard deviation of roughly 570 Wh into a day on an event-reporting
+  load channel — about 3.2% of a 25 kWh throughput once two power channels
+  compound. A *healthy* installation therefore reported "Still looking" around
+  half the time, and on a spikier load — an EV charger, resistive heating —
+  closer to four times in five.
+
+  It manufactured no false faults; the seven attribution gates held throughout.
+  It manufactured false *doubt*, which for a product whose whole promise is a
+  trustworthy verdict is its own kind of failure. It also quietly ate a slice of
+  the 6%-to-50% gap the design rests on — the one the residual module describes
+  as having nothing in it.
+
+  Left-Riemann over state-change events, which is what Home Assistant's own
+  integration helper does and what makes the result exact for a step-shaped
+  signal rather than merely close. A kettle that runs for ninety seconds between
+  two ticks is now counted; before, it was invisible.
+
+  Every mapped entity is subscribed rather than only the ones that look like
+  power at setup: an MQTT-backed inverter publishes *after* Home Assistant
+  starts, so deciding then would have subscribed to nothing at all on exactly
+  the installations this is written for.
+
+  Energy channels are untouched — differencing is exact at any sampling rate.
+- **A hole in an hour is no longer treated as a smaller hour.** If a power
+  sensor is unreadable for more than three minutes of an hour, that hour is
+  discarded for it rather than filled in with the energy that happened to be
+  measured around the gap.
+- `BucketSource.OWN_INTEGRAL` now deserves being the strongest grade in the
+  model. It was previously applied to buckets that were statistically *worse*
+  than the `LTS_MEAN` grade that exists specifically to be distrusted.
+
 ## [0.6.1] - 2026-08-27
 
 ### Fixed
