@@ -2,6 +2,40 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.7.1] - 2026-08-28
+
+Groundwork for the forecast card, which turned up four defects that had nothing
+to do with cards.
+
+### Fixed
+
+- **The options flow promised a feature that does not exist.** The guaranteed
+  annual production field told users, in future tense, that Solar Sanity would
+  track their production against it "corrected for how sunny each year actually
+  was". No such correction has been designed — it is the open engineering
+  question in that whole area — and nothing anywhere reads the figure. The help
+  text now describes what actually happens: it is kept, and nothing reads it yet.
+- **The no-currency rule was enforced over one directory of Python.** It never
+  looked at the card sources, `strings.json`, the translations or
+  `services.yaml`, which between them are most of the words this product says —
+  and the cards are exactly where someone reaches for a payback figure. One
+  expression now covers all of them.
+- **The card reported a version six minors stale.** It was injected from
+  `package.json`, which has never been bumped past 0.1.0, while the integration
+  is at 0.7.x. Any compatibility check comparing the two would have been broken
+  from the start. It now comes from `manifest.json`, so one number governs both
+  halves.
+- **The card told users to install what they already had.** Its entity lookup
+  required the id to *end* in `_status`, so a renamed entity or a second
+  installation fell through to "Solar Sanity is not set up yet" — an assertion
+  about the world it had no grounds for, and one that invites adding a duplicate
+  entry. It now matches the `_status` segment, reports honestly when the
+  integration is present but not answering, and says so plainly rather than
+  picking one at random when it finds more than one installation.
+- The status type claimed an entity's state is always one of the five verdicts
+  the engine emits. It is also `unavailable` and `unknown`, which is how those
+  two came to share a branch with "not installed".
+
 ## [0.7.0] - 2026-08-27
 
 ### Fixed

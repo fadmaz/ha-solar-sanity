@@ -114,8 +114,17 @@ class TestNoCurrency:
     money!". Report kWh and let the user do their own arithmetic.
     """
 
+    #: A bare ``$`` will not do on its own. In the card sources ``${`` opens a
+    #: template literal and ``$/`` closes a regular expression, so the symbol
+    #: only counts with an amount beside it — which loses nothing, because a
+    #: dollar sign with no number near it is not a price, and the sentence
+    #: around it would be caught by the words anyway.
+    #:
+    #: The same expression is applied to every user-facing file, including the
+    #: card sources, by ``tests/test_copy_invariants.py``.
     FORBIDDEN = re.compile(
-        r"[$€£¥]|\bprice\b|\bpricing\b|\bcost\b|\bcosts\b|\bbill\b|\bbills\b"
+        r"[€£¥]|\$\s*\d|\d\s*\$"
+        r"|\bprice\b|\bpricing\b|\bcost\b|\bcosts\b|\bbill\b|\bbills\b"
         r"|\bsaving\b|\bsavings\b|\btariff\b|\bcurrency\b|\bcents?\b",
         re.IGNORECASE,
     )

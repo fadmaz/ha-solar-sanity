@@ -85,7 +85,7 @@
           "guaranteed_annual_kwh": "Guaranteed annual production (kWh)"
         },
         "data_description": {
-          "guaranteed_annual_kwh": "The yearly figure your installer promised, if you have it. Solar Sanity will track your actual production against it, corrected for how sunny each year actually was."
+          "guaranteed_annual_kwh": "The yearly figure your installer promised, if you have it. Kept for a future comparison — nothing reads it yet."
         }
       }
     }
