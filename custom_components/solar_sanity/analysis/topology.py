@@ -231,13 +231,35 @@ def _fit_night_terms(
     is drawn regardless. Theil-Sen for both, so a handful of odd hours cannot
     drag either one.
     """
-    pv = next((s for s in specs if s.role is Role.PV), None)
-    if pv is None:
+    samples = _night_samples(days, specs)
+    if samples is None:
+        return None, 0.0
+    xs, ys, loads = samples
+
+    slope = theil_sen_slope(xs, ys)
+    if slope is None:
+        return None, 0.0
+    intercept = theil_sen_intercept(xs, ys, slope)
+    if intercept is None:
         return None, 0.0
 
+    gamma = slope if DC_MEASUREMENT_WINDOW[0] <= slope <= DC_MEASUREMENT_WINDOW[1] else None
+    return gamma, _plausible_standby(intercept, loads)
+
+
+def _night_samples(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
+) -> tuple[list[float], list[float], list[float]] | None:
+    """Battery throughput, raw residual and load, over hours with no generation.
+
+    Raw residual, for the same reason as ``_gamma_for_role``: fitting against a
+    residual the previous model has already been subtracted from makes the fit
+    oscillate rather than converge.
+    """
+    pv = next((s for s in specs if s.role is Role.PV), None)
     discharge = next((s for s in specs if s.role is Role.BATTERY_DISCHARGE), None)
-    if discharge is None:
-        return None, 0.0
+    if pv is None or discharge is None:
+        return None
 
     load = next((s for s in specs if s.role is Role.LOAD), None)
 
@@ -245,9 +267,6 @@ def _fit_night_terms(
     ys: list[float] = []
     loads: list[float] = []
     for day in days:
-        # Raw residual, for the same reason as _gamma_for_role: fitting against
-        # a residual the previous model has already been subtracted from makes
-        # the fit oscillate rather than converge.
         for bucket, raw in zip(day.buckets, day.r, strict=True):
             generation = bucket.value(pv.key)
             if generation is None or generation > NIGHT_MAX_PV_WH:
@@ -261,17 +280,8 @@ def _fit_night_terms(
                 loads.append(drawn)
 
     if len(xs) < MIN_STANDBY_SAMPLES:
-        return None, 0.0
-
-    slope = theil_sen_slope(xs, ys)
-    if slope is None:
-        return None, 0.0
-    intercept = theil_sen_intercept(xs, ys, slope)
-    if intercept is None:
-        return None, 0.0
-
-    gamma = slope if DC_MEASUREMENT_WINDOW[0] <= slope <= DC_MEASUREMENT_WINDOW[1] else None
-    return gamma, _plausible_standby(intercept, loads)
+        return None
+    return xs, ys, loads
 
 
 def _plausible_standby(intercept: float, night_loads: list[float]) -> float:
@@ -293,6 +303,41 @@ def _plausible_standby(intercept: float, night_loads: list[float]) -> float:
     return intercept
 
 
+def night_fit_raw(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
+) -> dict[str, float]:
+    """What the night fit measured, before anything was accepted or rejected.
+
+    Exists so that "nothing could be established" is a statement with numbers
+    behind it. A slope of 0.25 and a slope of -0.02 both leave the term at 0.0
+    and both report the same empty tuple, and they are completely different
+    problems.
+    """
+    samples = _night_samples(days, specs)
+    if samples is None:
+        return {}
+    xs, ys, loads = samples
+    out: dict[str, float] = {"night_hours": float(len(xs))}
+
+    slope = theil_sen_slope(xs, ys)
+    if slope is not None:
+        out["night_slope"] = slope
+        intercept = theil_sen_intercept(xs, ys, slope)
+        if intercept is not None:
+            out["night_intercept_w"] = intercept
+
+    typical = median(loads)
+    if typical is not None:
+        out["median_night_load_w"] = typical
+    discharge = median(xs)
+    if discharge is not None:
+        out["median_night_discharge_wh"] = discharge
+    residual = median(ys)
+    if residual is not None:
+        out["median_night_residual_wh"] = residual
+    return out
+
+
 def unmetered_draw_w(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) -> float | None:
     """A continuous draw too large to be an inverter idling, if there is one.
 
@@ -304,24 +349,11 @@ def unmetered_draw_w(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ..
     if standby > 0.0:
         return None
 
-    pv = next((s for s in specs if s.role is Role.PV), None)
-    discharge = next((s for s in specs if s.role is Role.BATTERY_DISCHARGE), None)
-    if pv is None or discharge is None:
+    samples = _night_samples(days, specs)
+    if samples is None:
         return None
+    xs, ys, _loads = samples
 
-    xs: list[float] = []
-    ys: list[float] = []
-    for day in days:
-        for bucket, raw in zip(day.buckets, day.r, strict=True):
-            generation = bucket.value(pv.key)
-            flow = bucket.value(discharge.key)
-            if generation is None or generation > NIGHT_MAX_PV_WH or flow is None:
-                continue
-            xs.append(flow)
-            ys.append(raw)
-
-    if len(xs) < MIN_STANDBY_SAMPLES:
-        return None
     slope = theil_sen_slope(xs, ys)
     if slope is None:
         return None

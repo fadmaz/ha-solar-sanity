@@ -340,6 +340,12 @@ class AnalysisReport:
     #: the user can do about it, but leaving it unsaid means a verdict that
     #: quietly covers less than the user thinks.
     notes: tuple[str, ...] = ()
+    #: Numbers that were measured and then not acted on, so a diagnosis does not
+    #: have to guess at them. A rejected fit leaves its term at 0.0 and says
+    #: nothing about what it saw, which makes "we could not explain this"
+    #: unfalsifiable from outside — the same failure as a status that only says
+    #: it is still looking.
+    measurements: dict[str, float] = field(default_factory=dict)
     deferred: tuple[str, ...] = ()
     topology: TopologyEstimate = field(default_factory=TopologyEstimate)
     loss_model: LossModel | None = None

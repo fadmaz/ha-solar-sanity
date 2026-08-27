@@ -2,6 +2,20 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.4.2] - 2026-08-27
+
+### Added
+
+- **Diagnostics report what was measured and then not acted on.** A rejected
+  fit leaves its term at `0.0` and reports the same empty `fitted_terms`
+  whether the slope it saw was a quarter or a rounding error — completely
+  different problems, indistinguishable from outside the process. The new
+  `measurements` block carries the raw night slope and intercept, the median
+  night load and battery throughput, the **signed** daily residual, and how many
+  days fell in each band rather than only what the last one did.
+
+  "Nothing could be established" is now a statement with numbers behind it.
+
 ## [0.4.1] - 2026-08-27
 
 ### Fixed

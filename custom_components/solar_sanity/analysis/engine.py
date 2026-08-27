@@ -36,8 +36,10 @@ from .model import (
 from .residual import (
     MIN_SIGNAL_WH,
     DayResidual,
+    band_counts,
     build_days,
     median_daily_abs_pct,
+    median_daily_pct,
     total_abs_residual,
 )
 from .topology import Closure
@@ -159,6 +161,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
                 "The numbers move around but not consistently enough to name.", closure
             ),
             notes=_draw_note(days, specs),
+            measurements=_measurements(days, specs),
             topology=estimate,
             loss_model=loss,
             residual=summary,
@@ -198,6 +201,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             identity_fails=True,
             reason=_with_closure(_unattributed_reason(days, scored), closure),
             notes=_draw_note(days, specs),
+            measurements=_measurements(days, specs),
             deferred=tuple(h.code for h in scored[:3]),
             topology=estimate,
             loss_model=loss,
@@ -256,6 +260,7 @@ def _restricted_report(
 
     common = {
         "notes": notes,
+        "measurements": _measurements(days, specs),
         "topology": estimate,
         "loss_model": loss,
         "residual": summary,
@@ -301,6 +306,26 @@ def _restricted_report(
         deferred=tuple(h.code for h in scored[1:3]),
         **common,
     )
+
+
+def _measurements(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
+) -> dict[str, float]:
+    """Everything measured on the way to saying nothing.
+
+    A rejected term leaves 0.0 behind and reports the same empty tuple whether
+    the slope it saw was a quarter or a rounding error. Those are completely
+    different problems, and without the numbers the only way to tell them apart
+    is to add logging and ship again.
+    """
+    out: dict[str, float] = {}
+    signed = median_daily_pct(days)
+    if signed is not None:
+        out["median_daily_pct_signed"] = signed
+    for band, count in band_counts(days).items():
+        out[f"days_{band}"] = float(count)
+    out.update(topology.night_fit_raw(days, specs))
+    return out
 
 
 def _draw_note(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) -> tuple[str, ...]:
