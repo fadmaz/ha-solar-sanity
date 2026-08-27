@@ -9,7 +9,10 @@ whole job is remapping sensors:
   topology answers and the forecast providers too — they were write-once, and a
   setting that can only be changed by starting again is how two installations
   end up fighting over one forecast archive.
-* **A unique id**, so a second entry for the same installation is caught.
+* **A check that the same house is not configured twice.** Keyed on what the
+  entries actually monitor rather than on a unique id: an id derived from the
+  mapping changes the moment the mapping does, so remapping a channel minted a
+  new house and the duplicate went uncaught.
 
 No update listener is registered. Combining one with
 ``async_update_reload_and_abort`` or ``OptionsFlowWithReload`` is deprecated as
@@ -30,6 +33,7 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
+from ._identity import Overlap, find_overlap
 from .analysis.model import Role
 from .const import (
     CONF_CHANNELS,
@@ -214,6 +218,7 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
         self._discovery = Discovery()
         self._channels: dict[str, str] = {}
         self._suggested: dict[str, str] = {}
+        self._overlap: Overlap | None = None
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Map channels, pre-filled from the Energy Dashboard where possible."""
@@ -235,7 +240,15 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
             elif duplicate:
                 errors["base"] = "duplicate_entity"
             else:
-                return await self.async_step_topology()
+                self._overlap = find_overlap(
+                    self.hass.config_entries.async_entries(DOMAIN), self._channels
+                )
+                if self._overlap is not None and self._overlap.decisive:
+                    errors["base"] = "load_already_monitored"
+                elif self._overlap is not None:
+                    return await self.async_step_overlap()
+                else:
+                    return await self.async_step_topology()
 
         return self.async_show_form(
             step_id="user",
@@ -246,13 +259,33 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
             },
         )
 
+    async def async_step_overlap(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Name the sensor two installations would share, and let it be a choice.
+
+        Not an abort. ``already_configured`` is terminal and leaves the user
+        with nowhere to go, which is the position that produced the duplicate in
+        the first place.
+        """
+        if user_input is not None:
+            return await self.async_step_topology()
+
+        overlap = self._overlap
+        return self.async_show_form(
+            step_id="overlap",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "other": overlap.title if overlap else "",
+                "entity_id": overlap.entity_id if overlap else "",
+            },
+        )
+
     async def async_step_topology(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Three questions the user knows the answer to."""
         if user_input is not None:
-            await self.async_set_unique_id(self._unique_id())
-            self._abort_if_unique_id_configured()
             return self.async_create_entry(
                 title="Solar Sanity",
                 data={
@@ -301,6 +334,14 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                 error = "pv_required"
             elif _duplicate_entity(channels):
                 error = "duplicate_entity"
+            else:
+                clash = find_overlap(
+                    self.hass.config_entries.async_entries(DOMAIN),
+                    channels,
+                    ignore_entry_id=entry.entry_id,
+                )
+                if clash is not None and clash.decisive:
+                    error = "load_already_monitored"
             if error:
                 # Re-render from what the user just submitted, not from the
                 # stored config — otherwise their edits vanish on any error.
@@ -346,10 +387,6 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="reconfigure_topology",
             data_schema=_topology_schema(self._channels, providers, dict(entry.data)),
         )
-
-    def _unique_id(self) -> str:
-        """Identify an installation by the channels it monitors."""
-        return "|".join(sorted(self._channels.values()))
 
     @staticmethod
     @callback

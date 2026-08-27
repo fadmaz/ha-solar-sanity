@@ -2,6 +2,33 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.6.1] - 2026-08-27
+
+### Fixed
+
+- **Nothing caught the same house being configured twice.** The unique id was a
+  join of the mapped entity ids, so remapping a single channel minted a new
+  house — and remapping a channel is precisely why anyone was adding a second
+  entry. Both then wrote the same forecast archive, each resuming its running
+  total from what the other left, and neither ever reported a problem.
+
+  Identity is now what an installation *measures*, checked against the entries
+  that already exist. A shared **consumption** sensor is decisive and refused
+  with a message naming the other installation: the balance is defined around
+  load, so two claims on it describe the same house by construction. Any other
+  shared sensor is named and then left to the user — one grid meter serving two
+  sub-systems is a real arrangement, and refusing it outright would push them
+  straight back to the workaround this exists to remove.
+
+  Deliberately not an abort. `already_configured` is terminal and leaves the
+  user with nowhere to go, which is the position that produced the duplicate in
+  the first place.
+- Reconfigure runs the same check, ignoring the entry being reconfigured.
+- `unique_id` is no longer redacted from diagnostics. It held a join of the
+  mapped entity ids, which appear unredacted in the same file two lines below —
+  so the redaction concealed nothing while hiding which identity scheme an entry
+  was created under, which is exactly what a duplicate-entry report needs.
+
 ## [0.6.0] - 2026-08-27
 
 ### Fixed
