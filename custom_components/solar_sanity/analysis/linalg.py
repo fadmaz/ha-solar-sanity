@@ -119,6 +119,17 @@ def theil_sen_slope(xs: Sequence[float], ys: Sequence[float]) -> float | None:
     return median(slopes)
 
 
+def theil_sen_intercept(xs: Sequence[float], ys: Sequence[float], slope: float) -> float | None:
+    """The robust companion to the slope: ``median(y - slope * x)``.
+
+    A least-squares intercept would be dragged by the same outliers Theil-Sen
+    exists to ignore, so the pair has to be taken together.
+    """
+    if not xs or len(xs) != len(ys):
+        return None
+    return median([y - slope * x for x, y in zip(xs, ys, strict=True)])
+
+
 def sum_squares(values: Sequence[float]) -> float:
     return sum(v * v for v in values)
 

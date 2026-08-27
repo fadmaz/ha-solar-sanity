@@ -158,6 +158,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             reason=_with_closure(
                 "The numbers move around but not consistently enough to name.", closure
             ),
+            notes=_draw_note(days, specs),
             topology=estimate,
             loss_model=loss,
             residual=summary,
@@ -196,6 +197,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             # data problem we are certain of; only its cause is open.
             identity_fails=True,
             reason=_with_closure(_unattributed_reason(days, scored), closure),
+            notes=_draw_note(days, specs),
             deferred=tuple(h.code for h in scored[:3]),
             topology=estimate,
             loss_model=loss,
@@ -249,7 +251,7 @@ def _restricted_report(
         return None
 
     summary = _summarise(days)
-    notes = _unverifiable_notes(days, full_days)
+    notes = _unverifiable_notes(days, full_days) + _draw_note(days, specs)
     recent = days[-7:]
 
     common = {
@@ -298,6 +300,24 @@ def _restricted_report(
         finding=_render_hypothesis(scored[0], specs, days, summary),
         deferred=tuple(h.code for h in scored[1:3]),
         **common,
+    )
+
+
+def _draw_note(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) -> tuple[str, ...]:
+    """Report a continuous unmetered draw rather than absorbing it.
+
+    The loss model refuses anything larger than an inverter idles at, which is
+    right — quietly subtracting a kilowatt-hour a day as "normal" would hide the
+    thing the user most needs told. But having measured it and said nothing is
+    no better.
+    """
+    watts = topology.unmetered_draw_w(days, specs)
+    if watts is None:
+        return ()
+    return (
+        f"Something draws about {watts:.0f} W continuously that nothing measures "
+        f"— roughly {watts * 24 / 1000:.1f} kWh a day. That is more than an "
+        "inverter's own idle draw, so it is a load rather than a rounding error.",
     )
 
 

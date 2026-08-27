@@ -197,8 +197,19 @@ def expected_loss(bucket: Bucket, specs: tuple[ChannelSpec, ...], loss: LossMode
     return total
 
 
-def _tolerance(base_pct: float, floor_wh: float, tp: float, from_mean: bool) -> float:
-    tol = max(base_pct * tp, floor_wh)
+def _tolerance(
+    base_pct: float, floor_wh: float, tp: float, from_mean: bool, hours: int = 24
+) -> float:
+    """Tolerance for one day, as a fraction of throughput or an absolute floor.
+
+    The floor is stated per whole day, so it has to be prorated when the day is
+    shorter. Without that, a partial day is judged against a whole day's worth
+    of "not enough energy in play to care" — and an eleven-hour window running
+    a quarter out every night for a month reads as clean because a full day's
+    floor was never crossed.
+    """
+    covered = max(1, min(24, hours)) / 24.0
+    tol = max(base_pct * tp, floor_wh * covered)
     return tol * MEAN_SOURCE_TOLERANCE_FACTOR if from_mean else tol
 
 
@@ -206,12 +217,15 @@ def classify_day(day: DayResidual) -> str:
     """Return ``clean``, ``watch`` or ``actionable`` for one day."""
     tp = day.total_throughput
     deviation = abs(day.net)
+    hours = len(day.buckets)
 
-    clean = _tolerance(CLEAN_DAILY_PCT, CLEAN_DAILY_FLOOR_WH, tp, day.from_mean)
+    clean = _tolerance(CLEAN_DAILY_PCT, CLEAN_DAILY_FLOOR_WH, tp, day.from_mean, hours)
     if deviation <= clean:
         return "clean"
 
-    actionable = _tolerance(ACTIONABLE_DAILY_PCT, ACTIONABLE_DAILY_FLOOR_WH, tp, day.from_mean)
+    actionable = _tolerance(
+        ACTIONABLE_DAILY_PCT, ACTIONABLE_DAILY_FLOOR_WH, tp, day.from_mean, hours
+    )
     if deviation > actionable:
         return "actionable"
 
