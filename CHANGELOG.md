@@ -2,6 +2,51 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.5.0] - 2026-08-27
+
+Forecast scoring was designed, and the design's first conclusion was that the
+archive it would have to read is not fit to be scored. This release fixes the
+archive. No scoring number ships until it has clean history to stand on.
+
+### Fixed
+
+- **The running total was resumed from the wrong row, inflating it by a whole
+  forecast horizon on every capture.** `get_last_statistics` returns the row
+  with the *greatest* start — after any normal capture that is the far end of
+  tomorrow's horizon, not the hour before the window about to be written. Each
+  capture therefore added an entire horizon to a total that should have advanced
+  by one hour, roughly fifty times a day. The `sum` column is bookkeeping the
+  recorder's contract requires, so nothing user-facing was wrong — but anything
+  reading `change` off that archive would have got a day's energy per hour.
+- **A failed lookup restarted the total at zero**, which sends `sum` backwards
+  and makes `change` massively negative at the join. It now declines to write.
+  Zero is the truth only for an archive that is genuinely empty; everywhere else
+  it is the "`None` silently became a number" idiom wearing a different hat.
+- **Two installations shared one state file** and overwrote each other's fitted
+  loss model on every analysis — the second write simply won, and the first
+  entry silently inherited a model fitted on a different house. One file per
+  entry now, read back from the old one once so nothing already learned is lost,
+  and removed with the entry.
+- **Two installations selecting the same forecast provider wrote to the same
+  archive**, each resuming from what the other left. One owner is now elected
+  per provider, deterministically and afresh every capture, so deleting the
+  owning entry hands the archive over within one interval rather than silently
+  stopping the one thing that cannot be backfilled.
+
+### Added
+
+- **A day-ahead archive, kept separately from the rolling one.** A provider
+  revises its forecast all day and the rolling series keeps only the latest
+  revision, so by the time an hour has passed, what was stored for it was issued
+  minutes before — not the day before. Scoring that and calling it a day-ahead
+  forecast would flatter every provider equally and mean nothing. An hour now
+  lands in `solar_sanity:dayahead_<provider>` on its first sighting at twelve
+  hours of lead, and is never revised afterwards.
+- `async_forecast_series`, which reads `state` and only `state`. Never `sum`,
+  never `change`.
+- Diagnostics report both archives per provider: row counts, the day-ahead
+  span, and whether this entry owns the archive at all.
+
 ## [0.4.2] - 2026-08-27
 
 ### Added

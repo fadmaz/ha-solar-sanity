@@ -27,8 +27,13 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Any) ->
     data: SolarSanityData | None = getattr(entry, "runtime_data", None)
     report = data.coordinator.report if data else None
 
+    forecasts = await data.coordinator.async_forecast_snapshot() if data else {}
+
     return {
         "entry": async_redact_data(entry.as_dict(), TO_REDACT),
+        # The one record that cannot be reconstructed later, so whether it is
+        # actually accumulating has to be checkable rather than assumed.
+        "forecast_archive": forecasts,
         # Why the verdict is what it is. Without this, a report of "Not
         # enough data yet" carries no evidence at all and the only way to
         # investigate is to ask the user to read attributes back one by one.

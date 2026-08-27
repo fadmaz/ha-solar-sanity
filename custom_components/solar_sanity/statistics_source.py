@@ -22,7 +22,13 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import FORECAST_STATISTIC_PREFIX
+from ._forecast_plan import dayahead_write_plan, eligible, running_totals
+from .const import (
+    DAYAHEAD_MIN_LEAD_HOURS,
+    FORECAST_DAYAHEAD_PREFIX,
+    FORECAST_STATISTIC_PREFIX,
+    FORECAST_SUM_LOOKBACK_DAYS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -207,7 +213,7 @@ async def async_classify_statistics(
 
 
 def forecast_statistic_id(provider_key: str) -> str:
-    """External statistic id for one forecast provider.
+    """External statistic id for one provider's *latest* forecast.
 
     External ids use a colon and have no entity behind them, which is exactly
     what we want: this is our data, not a sensor's history.
@@ -215,53 +221,105 @@ def forecast_statistic_id(provider_key: str) -> str:
     return f"{FORECAST_STATISTIC_PREFIX}{provider_key}"
 
 
-async def async_record_forecast(
-    hass: HomeAssistant,
-    provider_key: str,
-    provider_name: str,
-    wh_hours: dict[str, float],
-) -> bool:
-    """Persist one provider's day-ahead forecast as external statistics.
+def dayahead_statistic_id(provider_key: str) -> str:
+    """External statistic id for one provider's *day-ahead* forecast.
 
-    Returns whether anything was written.
-
-    Three constraints the recorder enforces and we must respect:
-
-    * timestamps must be timezone-aware,
-    * timestamps must land exactly on the hour — there is no sub-hourly external
-      statistic, ever,
-    * we own ``sum`` monotonicity, so we resume from whatever was last written.
-
-    Re-importing an hour updates it in place, which makes backfill and
-    correction idempotent.
+    Separate from the latest series on purpose. See FORECAST_DAYAHEAD_PREFIX.
     """
-    if not recorder_available(hass) or not wh_hours:
-        return False
+    return f"{FORECAST_DAYAHEAD_PREFIX}{provider_key}"
 
-    from homeassistant.components.recorder import get_instance
+
+def _metadata(statistic_id: str, name: str) -> Any:
+    """Metadata for one of our external forecast series.
+
+    ``mean_type`` and ``unit_class`` are REQUIRED. Omitting either is deprecated
+    now and becomes a hard error in Home Assistant 2026.11 — and custom
+    integrations are explicitly not exempt from that deprecation.
+    """
     from homeassistant.components.recorder.models import (
-        StatisticData,
         StatisticMeanType,
         StatisticMetaData,
     )
-    from homeassistant.components.recorder.statistics import (
-        async_add_external_statistics,
-        get_last_statistics,
-    )
 
-    statistic_id = forecast_statistic_id(provider_key)
-
-    # `mean_type` and `unit_class` are REQUIRED. Omitting either is deprecated
-    # now and becomes a hard error in Home Assistant 2026.11 — and custom
-    # integrations are explicitly not exempt from that deprecation.
-    metadata = StatisticMetaData(
+    return StatisticMetaData(
         mean_type=StatisticMeanType.NONE,
         has_sum=True,
-        name=f"{provider_name} forecast",
+        name=name,
         source=statistic_id.split(":", 1)[0],
         statistic_id=statistic_id,
         unit_class="energy",
         unit_of_measurement="kWh",
+    )
+
+
+async def async_forecast_series(
+    hass: HomeAssistant, statistic_id: str, start: datetime, end: datetime
+) -> dict[datetime, float] | None:
+    """Hourly forecast kWh from one of our archives, by UTC hour.
+
+    Reads ``state`` and only ``state``. Never ``sum``, never ``change``.
+
+    ``state`` is the figure we wrote for that hour and survives every
+    re-import. The ``sum`` column is bookkeeping we maintain so the recorder's
+    contract is satisfied and the series is usable as an Energy Dashboard
+    source; it is a running total across a horizon that is rewritten many times
+    a day, so differencing it says nothing about any hour.
+
+    ``None`` means the query failed, which is not the same as an empty archive.
+    """
+    if not recorder_available(hass):
+        return None
+
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.statistics import statistics_during_period
+
+    try:
+        raw = await get_instance(hass).async_add_executor_job(
+            statistics_during_period,
+            hass,
+            start,
+            end,
+            {statistic_id},
+            "hour",
+            {"energy": "kWh"},
+            {"state"},
+        )
+    except Exception:
+        _LOGGER.debug("forecast read failed for %s", statistic_id, exc_info=True)
+        return None
+
+    out: dict[datetime, float] = {}
+    for row in (raw or {}).get(statistic_id, []):
+        state = row.get("state")
+        started = row.get("start")
+        if state is None or started is None:
+            continue
+        out[dt_util.utc_from_timestamp(float(started))] = float(state)
+    return out
+
+
+async def _async_resume_sum(
+    hass: HomeAssistant, statistic_id: str, before: datetime
+) -> float | None:
+    """The running total to carry into a write starting at ``before``.
+
+    ``None`` means do not write.
+
+    This used to resume from ``get_last_statistics``, which returns the row with
+    the *greatest* start — after any normal capture that is the far end of
+    tomorrow's horizon, not the hour before the window about to be written. Each
+    capture therefore added an entire forecast horizon to a total that should
+    have advanced by one hour, roughly fifty times a day.
+
+    A failed lookup returns ``None`` rather than starting again at zero. Zero is
+    a real answer only for an archive that is genuinely empty; anywhere else it
+    sends ``sum`` backwards, and writing a broken running total is worse than
+    skipping one capture.
+    """
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.statistics import (
+        get_last_statistics,
+        statistics_during_period,
     )
 
     try:
@@ -270,26 +328,132 @@ async def async_record_forecast(
         )
     except Exception:
         _LOGGER.debug("get_last_statistics failed for %s", statistic_id, exc_info=True)
-        last = {}
+        return None
 
-    running = 0.0
-    rows = last.get(statistic_id) if last else None
-    if rows:
-        previous = rows[0].get("sum")
-        if isinstance(previous, (int, float)):
-            running = float(previous)
+    if not last or not last.get(statistic_id):
+        # Genuinely empty. This is the one case where zero is the truth.
+        return 0.0
+
+    try:
+        rows = await get_instance(hass).async_add_executor_job(
+            statistics_during_period,
+            hass,
+            before - timedelta(days=FORECAST_SUM_LOOKBACK_DAYS),
+            before,
+            {statistic_id},
+            "hour",
+            None,
+            {"sum"},
+        )
+    except Exception:
+        _LOGGER.debug("sum lookback failed for %s", statistic_id, exc_info=True)
+        return None
+
+    preceding = (rows or {}).get(statistic_id) or []
+    if not preceding:
+        # The archive holds rows, but none in the week before this write. A gap
+        # that long cannot be resumed across without inventing a total.
+        _LOGGER.debug("no resumable total for %s before %s", statistic_id, before)
+        return None
+
+    total = preceding[-1].get("sum")
+    return float(total) if isinstance(total, (int, float)) else None
+
+
+def _as_rows(points: list[tuple[datetime, float]], running: float) -> list[Any]:
+    from homeassistant.components.recorder.models import StatisticData
+
+    return [
+        StatisticData(start=when, state=state, sum=total)
+        for when, state, total in running_totals(points, running)
+    ]
+
+
+async def async_record_forecast(
+    hass: HomeAssistant,
+    provider_key: str,
+    provider_name: str,
+    wh_hours: dict[str, float],
+    now: datetime | None = None,
+) -> bool:
+    """Persist one provider's forecast, as two series.
+
+    Returns whether anything was written.
+
+    Three constraints the recorder enforces and we must respect: timestamps must
+    be timezone-aware; they must land exactly on the hour, because there is no
+    sub-hourly external statistic, ever; and we own ``sum`` monotonicity.
+
+    Re-importing an hour updates it in place, which is what makes the latest
+    series idempotent — and is also why it cannot answer what was forecast
+    yesterday. That is the day-ahead series' job.
+    """
+    if not recorder_available(hass) or not wh_hours:
+        return False
+
+    from homeassistant.components.recorder.statistics import async_add_external_statistics
 
     points = _normalise_wh_hours(wh_hours)
     if not points:
         return False
 
-    statistics: list[StatisticData] = []
-    for when, kwh in points:
-        running += kwh
-        statistics.append(StatisticData(start=when, state=kwh, sum=running))
+    when_now = now or dt_util.utcnow()
+    written = False
 
-    async_add_external_statistics(hass, metadata, statistics)
-    _LOGGER.debug("recorded %d forecast points for %s", len(statistics), statistic_id)
+    latest_id = forecast_statistic_id(provider_key)
+    running = await _async_resume_sum(hass, latest_id, points[0][0])
+    if running is not None:
+        async_add_external_statistics(
+            hass, _metadata(latest_id, f"{provider_name} forecast"), _as_rows(points, running)
+        )
+        _LOGGER.debug("recorded %d forecast points for %s", len(points), latest_id)
+        written = True
+
+    if await _async_record_dayahead(hass, provider_key, provider_name, points, when_now):
+        written = True
+    return written
+
+
+async def _async_record_dayahead(
+    hass: HomeAssistant,
+    provider_key: str,
+    provider_name: str,
+    points: list[tuple[datetime, float]],
+    now: datetime,
+) -> bool:
+    """Write only hours still far enough ahead, and only once each.
+
+    An hour already present here keeps the value it was first given. That
+    immutability is the whole point: it is what makes "this is what was
+    forecast a day ahead" a statement rather than a hope.
+    """
+    from homeassistant.components.recorder.statistics import async_add_external_statistics
+
+    ahead = eligible(points, now, DAYAHEAD_MIN_LEAD_HOURS)
+    if not ahead:
+        return False
+
+    statistic_id = dayahead_statistic_id(provider_key)
+    existing = await async_forecast_series(
+        hass, statistic_id, ahead[0][0], ahead[-1][0] + timedelta(hours=1)
+    )
+    if existing is None:
+        return False
+
+    tail = dayahead_write_plan(points, existing, now, DAYAHEAD_MIN_LEAD_HOURS)
+    if not tail:
+        return False
+
+    running = await _async_resume_sum(hass, statistic_id, tail[0][0])
+    if running is None:
+        return False
+
+    async_add_external_statistics(
+        hass,
+        _metadata(statistic_id, f"{provider_name} forecast, a day ahead"),
+        _as_rows(tail, running),
+    )
+    _LOGGER.debug("recorded %d day-ahead rows for %s", len(tail), statistic_id)
     return True
 
 

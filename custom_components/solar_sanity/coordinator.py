@@ -72,8 +72,11 @@ from .const import (
     STORAGE_VERSION,
 )
 from .statistics_source import (
+    async_forecast_series,
     async_get_solar_forecasts,
     async_record_forecast,
+    dayahead_statistic_id,
+    forecast_statistic_id,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -126,7 +129,17 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self.backfill_rows: dict[str, int] = {}
         self._accumulator_start: datetime | None = None
         self._loss_model: LossModel | None = None
+        # One file per entry. A single shared file meant two installations
+        # overwrote each other's fitted loss model on every analysis — the
+        # second write simply won, and the first entry silently inherited a
+        # model fitted on a different house.
         self._store = Store[dict[str, Any]](
+            hass,
+            STORAGE_VERSION,
+            f"{STORAGE_KEY_STATE}.{entry.entry_id}",
+            minor_version=STORAGE_MINOR_VERSION,
+        )
+        self._legacy_store = Store[dict[str, Any]](
             hass,
             STORAGE_VERSION,
             STORAGE_KEY_STATE,
@@ -416,7 +429,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             wh_hours = payload.get("wh_hours") if isinstance(payload, dict) else None
             if not isinstance(wh_hours, dict):
                 continue
-            if await async_record_forecast(
+            if self._owns_archive(entry_id) and await async_record_forecast(
                 self.hass, entry_id, provider.title or provider.domain, wh_hours
             ):
                 written += 1
@@ -428,6 +441,64 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
         self._expected_tomorrow_kwh = tomorrow_kwh
         return written
+
+    def _owns_archive(self, provider_entry_id: str) -> bool:
+        """Whether this entry is the one that writes that provider's archive.
+
+        The archive is keyed on the provider, not on us, so two installations
+        selecting the same forecast integration write to the same series — each
+        resuming its running total from what the other last left, which climbs
+        at twice the real rate and never recovers.
+
+        Elected rather than assigned, and recomputed every tick: deleting the
+        owning entry hands the archive over within one capture interval instead
+        of silently stopping the one thing that cannot be backfilled.
+        """
+        owners = [
+            entry.entry_id
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+            if provider_entry_id in (entry.data.get(CONF_FORECAST_ENTRIES) or [])
+        ]
+        return bool(owners) and min(owners) == self.entry.entry_id
+
+    async def async_forecast_snapshot(self) -> dict[str, Any]:
+        """What each provider's two archives actually hold.
+
+        The one thing in this product that cannot be reconstructed later is the
+        forecast record, so "capture is running" needs to be checkable rather
+        than assumed. Both series are reported side by side because the
+        interesting number is the gap: the latest series should hold roughly a
+        two-day horizon, the day-ahead one should grow by a day every day and
+        never shrink.
+        """
+        end = dt_util.utcnow() + timedelta(days=2)
+        start = end - timedelta(days=32)
+        out: dict[str, Any] = {}
+
+        for entry_id in self.entry.data.get(CONF_FORECAST_ENTRIES) or []:
+            provider = self.hass.config_entries.async_get_entry(entry_id)
+            latest_id = forecast_statistic_id(entry_id)
+            ahead_id = dayahead_statistic_id(entry_id)
+            latest = await async_forecast_series(self.hass, latest_id, start, end)
+            ahead = await async_forecast_series(self.hass, ahead_id, start, end)
+
+            hours = sorted(ahead) if ahead else []
+            out[entry_id] = {
+                "provider": provider.title if provider else None,
+                # A selected entry that no longer resolves means the provider
+                # was removed or recreated; its archive is then an orphan
+                # holding real history nothing will ever add to.
+                "resolves": provider is not None,
+                "owns_archive": self._owns_archive(entry_id),
+                "latest_id": latest_id,
+                "latest_rows": None if latest is None else len(latest),
+                "dayahead_id": ahead_id,
+                "dayahead_rows": None if ahead is None else len(ahead),
+                "dayahead_first": hours[0].isoformat() if hours else None,
+                "dayahead_last": hours[-1].isoformat() if hours else None,
+                "dayahead_kwh": round(sum(ahead.values()), 2) if ahead else None,
+            }
+        return out
 
     def _sum_for_tomorrow(self, wh_hours: dict[str, Any]) -> float | None:
         """Total forecast energy for tomorrow, in kWh, by local date.
@@ -519,8 +590,19 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._store.async_delay_save(lambda: payload, 30)
 
     async def async_restore(self) -> None:
-        """Reload the fitted loss model so a restart does not reset learning."""
+        """Reload the fitted loss model so a restart does not reset learning.
+
+        Falls back to the pre-per-entry file once. A wrongly inherited model is
+        refitted from data within a day anyway, so this needs no migration
+        ceremony — but throwing away a correctly fitted one costs a user their
+        loss model for no reason.
+        """
         stored = await self._store.async_load()
+        if not stored:
+            try:
+                stored = await self._legacy_store.async_load()
+            except Exception:
+                stored = None
         if not stored:
             return
         self._loss_model = _loss_from_dict(stored.get("loss_model"))
