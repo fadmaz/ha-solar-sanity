@@ -2,6 +2,15 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.3.1] - 2026-08-27
+
+### Added
+
+- Diagnostics carry `identity_fails` and the loss model's `fitted_terms`. Both
+  distinguish a measured answer from a defaulted one: "Still looking" is reached
+  two ways with the same wording, and every loss term falls back to `0.0`
+  whether it was established as zero or never established at all.
+
 ## [0.3.0] - 2026-08-27
 
 Everything here came out of one real installation sitting at a 40% energy

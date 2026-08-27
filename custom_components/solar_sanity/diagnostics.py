@@ -34,6 +34,10 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Any) ->
         # investigate is to ask the user to read attributes back one by one.
         "coverage": data.coordinator.coverage_snapshot() if data else None,
         "status": report.status.value if report else None,
+        # Whether the identity was *shown* to fail, as opposed to merely not
+        # closing tidily. "Still looking" is reached both ways and the word is
+        # the same, so without this the two are indistinguishable from outside.
+        "identity_fails": report.identity_fails if report else None,
         "reason": report.reason if report else None,
         "finding": (
             {
@@ -63,6 +67,10 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Any) ->
                 "battery_dc_gamma": report.loss_model.battery_dc_gamma,
                 "standby_w": report.loss_model.standby_w,
                 "samples": report.loss_model.samples,
+                # Which terms were established rather than defaulted. Every
+                # term falls back to 0.0, so this is the only way to tell a
+                # measured absence of loss from a fit that found nothing.
+                "fitted_terms": list(report.loss_model.fitted_terms),
             }
             if report and report.loss_model
             else None
