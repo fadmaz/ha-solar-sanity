@@ -11,7 +11,7 @@ Every value that can be absent is ``None``. ``None`` never becomes a number.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
 
@@ -154,6 +154,16 @@ class Bucket:
     source: dict[str, BucketSource]
     solar_elevation_deg: float | None = None
     is_dst_transition: bool = False
+    #: The local calendar day this hour belongs to, resolved where the time zone
+    #: is known.
+    #:
+    #: Carried as data rather than derived here, because deriving it needs a
+    #: time zone and this package has no clock and no zone database — that is
+    #: what keeps ``analyse`` byte-identical for identical input. A single
+    #: offset applied across a window is not a substitute: it is wrong on one
+    #: side of every daylight-saving change, and wrong by a whole day for the
+    #: hours either side of local midnight.
+    local_date: date | None = None
 
     #: Qualities whose value may still be used. A mean-derived reading is
     #: usable but weaker — the tolerance is widened for it and it cannot support

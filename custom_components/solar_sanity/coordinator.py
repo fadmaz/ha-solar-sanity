@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
@@ -34,6 +34,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
 
+from ._local_time import local_day
 from .analysis.engine import analyse
 from .analysis.model import (
     AnalysisReport,
@@ -346,6 +347,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 quality[spec.key] = Quality.OK
             source[spec.key] = BucketSource.OWN_INTEGRAL
 
+        local_date, dst = self._local_day(start)
         self._buckets.append(
             Bucket(
                 start_utc=start,
@@ -353,6 +355,8 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 wh=wh,
                 quality=quality,
                 source=source,
+                local_date=local_date,
+                is_dst_transition=dst,
             )
         )
         if len(self._buckets) > MAX_BUCKETS:
@@ -382,6 +386,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             if when in existing:
                 # Our own measurement is preferred where we have it.
                 continue
+            local_date, dst = self._local_day(when)
             values = merged[when]
             wh: dict[str, float | None] = {}
             quality: dict[str, Quality] = {}
@@ -398,7 +403,15 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 quality[spec.key] = Quality.DERIVED_FROM_MEAN if from_mean else Quality.OK
                 source[spec.key] = BucketSource.LTS_MEAN if from_mean else BucketSource.LTS_SUM
             self._buckets.append(
-                Bucket(start_utc=when, seconds=3600, wh=wh, quality=quality, source=source)
+                Bucket(
+                    start_utc=when,
+                    seconds=3600,
+                    wh=wh,
+                    quality=quality,
+                    source=source,
+                    local_date=local_date,
+                    is_dst_transition=dst,
+                )
             )
 
         self._buckets.sort(key=lambda b: b.start_utc)
@@ -558,6 +571,19 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         """Channel keys whose entity the recorder holds no statistics for."""
         unrecorded = set(self.unrecorded_entities)
         return tuple(spec.key for spec in self.specs if spec.entity_id in unrecorded)
+
+    def _local_day(self, when: datetime) -> tuple[date | None, bool]:
+        """The local day an hour belongs to, and whether that day is 24 hours.
+
+        Resolved per hour against the zone, never by adding a fixed offset.
+        """
+        return local_day(when, self._time_zone())
+
+    def _time_zone(self) -> tzinfo | None:
+        try:
+            return dt_util.get_time_zone(self.hass.config.time_zone)
+        except Exception:
+            return None
 
     def _utc_offset_hours(self) -> float:
         """The instance's current offset from UTC, in hours.
