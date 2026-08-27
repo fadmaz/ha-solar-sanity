@@ -26,7 +26,26 @@ from .model import ChannelSpec, Confidence, Role
 from .residual import DayResidual, virtual_soc
 
 #: A channel needs this many large-magnitude hours before its gamma means much.
+#: The unit is *upper-quartile* hours, not hours — ``estimate_gamma`` divides by
+#: the channel's own magnitude, so small hours produce enormous ratios and are
+#: excluded before the median is taken.
 MIN_RATIO_SAMPLES = 40
+
+#: ...which means roughly four times that many valid hours have to exist, since
+#: the upper quartile is a quarter of them. Stated here because the two numbers
+#: drifted apart once already: the engine let attribution start at five days
+#: while this floor could not be met before seven, so every install spent two
+#: days being told no explanation was convincing when none had been generated.
+MIN_HOURS_FOR_SNAP = MIN_RATIO_SAMPLES * 4
+
+#: Unmeasured export: how much of the squared residual must fall in hours where
+#: generation exceeds consumption. Export cannot happen at any other time, so
+#: this is the whole discrimination.
+EXPORT_MIN_SURPLUS_SHARE = 0.85
+#: ...and how quiet the remaining hours must be, relative to surplus hours.
+EXPORT_MAX_DEFICIT_RATIO = 0.25
+#: Below this many surplus hours there is nothing to conclude from.
+EXPORT_MIN_SURPLUS_HOURS = 40
 
 #: Fraction of the residual a hypothesis must account for.
 MIN_EXPLAINED = 0.80
@@ -98,12 +117,15 @@ def estimate_gamma(
     """
     pairs = _channel_units(days, spec)
     if len(pairs) < MIN_RATIO_SAMPLES:
-        return None, None, len(pairs)
+        # Zero, not len(pairs). The third element is counted in upper-quartile
+        # hours on the success path, and returning a different unit from the
+        # failure paths made the caller's own sample check unreadable.
+        return None, None, 0
 
     magnitudes = [abs(u) for u, _ in pairs]
     cutoff = percentile(magnitudes, 75)
     if cutoff is None or cutoff <= 0:
-        return None, None, len(pairs)
+        return None, None, 0
 
     ratios = [
         ratio for u, dr in pairs if abs(u) >= cutoff and (ratio := safe_ratio(dr, u)) is not None
@@ -112,6 +134,31 @@ def estimate_gamma(
         return None, None, len(ratios)
 
     return median(ratios), iqr(ratios), len(ratios)
+
+
+def _role_key(role: Role) -> str | None:
+    spec = next((s for s in _SPEC_STUBS.values() if s.role is role), None)
+    return spec.key if spec else None
+
+
+def surplus_mask(day: DayResidual) -> tuple[bool, ...]:
+    """Which hours of a day had generation exceeding consumption.
+
+    Export can only leave the house in these hours. Any hypothesis about
+    unmeasured export therefore claims nothing at all about the others, and
+    that restriction is what stops it explaining an arbitrary residual.
+    """
+    pv_key = _role_key(Role.PV)
+    load_key = _role_key(Role.LOAD)
+    if pv_key is None or load_key is None:
+        return tuple(False for _ in day.buckets)
+
+    out: list[bool] = []
+    for bucket in day.buckets:
+        generation = bucket.value(pv_key)
+        consumption = bucket.value(load_key)
+        out.append(generation is not None and consumption is not None and generation > consumption)
+    return tuple(out)
 
 
 def _per_day_gamma(days: tuple[DayResidual, ...], spec: ChannelSpec) -> list[float]:
@@ -125,6 +172,16 @@ def _per_day_gamma(days: tuple[DayResidual, ...], spec: ChannelSpec) -> list[flo
 
 def residual_after(days: tuple[DayResidual, ...], hyp: Hypothesis) -> list[float]:
     """The residual that would remain if this hypothesis were true and corrected."""
+    if hyp.code == Code.MISSING_EXPORT:
+        # Unmeasured export absorbs the residual in surplus hours and claims
+        # nothing about the rest. Modelling it as "explains everything" would
+        # make it fit any residual at all and it would win every time.
+        out: list[float] = []
+        for day in days:
+            for surplus, value in zip(surplus_mask(day), day.dr, strict=True):
+                out.append(0.0 if surplus and value > 0 else value)
+        return out
+
     if hyp.a is None or not hyp.channel_keys:
         return [v for day in days for v in day.dr]
 
@@ -201,8 +258,76 @@ def generate(
         storage = _storage_hypothesis(days, specs)
         if storage is not None:
             out.append(storage)
+        export = _missing_export_hypothesis(days, specs)
+        if export is not None:
+            out.append(export)
 
     return out
+
+
+def _missing_export_hypothesis(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
+) -> Hypothesis | None:
+    """Is the unexplained energy leaving the house when there is a surplus?
+
+    A house with no export sensor is not a rare misconfiguration — plenty of
+    inverters expose import and not export, and the Energy Dashboard is happy
+    without one. The residual it produces is large, one-signed and daily, which
+    is exactly what an ordinary fault looks like from the outside. The one thing
+    that separates them is *when*: export cannot happen while consumption
+    exceeds generation, and a miscounted channel does not care what time it is.
+    """
+    if any(spec.role is Role.GRID_EXPORT for spec in specs):
+        return None
+
+    surplus_sq = 0.0
+    deficit_sq = 0.0
+    surplus_hours = 0
+    deficit_hours = 0
+
+    for day in days:
+        for surplus, value in zip(surplus_mask(day), day.dr, strict=True):
+            if surplus:
+                surplus_hours += 1
+                surplus_sq += value * value
+            else:
+                deficit_hours += 1
+                deficit_sq += value * value
+
+    if surplus_hours < EXPORT_MIN_SURPLUS_HOURS or deficit_hours < EXPORT_MIN_SURPLUS_HOURS:
+        return None
+
+    total_sq = surplus_sq + deficit_sq
+    if total_sq <= 0:
+        return None
+    if surplus_sq / total_sq < EXPORT_MIN_SURPLUS_SHARE:
+        return None
+
+    # Per-hour, not per-total: a day with three times as many deficit hours
+    # would otherwise pass the share test on arithmetic alone.
+    per_surplus = surplus_sq / surplus_hours
+    per_deficit = deficit_sq / deficit_hours
+    if per_surplus <= 0 or per_deficit / per_surplus > EXPORT_MAX_DEFICIT_RATIO:
+        return None
+
+    # Energy going out unmeasured makes the residual run positive. The other
+    # sign is a different problem entirely and must not borrow this copy.
+    asymmetries = [a for day in days if (a := day.asymmetry) is not None]
+    if not asymmetries:
+        return None
+    if median(asymmetries) is None or median(asymmetries) < ONE_SIDED_ASYMMETRY:
+        return None
+
+    return Hypothesis(
+        code=Code.MISSING_EXPORT,
+        channel_keys=(),
+        a=None,
+        gamma=None,
+        gamma_iqr=None,
+        confidence=Confidence.HIGH,
+        correction_kind=None,
+        has_free_parameter=True,
+    )
 
 
 def _snap_applies(snap: Snap, spec: ChannelSpec, gamma: float, gamma_iqr: float) -> bool:

@@ -216,10 +216,25 @@ class LossModel:
     battery_dc_gamma: float = 0.0
     standby_w: float = 0.0
     samples: int = 0
+    #: Which terms were actually established. A term the fit rejected stays at
+    #: 0.0, which is byte-identical to a term genuinely measured as lossless —
+    #: so without this, "we could not tell" and "there is no loss here" are the
+    #: same answer, and the second one gets asserted downstream as fact.
+    fitted_terms: tuple[str, ...] = ()
 
     @property
     def fitted(self) -> bool:
-        return self.samples > 0
+        """Whether anything was actually established.
+
+        Not ``samples > 0``: that was true of a model whose every term had been
+        rejected, which the coordinator then persisted and fed back as the prior
+        for the next run.
+        """
+        return bool(self.fitted_terms)
+
+    def established(self, term: str) -> bool:
+        """Whether one named term was fitted rather than defaulted."""
+        return term in self.fitted_terms
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +328,12 @@ class AnalysisReport:
 
     status: Status
     finding: Finding | None = None
+    #: The identity provably does not close, whether or not we can say why.
+    #: ``INVESTIGATING`` is reached by two routes with very different weight —
+    #: "the numbers move around" and "the numbers do not add up" — and the
+    #: status alone cannot tell them apart, so the entity layer would have to
+    #: re-derive the difference from engine internals to answer honestly.
+    identity_fails: bool = False
     deferred: tuple[str, ...] = ()
     topology: TopologyEstimate = field(default_factory=TopologyEstimate)
     loss_model: LossModel | None = None

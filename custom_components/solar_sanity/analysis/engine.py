@@ -14,17 +14,19 @@ from __future__ import annotations
 
 from . import faults, hypotheses, screen, topology
 from .faults import Code
-from .hypotheses import Hypothesis
+from .hypotheses import MIN_HOURS_FOR_SNAP, Hypothesis
 from .model import (
     AnalysisReport,
     AnalysisRequest,
     Bucket,
+    BucketSource,
     ChannelSpec,
     Confidence,
     Correction,
     Evidence,
     Finding,
     LossModel,
+    Quality,
     ResidualSummary,
     Severity,
     Status,
@@ -67,7 +69,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         primary = hits[0]
         return AnalysisReport(
             status=Status.FAULT_FOUND,
-            finding=_render_screen_hit(primary, specs),
+            finding=_render_screen_hit(primary, specs, buckets),
             deferred=tuple(h.code for h in hits[1:]),
         )
 
@@ -140,7 +142,9 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     if sum(1 for d in recent if d.band == "actionable") < MIN_ACTIONABLE_DAYS:
         return AnalysisReport(
             status=Status.INVESTIGATING,
-            reason="The numbers move around but not consistently enough to name.",
+            reason=_with_closure(
+                "The numbers move around but not consistently enough to name.", closure
+            ),
             topology=estimate,
             loss_model=loss,
             residual=summary,
@@ -163,7 +167,11 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     if not scored or not hypotheses.passes_gates(scored[0], len(days)):
         return AnalysisReport(
             status=Status.INVESTIGATING,
-            reason="The numbers do not add up, but no explanation is convincing yet.",
+            # Reached only after the identity has been shown to miss by more
+            # than a tenth of throughput on most of the last week. That is a
+            # data problem we are certain of; only its cause is open.
+            identity_fails=True,
+            reason=_with_closure(_unattributed_reason(days, scored), closure),
             deferred=tuple(h.code for h in scored[:3]),
             topology=estimate,
             loss_model=loss,
@@ -173,6 +181,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     best = scored[0]
     return AnalysisReport(
         status=Status.FAULT_FOUND,
+        identity_fails=True,
         finding=_render_hypothesis(best, specs, days, summary),
         deferred=tuple(h.code for h in scored[1:3]),
         topology=estimate,
@@ -180,6 +189,34 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         residual=summary,
         stale_corrections=_stale_corrections(days, request.active_corrections),
     )
+
+
+def _with_closure(reason: str, closure: topology.ClosureResult) -> str:
+    """Append the closure caveat when there is one.
+
+    An open boundary was previously computed, used internally to widen the
+    hypothesis set, and then discarded — so a user whose configuration cannot
+    balance by construction was told the numbers merely did not add up.
+    """
+    if closure.state is Closure.OPEN and closure.reason:
+        return f"{reason} {closure.reason}"
+    return reason
+
+
+def _unattributed_reason(days: tuple[DayResidual, ...], scored: list) -> str:
+    """Why nothing was named — distinguishing "rejected" from "not yet asked"."""
+    if scored:
+        return "The numbers do not add up, but no explanation is convincing yet."
+
+    hours = sum(len(day.buckets) for day in days)
+    if hours < MIN_HOURS_FOR_SNAP:
+        needed = -(-MIN_HOURS_FOR_SNAP // 24)
+        return (
+            "The numbers do not add up. Pinning it on a particular sensor needs "
+            f"about {needed} complete days and there are {len(days)} so far, so "
+            "nothing has been ruled in or out yet."
+        )
+    return "The numbers do not add up, but no explanation is convincing yet."
 
 
 def _shortage_reason(days: int, buckets: tuple[Bucket, ...], specs: tuple[ChannelSpec, ...]) -> str:
@@ -203,13 +240,42 @@ def _shortage_reason(days: int, buckets: tuple[Bucket, ...], specs: tuple[Channe
         if best and coverage[worst_key] < best * 0.5:
             spec = next((s for s in specs if s.key == worst_key), None)
             name = spec.friendly_name if spec else worst_key
+            if _history_merely_starts_later(buckets, worst_key):
+                # Not the same problem, and it must not read as one. A sensor
+                # whose history begins later has nothing wrong with it and
+                # nothing for the user to fix; saying it is "holding everything
+                # back" sends them looking for a fault that is not there.
+                return (
+                    f"{days} complete days so far. {name} has only been recorded "
+                    f"since the start of its history, and an hour needs every "
+                    "sensor, so the window starts where it does. Nothing is "
+                    "wrong — there is just less of it yet."
+                )
             return (
-                f"{days} complete days so far. {name} has data for only "
+                f"{days} complete days so far. {name} has gaps: data for only "
                 f"{coverage[worst_key]} of {best} hours, and an hour needs every "
                 "sensor, so it is holding everything else back."
             )
 
     return f"Only {days} complete days of data so far."
+
+
+def _history_merely_starts_later(buckets: tuple[Bucket, ...], key: str) -> bool:
+    """Whether a channel is simply younger rather than intermittent.
+
+    Contiguous-from-a-later-start and scattered-with-holes look identical in a
+    coverage count and mean completely different things: one resolves by
+    waiting, the other never does.
+    """
+    ordered = sorted(buckets, key=lambda b: b.start_utc)
+    first = next((i for i, b in enumerate(ordered) if b.value(key) is not None), None)
+    if first is None:
+        return False
+    since = ordered[first:]
+    if len(since) < 24:
+        return False
+    present = sum(1 for b in since if b.value(key) is not None)
+    return present / len(since) >= 0.9
 
 
 def _apply_corrections(
@@ -274,17 +340,44 @@ def _spec_for(specs: tuple[ChannelSpec, ...], key: str) -> ChannelSpec | None:
     return next((s for s in specs if s.key == key), None)
 
 
-def _render_screen_hit(hit: screen.ScreenHit, specs: tuple[ChannelSpec, ...]) -> Finding:
+def _rests_on_means(buckets: tuple[Bucket, ...], keys: tuple[str, ...]) -> bool:
+    """Whether any evidence for these channels came from an hourly mean."""
+    if not keys:
+        return False
+    for bucket in buckets:
+        for key in keys:
+            if bucket.source.get(key) is BucketSource.LTS_MEAN:
+                return True
+            if bucket.quality.get(key) is Quality.DERIVED_FROM_MEAN:
+                return True
+    return False
+
+
+def _render_screen_hit(
+    hit: screen.ScreenHit,
+    specs: tuple[ChannelSpec, ...],
+    buckets: tuple[Bucket, ...],
+) -> Finding:
     headline, detail, fix = faults.render(hit.code, **hit.fields)
 
     confidence = hit.confidence
-    for key in hit.channel_keys:
-        spec = _spec_for(specs, key)
-        if spec is not None and spec.autodetected:
-            confidence = confidence.downgrade()
+    # Once, not once per channel: a two-channel hit was being downgraded twice
+    # for the same reason, which the hypothesis path never did.
+    if any(
+        (spec := _spec_for(specs, key)) is not None and spec.autodetected
+        for key in hit.channel_keys
+    ):
+        confidence = confidence.downgrade()
+
+    # A screen hit computed from hourly means is no more certain than an
+    # inferred one. The hypothesis path has always applied this; the screen path
+    # never did, so a categorical fault could be asserted at full confidence on
+    # evidence the rest of the engine treats as weak.
+    if _rests_on_means(buckets, hit.channel_keys):
+        confidence = confidence.downgrade()
 
     correction = None
-    if hit.correction_kind and hit.channel_keys:
+    if hit.correction_kind and hit.channel_keys and confidence is not Confidence.PROBABLE:
         factor = None
         if hit.correction_kind == "scale":
             observed = hit.fields.get("observed")
@@ -299,7 +392,7 @@ def _render_screen_hit(hit: screen.ScreenHit, specs: tuple[ChannelSpec, ...]) ->
 
     return Finding(
         code=hit.code,
-        severity=Severity.FAULT,
+        severity=Severity.QUESTION if confidence is Confidence.PROBABLE else Severity.FAULT,
         confidence=confidence,
         channel_keys=hit.channel_keys,
         headline=headline,
