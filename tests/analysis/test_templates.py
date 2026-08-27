@@ -32,8 +32,14 @@ SNAP_DERIVED: dict[str, set[str]] = {
 }
 
 #: ...plus what each structural probe carries in ``Hypothesis.extra``.
+#:
+#: Hand-declared, and therefore only as right as the hand. This set said
+#: MISSING_STORAGE supplied "daily" when the code supplied "daily_kwh", so the
+#: gate passed while the render raised. TestStructuralProbesRender below drives
+#: the engine to actually emit each of these, which is the check that cannot be
+#: fooled by a wrong declaration here.
 EXTRA_FIELDS: dict[str, set[str]] = {
-    Code.MISSING_STORAGE: {"capacity_wh", "daily_kwh", "daily"},
+    Code.MISSING_STORAGE: {"capacity_wh", "daily"},
     Code.MISSING_EXPORT: set(),
 }
 

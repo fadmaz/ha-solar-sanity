@@ -2,6 +2,41 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.6.0] - 2026-08-27
+
+### Fixed
+
+- **A battery nobody measures can now be described.** The finding and its copy
+  have shipped since the first release and could never be reported, for two
+  independent reasons — fixing either alone changed nothing.
+
+  It had no residual model, so its explained fraction was zero on every input
+  and it failed the first gate. And it was gated behind the daily bands, which
+  ask how far a day's residual runs *in one direction* — while a store borrows
+  in the afternoon and repays at night, so its net is near zero however much
+  energy is moving. The band was not too strict; it was measuring the wrong
+  quantity for this shape, and no threshold change would have helped.
+
+  Storage is now reached on its own, carrying its own four conjunctive shape
+  tests plus a per-day check that the trace swings like the fitted capacity and
+  comes back where it started. An unmeasured export path is *not* exempted: it
+  runs one way all day, the bands measure it exactly as intended, and where they
+  keep it quiet they are right to.
+- **The storage finding would have crashed the moment it won.** Its copy asks
+  for `daily` and the probe supplied `daily_kwh`. The template-coverage suite
+  added in 0.4.0 checks each template against a hand-declared field set, and
+  that declaration was wrong — so the gate passed while the render raised. There
+  is now a test that drives the engine to actually emit the finding, which is
+  the only check a wrong declaration cannot fool.
+- **The two floors for attribution were written down twice and had drifted.**
+  A snap-table hypothesis needs about 160 valid hours, because its gamma is
+  estimated from the upper quartile of them; the day floor said five. Every
+  installation therefore spent two days being told no explanation was convincing
+  when none had been generated. The day floor is now derived from the hour
+  floor, a structural hypothesis is held to its own shorter one, and an
+  invariant computes the required hour count from `percentile` itself rather
+  than trusting a comment about it.
+
 ## [0.5.2] - 2026-08-27
 
 ### Fixed

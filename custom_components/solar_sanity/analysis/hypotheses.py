@@ -38,6 +38,12 @@ MIN_RATIO_SAMPLES = 40
 #: days being told no explanation was convincing when none had been generated.
 MIN_HOURS_FOR_SNAP = MIN_RATIO_SAMPLES * 4
 
+#: ...which is this many days, at a full day of hours. Derived rather than
+#: written down a second time. The two were written down separately once, drifted
+#: to five and seven, and every installation then spent two days being told no
+#: explanation was convincing when in fact none had been generated.
+MIN_DAYS_FOR_SNAP = -(-MIN_HOURS_FOR_SNAP // 24)
+
 #: Unmeasured export: how much of the squared residual must fall in hours where
 #: generation exceeds consumption. Export cannot happen at any other time, so
 #: this is the whole discrimination.
@@ -59,6 +65,10 @@ MARGIN_FREE_PARAMETER = 0.25
 MAX_GAMMA_CV = 0.15
 
 MIN_DAYS_SUPPORTING = 4
+
+#: Days of evidence before a *structural* hypothesis may be named — a battery or
+#: an export path nobody measures. These need shape, not per-channel arithmetic,
+#: so they are answerable from far less data than the snap table.
 MIN_DAYS_EVALUATED = 5
 
 #: Storage-shape thresholds for a missing battery.
@@ -67,6 +77,17 @@ STORAGE_MAX_ORTHOGONAL_EXPLAINED = 0.50
 STORAGE_FLAT_TOP_MAX_CV = 0.15
 STORAGE_MIN_CAPACITY_WH = 1500.0
 STORAGE_MAX_CAPACITY_WH = 60000.0
+
+#: How far one day's trace may be from the fitted capacity and still be the
+#: same battery. Wide, because a battery is not cycled fully every day — but
+#: bounded, because a day that swings ten times the capacity is not this.
+STORAGE_DAY_MIN_SHARE = 0.35
+STORAGE_DAY_MAX_SHARE = 2.0
+
+#: How far a day's trace may end from where it started, as a share of its own
+#: swing. Energy that goes into a battery comes out again; a day that does not
+#: close is something accumulating, and that is a different finding.
+STORAGE_DAY_MAX_DRIFT = 0.35
 
 #: One-signed threshold: above this the residual is consistently in one direction.
 ONE_SIDED_ASYMMETRY = 0.85
@@ -161,6 +182,28 @@ def surplus_mask(day: DayResidual) -> tuple[bool, ...]:
     return tuple(out)
 
 
+def looks_like_storage(day: DayResidual, capacity_wh: float) -> bool:
+    """Whether one day's residual traces a battery charging and discharging.
+
+    Two properties, both required. The trace has to swing about as far as the
+    fitted capacity — a system does not have a different battery on Tuesday. And
+    it has to come back: energy that goes into a battery comes out again, so a
+    day ending far from where it started is not storage, it is something
+    accumulating, which is a different and worse finding.
+    """
+    soc = virtual_soc(day)
+    if not soc:
+        return False
+
+    span = max(soc) - min(soc)
+    if span <= 0:
+        return False
+    if not (capacity_wh * STORAGE_DAY_MIN_SHARE <= span <= capacity_wh * STORAGE_DAY_MAX_SHARE):
+        return False
+
+    return abs(soc[-1]) <= span * STORAGE_DAY_MAX_DRIFT
+
+
 def _per_day_gamma(days: tuple[DayResidual, ...], spec: ChannelSpec) -> list[float]:
     out: list[float] = []
     for day in days:
@@ -180,6 +223,19 @@ def residual_after(days: tuple[DayResidual, ...], hyp: Hypothesis) -> list[float
         for day in days:
             for surplus, value in zip(surplus_mask(day), day.dr, strict=True):
                 out.append(0.0 if surplus and value > 0 else value)
+        return out
+
+    if hyp.code == Code.MISSING_STORAGE:
+        # A battery nobody measures explains the days that trace one, and says
+        # nothing about the rest. Without a model at all this hypothesis scored
+        # zero explained on every input and could never clear the first gate, so
+        # a user with an unmapped battery was told the numbers did not add up
+        # and never told why.
+        capacity = (hyp.extra or {}).get("capacity_wh")
+        out: list[float] = []
+        for day in days:
+            explained = capacity is not None and looks_like_storage(day, capacity)
+            out.extend(0.0 if explained else value for value in day.dr)
         return out
 
     if hyp.a is None or not hyp.channel_keys:
@@ -255,13 +311,34 @@ def generate(
             )
 
     if closure_open:
-        storage = _storage_hypothesis(days, specs)
-        if storage is not None:
-            out.append(storage)
-        export = _missing_export_hypothesis(days, specs)
-        if export is not None:
-            out.append(export)
+        out.extend(generate_structural(days, specs))
 
+    return out
+
+
+def generate_structural(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
+) -> list[Hypothesis]:
+    """The probes that ask about an unmeasured path rather than a bad channel.
+
+    Separate because they are reached differently. A miscounted channel makes
+    the residual run one way, day after day, which is what the daily bands
+    measure. An unmeasured battery does the opposite: it takes energy in the
+    afternoon and gives it back at night, so the day's *net* residual is near
+    zero by construction and no band will ever call it actionable. Gating these
+    behind the bands made them unreachable on exactly the systems they describe.
+    """
+    _SIGNS.clear()
+    for spec in specs:
+        _SIGNS[spec.key] = spec.role.sign
+
+    out: list[Hypothesis] = []
+    storage = _storage_hypothesis(days, specs)
+    if storage is not None:
+        out.append(storage)
+    export = _missing_export_hypothesis(days, specs)
+    if export is not None:
+        out.append(export)
     return out
 
 
@@ -398,7 +475,10 @@ def _storage_hypothesis(
         confidence=Confidence.HIGH,
         correction_kind=None,
         has_free_parameter=True,
-        extra={"capacity_wh": capacity, "daily_kwh": capacity / 1000.0},
+        # Named for the template that renders it. It carried "daily_kwh" while
+        # the copy asked for "daily", which raised the moment this hypothesis
+        # won — and it could not win, so nothing ever found out.
+        extra={"capacity_wh": capacity, "daily": capacity / 1000.0},
     )
 
 
@@ -472,13 +552,26 @@ def _spec_stub(key: str) -> ChannelSpec:
 
 
 def passes_gates(hyp: Hypothesis, days_evaluated: int) -> bool:
-    """All seven gates. Failing any one means silence."""
+    """All seven gates. Failing any one means silence.
+
+    The day floor is not one number. A snap-table hypothesis rests on a gamma
+    estimated from the upper quartile of hours, so it needs a week; a structural
+    one rests on the shape of the residual and is answerable from five days.
+    Holding both to the longer floor would delay the findings that are ready,
+    and holding both to the shorter one would claim a floor the arithmetic
+    cannot meet.
+    """
     if hyp.explained < MIN_EXPLAINED:
         return False
     if hyp.margin < hyp.required_margin:
         return False
     if hyp.days_supporting < MIN_DAYS_SUPPORTING:
         return False
-    if days_evaluated < MIN_DAYS_EVALUATED:
+    if days_evaluated < days_needed(hyp):
         return False
     return not (hyp.gamma_cv is not None and hyp.gamma_cv > MAX_GAMMA_CV)
+
+
+def days_needed(hyp: Hypothesis) -> int:
+    """Days of evidence this kind of hypothesis needs before it may be named."""
+    return MIN_DAYS_FOR_SNAP if hyp.channel_keys else MIN_DAYS_EVALUATED

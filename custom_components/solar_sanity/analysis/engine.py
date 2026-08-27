@@ -143,6 +143,15 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             stale_corrections=_stale_corrections(days, request.active_corrections),
         )
 
+    # Before the bands get a say — for storage only, and for a reason. See
+    # _structural_finding.
+    if closure.state is Closure.OPEN:
+        structural = _structural_finding(
+            request, specs, days, summary=summary, estimate=estimate, loss=loss
+        )
+        if structural is not None:
+            return structural
+
     if sum(1 for d in recent if d.band == "actionable") < MIN_ACTIONABLE_DAYS:
         restricted = _restricted_report(
             request,
@@ -218,6 +227,50 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         loss_model=loss,
         residual=summary,
         stale_corrections=_stale_corrections(days, request.active_corrections),
+    )
+
+
+def _structural_finding(
+    request: AnalysisRequest,
+    specs: tuple[ChannelSpec, ...],
+    days: tuple[DayResidual, ...],
+    *,
+    summary: ResidualSummary,
+    estimate: TopologyEstimate,
+    loss: LossModel,
+) -> AnalysisReport | None:
+    """An unmeasured *store*, if one is convincing.
+
+    Only storage is exempted from the daily bands, and the exemption is not a
+    lower bar — it is because the bands measure the wrong thing here. A band
+    asks how far a day's residual runs in one direction, and a store borrows in
+    the afternoon and repays at night, so its net is near zero however much
+    energy is moving. No band will ever call that actionable.
+
+    An unmeasured export path has no such problem: it runs one way all day, the
+    bands measure it exactly as intended, and it stays behind them. Where they
+    keep it quiet, they are keeping it quiet for the right reason.
+    """
+    candidates = [
+        c
+        for c in hypotheses.generate_structural(days, specs)
+        if c.code == Code.MISSING_STORAGE and c.code not in request.suppressed_codes
+    ]
+    if not candidates:
+        return None
+
+    scored = hypotheses.score(days, candidates)
+    if not scored or not hypotheses.passes_gates(scored[0], len(days)):
+        return None
+
+    return AnalysisReport(
+        status=Status.FAULT_FOUND,
+        identity_fails=True,
+        finding=_render_hypothesis(scored[0], specs, days, summary),
+        deferred=tuple(h.code for h in scored[1:3]),
+        topology=estimate,
+        loss_model=loss,
+        residual=summary,
     )
 
 
