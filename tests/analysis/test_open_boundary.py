@@ -309,3 +309,73 @@ class TestVerifiableHoursOnly:
         report = analyse(to_request(house.build(days=30, seed=1), declared=DECLARED))
 
         assert report.notes == ()
+
+
+class TestLocalDayGrouping:
+    """A resolved date on the bucket beats an offset applied to the window.
+
+    ``build_days`` used to add one flat offset — captured once, from whatever the
+    zone happened to be that afternoon — to every hour in a thirty-day window.
+    Twice a year that window contains a transition, and on the wrong side of it
+    every hour near local midnight lands on the neighbouring day.
+    """
+
+    @staticmethod
+    def _with_dates(request, mapper):
+        from analysis.model import AnalysisRequest, Bucket
+
+        buckets = tuple(
+            Bucket(
+                start_utc=b.start_utc,
+                seconds=b.seconds,
+                wh=b.wh,
+                quality=b.quality,
+                source=b.source,
+                solar_elevation_deg=b.solar_elevation_deg,
+                is_dst_transition=mapper(b)[1],
+                local_date=mapper(b)[0],
+            )
+            for b in request.buckets
+        )
+        return AnalysisRequest(
+            now_utc=request.now_utc,
+            specs=request.specs,
+            buckets=buckets,
+            declared=request.declared,
+            loss_model=request.loss_model,
+        )
+
+    def test_the_resolved_date_wins_over_the_offset(self) -> None:
+        """Every bucket labelled one day must group into exactly one day."""
+        from datetime import date
+
+        from analysis.residual import build_days
+
+        request = to_request(house.build(days=4, seed=1))
+        forced = date(2001, 1, 1)
+        stamped = self._with_dates(request, lambda b: (forced, False))
+        days = build_days(stamped.buckets, stamped.specs, LossModel(), utc_offset_hours=11.0)
+
+        assert [d.day for d in days] == [forced], "the flat offset still decided the grouping"
+
+    def test_transition_days_are_dropped(self) -> None:
+        """The guard has always existed; nothing ever set the flag."""
+        from analysis.residual import build_days
+
+        request = to_request(house.build(days=4, seed=1))
+        stamped = self._with_dates(
+            request, lambda b: (b.start_utc.date(), b.start_utc.day % 2 == 0)
+        )
+        days = build_days(stamped.buckets, stamped.specs, LossModel())
+
+        assert days, "everything was dropped"
+        assert all(d.day.day % 2 == 1 for d in days), "a transition day survived"
+
+    def test_the_offset_still_applies_when_no_date_is_resolved(self) -> None:
+        """Synthetic input carries no zone, and must keep working."""
+        from analysis.residual import build_days
+
+        request = to_request(house.build(days=4, seed=1))
+        without = build_days(request.buckets, request.specs, LossModel())
+
+        assert len(without) >= 3

@@ -498,6 +498,7 @@ def _apply_corrections(
                 source=bucket.source,
                 solar_elevation_deg=bucket.solar_elevation_deg,
                 is_dst_transition=bucket.is_dst_transition,
+                local_date=bucket.local_date,
             )
         )
     return tuple(out)

@@ -2,6 +2,26 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.5.2] - 2026-08-27
+
+### Fixed
+
+- **A single UTC offset was applied to a month of history.** It was read once,
+  from whatever the zone happened to be that afternoon, and added to every hour
+  in the window. Twice a year that window contains a daylight-saving change, and
+  on the wrong side of it every hour near local midnight lands on the
+  neighbouring day — moving a night's energy into the wrong day on exactly the
+  days the standby fit is already least trustworthy. Each hour now carries the
+  local date it actually belongs to, resolved against the zone where the zone is
+  known, and the analysis groups on that.
+- **`is_dst_transition` was never set to `True` by anything.** The guard that
+  drops a 23- or 25-hour day has existed since the first release and has never
+  once fired. A day's length is now measured — local midnight to local midnight,
+  converted to UTC before subtracting — so no transition rule has to be known.
+
+  Israel's next change is **25 October 2026**, a 25-hour day. It would have been
+  the first live test of a guard that did not work.
+
 ## [0.5.1] - 2026-08-27
 
 ### Fixed

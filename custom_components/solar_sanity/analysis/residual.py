@@ -244,6 +244,10 @@ def build_days(
     Days with a DST transition are dropped entirely rather than special-cased:
     a 23- or 25-hour day breaks the standby term and there are only two a year.
 
+    Grouping prefers each bucket's own ``local_date``. A single offset applied
+    to a whole window is wrong on one side of every daylight-saving change, and
+    ``utc_offset_hours`` remains only for input that never carried a zone.
+
     ``verifiable_only`` keeps only the hours in which an unmeasured export path
     cannot have carried anything — those with no generation at all. On a house
     with no export meter every daylight hour is unfalsifiable, because the
@@ -272,7 +276,9 @@ def build_days(
             generation = bucket.value(pv_key) if pv_key else None
             if generation is None or generation > PV_NEGLIGIBLE_WH:
                 continue
-        local_day = (bucket.start_utc + offset).date()
+        # The resolved date when the caller knew the zone; the flat offset only
+        # as a fallback for input that never had one.
+        local_day = bucket.local_date or (bucket.start_utc + offset).date()
         grouped.setdefault(local_day, []).append(bucket)
 
     minimum = MIN_VERIFIABLE_BUCKETS_PER_DAY if verifiable_only else MIN_VALID_BUCKETS_PER_DAY
