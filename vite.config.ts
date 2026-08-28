@@ -19,7 +19,10 @@ export default defineConfig({
   define: { __SS_VERSION__: JSON.stringify(manifest.version) },
   build: {
     target: "es2022",
-    minify: "esbuild",
+    // Vite 8 bundles with Rolldown and minifies with Oxc; esbuild became an
+    // optional extra you install yourself. Naming it here was enough to fail
+    // the build outright rather than fall back.
+    minify: "oxc",
     sourcemap: true,
     // Served by the integration itself, so the artifact lands inside the
     // component directory and ships in the same release zip as the Python.
@@ -31,9 +34,15 @@ export default defineConfig({
       fileName: () => "solar-sanity.js",
     },
     rollupOptions: {
-      // The key that actually guarantees a single file. `codeSplitting: false`
-      // is widely copied from other card repos and is a silent no-op.
-      output: { inlineDynamicImports: true },
+      // One file, which the integration serves as a single static asset.
+      //
+      // This inverted at Vite 8. Under Rollup, `inlineDynamicImports` was the
+      // option that did the work and `codeSplitting: false` — widely copied
+      // from other card repos — was a silent no-op. Under Rolldown it is the
+      // other way round: `codeSplitting` is real and `inlineDynamicImports` is
+      // deprecated. Worth stating, because the previous comment here said the
+      // opposite and was right when it was written.
+      output: { codeSplitting: false },
     },
   },
   preview: { port: 4000, host: "0.0.0.0", cors: true },
