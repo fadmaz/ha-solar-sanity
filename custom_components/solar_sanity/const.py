@@ -56,6 +56,16 @@ BUCKET_INTERVAL: Final = timedelta(minutes=5)
 #: filling it with zero is the exact move this product exists to catch.
 POWER_GAP_TOLERANCE_SECONDS: Final = 180.0
 
+#: How stale a cumulative energy reading may be before the next one is treated
+#: as a fresh baseline rather than as one interval's worth of energy.
+#:
+#: Differencing a counter says nothing about *when* the energy flowed, only that
+#: it did. Two readings five minutes apart describe five minutes; two readings
+#: two hours apart describe two hours, and crediting all of it to the hour the
+#: sensor came back is how an inverter's morning reconnection becomes a fault
+#: report. Generous, because a slow sensor is ordinary and a dropout is not.
+ENERGY_MAX_AGE_SECONDS: Final = 15 * 60.0
+
 #: The full analysis. Nightly is plenty — nothing here changes minute to minute.
 ANALYSIS_INTERVAL: Final = timedelta(hours=6)
 

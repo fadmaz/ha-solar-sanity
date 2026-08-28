@@ -66,6 +66,7 @@ from .const import (
     CONF_ROLE,
     DIGEST_RETENTION_DAYS,
     DOMAIN,
+    ENERGY_MAX_AGE_SECONDS,
     LIVE_MAX_AGE_SECONDS,
     OPT_CORRECTIONS,
     OPT_SUPPRESSED,
@@ -115,8 +116,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._buckets: list[Bucket] = []
         self._snapshots: list[LiveSnapshot] = []
         self._accumulator: dict[str, float] = {}
-        #: Previous reading per energy channel, for differencing.
-        self._last_energy: dict[str, float] = {}
+        #: Previous reading per energy channel, and when it was taken. The time
+        #: matters as much as the value: a difference tells you energy flowed,
+        #: never over how long.
+        self._last_energy: dict[str, tuple[float, datetime]] = {}
         #: Per power channel: the watts last seen, and when. Power is integrated
         #: over the durations the sensor actually held its values, not sampled.
         self._live_power: dict[str, tuple[float, datetime]] = {}
@@ -309,11 +312,21 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 self._accumulator[spec.key] = self._accumulator.get(spec.key, 0.0) + value
                 continue
 
-            previous = self._last_energy.get(spec.key)
-            self._last_energy[spec.key] = value
-            if previous is None:
+            held = self._last_energy.get(spec.key)
+            self._last_energy[spec.key] = (value, now)
+            if held is None:
                 # No baseline yet — the first reading establishes one rather
                 # than being mistaken for an hour's worth of energy.
+                continue
+
+            previous, taken_at = held
+            if (now - taken_at).total_seconds() > ENERGY_MAX_AGE_SECONDS:
+                # The sensor was away. The counter advanced while it was, and
+                # nothing here knows when — so crediting the whole difference to
+                # the hour it came back would put an outage's worth of energy
+                # into one bucket and call it measured. Re-baseline instead, and
+                # distrust the hour that straddles the gap.
+                self._suspect.add(spec.key)
                 continue
 
             delta = value - previous
@@ -404,11 +417,21 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         event — so a load that settles at eight in the evening and stays there
         would have its whole night silently missing.
         """
+        # The cursor may already be past the boundary. An hour rolls over on the
+        # wall clock, but nothing notices until the next five-minute tick, so an
+        # event arriving in between is integrated while the *previous* bucket is
+        # still open — its segment already crossed the boundary and was counted.
+        # Rewinding the cursor to the boundary then counted that same slice
+        # again in the new hour, adding energy that never flowed.
         for key, (watts, since) in list(self._live_power.items()):
+            if since >= until:
+                continue
             self._integrate(key, watts, since, until)
             self._live_power[key] = (watts, until)
 
         for key, started in list(self._gap_since.items()):
+            if started >= until:
+                continue
             self._gap_seconds[key] = (
                 self._gap_seconds.get(key, 0.0) + (until - started).total_seconds()
             )

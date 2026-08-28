@@ -215,3 +215,72 @@ class TestSettleIsIdempotent:
         stub._settle_power(START + timedelta(hours=2))
 
         assert stub._accumulator[SPEC.key] == pytest.approx(500.0)
+
+
+class TestTheHourBoundary:
+    """An hour rolls over on the wall clock; nothing notices for five minutes.
+
+    A power event arriving in that window is integrated while the *previous*
+    bucket is still open, so its segment has already crossed the boundary and
+    been counted. Rewinding the cursor back to the boundary counted that same
+    slice a second time in the new hour — adding energy that never flowed, to
+    every power channel, every hour, forever.
+    """
+
+    def test_a_late_rollover_does_not_count_a_slice_twice(self) -> None:
+        stub = _stub()
+        stub._async_power_changed(_event(1000.0, START))
+        # 10:01 — past the boundary, before the tick that notices it.
+        stub._async_power_changed(_event(2000.0, START + timedelta(minutes=61)))
+        stub._settle_power(START + timedelta(hours=1))
+        first_hour = stub._accumulator[SPEC.key]
+
+        stub._accumulator.clear()
+        stub._settle_power(START + timedelta(hours=2))
+        second_hour = stub._accumulator[SPEC.key]
+
+        # 1000 W held for the 61 minutes up to the second event.
+        assert first_hour == pytest.approx(1000.0 * 61 / 60)
+        # 2000 W from that event to the end of the next hour — 59 minutes, not
+        # 60. The extra minute belongs to the hour that already counted it.
+        assert second_hour == pytest.approx(2000.0 * 59 / 60)
+
+    def test_the_cursor_is_never_moved_backwards(self) -> None:
+        stub = _stub()
+        stub._async_power_changed(_event(500.0, START + timedelta(minutes=61)))
+        stub._settle_power(START + timedelta(hours=1))
+
+        assert stub._live_power[SPEC.key][1] == START + timedelta(minutes=61)
+
+    def test_no_energy_is_invented_across_a_day_of_rollovers(self) -> None:
+        """The property that matters: the total is the area under the curve.
+
+        Not simply ``watts * 24``. The last event sits a minute past the last
+        boundary, so the run genuinely covers a day and a minute — and the point
+        of the test is that it covers it *once*. Before the fix this same loop
+        returned twenty-four extra minutes of energy that never flowed.
+        """
+        stub = _stub()
+        watts = 800.0
+        stub._async_power_changed(_event(watts, START))
+        total = 0.0
+        for hour in range(1, 25):
+            # Every rollover is noticed a minute late, as a five-minute tick
+            # against a wall-clock hour boundary guarantees it will be.
+            stub._async_power_changed(_event(watts, START + timedelta(hours=hour, minutes=1)))
+            stub._settle_power(START + timedelta(hours=hour))
+            total += stub._accumulator.get(SPEC.key, 0.0)
+            stub._accumulator.clear()
+
+        covered_hours = 24 + 1 / 60
+        assert total == pytest.approx(watts * covered_hours, rel=1e-9)
+
+    def test_an_open_gap_is_not_double_counted_either(self) -> None:
+        stub = _stub()
+        stub._async_power_changed(_event(400.0, START))
+        stub._async_power_changed(_event(None, START + timedelta(minutes=61)))
+        stub._settle_power(START + timedelta(hours=1))
+
+        # The gap started after the boundary, so none of it belongs to the hour
+        # being closed.
+        assert stub._gap_seconds.get(SPEC.key, 0.0) == pytest.approx(0.0)
