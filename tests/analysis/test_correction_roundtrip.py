@@ -191,6 +191,78 @@ class TestAnUnknownCorrectionCannotBeSilent:
         assert after.finding.code == analyse(request).finding.code
 
 
+class TestStalenessNeedsAsMuchEvidenceAsAnythingElse:
+    """This stage runs ahead of the day floor every other stage answers to.
+
+    That made it the most confident thing in the engine on the least evidence:
+    `_would_be_ok` collapses to "one clean day" on a one-day window, so any
+    coincidence that cancels the residual read as proof the override was
+    unwanted. A genuinely needed scale correction was called stale on about a
+    fifth of installations at one day, against a fiftieth at thirty.
+
+    What that costs is not a missed diagnosis. It is a warning card telling
+    somebody to remove the one override keeping their generation channel
+    honest, on a house this engine would call `ok` a week later.
+    """
+
+    @staticmethod
+    def _needed(days: int, factor: float = 0.90, standby: float = 100.0, seed: int = 0):
+        """Generation genuinely under-reading, the correction that fixes it
+        active, and an unrelated continuous draw whose residual can cancel it."""
+        clean = house.add_standby(house.build(days=days, seed=seed), standby)
+        request = to_request(house.scale(clean, "pv", factor), specs=specs_for(), declared=DECLARED)
+        return replace(
+            request,
+            active_corrections=(Correction(channel_key="pv", kind="scale", factor=1.0 / factor),),
+        )
+
+    @pytest.mark.parametrize("days", [1, 2, 3, 4])
+    def test_a_needed_correction_is_not_called_stale_below_the_floor(self, days: int) -> None:
+        report = analyse(self._needed(days))
+
+        assert report.stale_corrections == ()
+        assert report.status is Status.INSUFFICIENT_DATA
+
+    @pytest.mark.parametrize("factor", [0.90, 0.93, 0.95])
+    @pytest.mark.parametrize("standby", [0.0, 200.0, 400.0])
+    @pytest.mark.parametrize("seed", range(3))
+    def test_it_holds_across_the_coincidences_that_used_to_trip_it(
+        self, factor: float, standby: float, seed: int
+    ) -> None:
+        """The cancelling residual is the mechanism, so sweep it deliberately."""
+        report = analyse(self._needed(1, factor, standby, seed))
+
+        assert report.stale_corrections == ()
+
+    @pytest.mark.parametrize("seed", range(4))
+    def test_a_harmful_correction_is_still_caught_once_there_is_evidence(self, seed: int) -> None:
+        """So the floor cannot be over-applied into silence."""
+        request = to_request(
+            house.build(days=DAYS, seed=seed), specs=specs_for(), declared=DECLARED
+        )
+        request = replace(
+            request,
+            active_corrections=(Correction(channel_key="battery_discharge", kind="sign_flip"),),
+        )
+
+        report = analyse(request)
+
+        assert report.stale_corrections == ("battery_discharge",)
+        assert report.finding is not None
+        assert report.finding.code == Code.CORRECTION_NOW_HARMFUL
+
+    def test_the_floor_is_where_the_engine_starts_speaking_at_all(self) -> None:
+        """Five days, matching every other stage rather than a number invented
+        for this one."""
+        request = to_request(house.build(days=5, seed=0), specs=specs_for(), declared=DECLARED)
+        request = replace(
+            request,
+            active_corrections=(Correction(channel_key="battery_discharge", kind="sign_flip"),),
+        )
+
+        assert analyse(request).stale_corrections == ("battery_discharge",)
+
+
 class TestACorrectionThatOutlivesItsFault:
     """The failure mode the plan named and nothing implemented.
 
