@@ -21,7 +21,7 @@ import pytest
 
 pytest.importorskip("homeassistant", reason="Home Assistant not installed")
 
-from custom_components.solar_sanity.statistics_source import (  # noqa: E402
+from custom_components.solar_sanity.statistics_source import (
     dayahead_statistic_id,
     forecast_statistic_id,
 )
@@ -40,13 +40,14 @@ def _is_valid(statistic_id: str) -> bool:
     return bool(valid_statistic_id(statistic_id))
 
 
-#: Real shapes: a ULID as minted today, the legacy hex form, and the mixed case
-#: a ULID takes when something has already lowercased half of it.
+#: Both real shapes: ULIDs as minted today, and the legacy hex form still in the
+#: field. All genuinely distinct, so the collision tests below mean something —
+#: one ULID written twice in different cases is one entry, not two.
 ENTRY_IDS = [
     "01M115AWKC3N083Y1YANVMB7CZ",
     "01K3XQ9M4BFT8YV2R7WDNZ0EQH",
+    "01JQ7ZBP4WY6M8XKDNR2VHT5GA",
     "87d3c61d99cb949a46b998013b2aee40",
-    "01m115awKC3n083y1yanvmb7cz",
 ]
 
 
