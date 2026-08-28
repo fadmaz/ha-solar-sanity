@@ -17,6 +17,7 @@ template and checks them against the field set each renderer actually builds.
 
 from __future__ import annotations
 
+import re
 import string
 
 import pytest
@@ -136,3 +137,34 @@ def test_every_code_has_a_template() -> None:
     missing = sorted(declared - set(_TEMPLATES))
 
     assert not missing, f"no copy for {missing}"
+
+
+#: What the status card can show before it stops being a glance.
+#:
+#: The card is pinned to three rows on purpose — one that reflows the whole
+#: dashboard when something goes wrong is worse than no card — so it shows the
+#: first sentence and sends the reader to Repairs for the rest. That only works
+#: while first sentences stay short, and the copy lives here rather than there.
+#:
+#: Mirrors `leadSentence` in frontend/src/status-card.ts, including the reason
+#: for the capital: the copy is full of figures like "1234.5" and a bare period
+#: would split one mid-number.
+LEAD_MAX_CHARS = 130
+_SENTENCE_END = re.compile(r"\.\s+[A-Z]")
+
+
+def lead(text: str) -> str:
+    boundary = _SENTENCE_END.search(text)
+    return text[: boundary.start() + 1] if boundary else text
+
+
+@pytest.mark.parametrize("code", sorted(_TEMPLATES))
+def test_the_first_sentence_fits_on_the_card(code: str) -> None:
+    fields = {name: SAMPLES[name] for name in placeholders(code) if name in SAMPLES}
+    _, detail, _ = render(code, **fields)
+
+    assert len(lead(detail)) <= LEAD_MAX_CHARS, (
+        f"{code}'s first sentence is {len(lead(detail))} characters. The status "
+        "card shows exactly that and cannot grow, so it would be cut short: "
+        f"{lead(detail)!r}"
+    )

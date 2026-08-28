@@ -2,6 +2,32 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.9.1] - 2026-08-28
+
+### Fixed
+
+- **A fault could overflow the status card.** The card is pinned to three rows
+  on purpose — one that reflows the whole dashboard the moment something goes
+  wrong is worse than no card — but a fault's explanation runs to 281
+  characters, and nothing stopped it pushing the action button out of a box
+  that cannot grow.
+
+  The card now shows the first sentence, which is the observation about the
+  reader's own house, and the rest stays where it was always going to be read
+  properly: the Repairs entry that "Show me" opens, which carries the whole
+  explanation and how to fix it. The unabridged text is also on the element, so
+  hovering shows it.
+
+  The sentence boundary requires a capital after the full stop, because the copy
+  is full of figures like "1234.5" and splitting one mid-number would be worse
+  than not splitting at all.
+
+- Four explanations opened with a sentence too long to fit, and have been
+  rewritten to lead with the observation and follow with the reasoning — the
+  shape the other eighteen already had. There is now a test over every template
+  that fails when a first sentence outgrows the card, so the copy and the space
+  it has to live in cannot drift apart.
+
 ## [0.9.0] - 2026-08-28
 
 ### Added
