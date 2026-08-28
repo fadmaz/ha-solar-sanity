@@ -196,11 +196,13 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     if _would_be_ok(days):
         return AnalysisReport(
             status=Status.OK,
-            # A healthy installation is where these are worth having and the
-            # only place they were missing. The engine fits a loss model on
-            # every run and this path threw all of it away, so the one verdict
-            # most people ever see carried nothing but the word OK.
+            # A healthy installation is where both of these are worth having
+            # and the only place they were missing. The engine fits a loss model
+            # on every run and this path threw all of it away, so the one
+            # verdict most people ever see carried nothing but the word OK — no
+            # sentence saying what was measured, and no figures to check it by.
             notes=_loss_notes(loss),
+            measurements=_measurements(days, specs),
             topology=estimate,
             loss_model=loss,
             residual=summary,
@@ -326,6 +328,9 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         status=Status.FAULT_FOUND,
         identity_fails=True,
         finding=_render_hypothesis(best, specs, days, summary),
+        # The evidence, beside the accusation. This is the verdict most worth
+        # being able to audit, and it was the one carrying no numbers at all.
+        measurements=_measurements(days, specs),
         deferred=tuple(h.code for h in scored[1:3]),
         topology=estimate,
         loss_model=loss,
