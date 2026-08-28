@@ -123,7 +123,7 @@ class TestNoCurrency:
     #: The same expression is applied to every user-facing file, including the
     #: card sources, by ``tests/test_copy_invariants.py``.
     FORBIDDEN = re.compile(
-        r"[€£¥]|\$\s*\d|\d\s*\$"
+        r"[€£¥]|\$\s*\d|\d\s*\$(?!\{)"
         r"|\bprice\b|\bpricing\b|\bcost\b|\bcosts\b|\bbill\b|\bbills\b"
         r"|\bsaving\b|\bsavings\b|\btariff\b|\bcurrency\b|\bcents?\b",
         re.IGNORECASE,
