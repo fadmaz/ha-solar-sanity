@@ -259,6 +259,89 @@ def _fit_night_terms(
     return gamma, _plausible_standby(intercept, loads)
 
 
+def _is_night(bucket: Bucket, pv_keys: list[str]) -> bool:
+    """Whether nothing was generating in this hour.
+
+    The single definition, used by the fit and by the ledger below. If those two
+    disagreed by even an hour, the totals reported to explain a fit would not be
+    the totals the fit saw, and the discrepancy would look like a fault in the
+    data rather than in this file.
+    """
+    generation = _role_total(bucket, pv_keys)
+    return generation is not None and generation <= NIGHT_MAX_PV_WH
+
+
+def _role_total(bucket: Bucket, keys: list[str]) -> float | None:
+    """The role's whole contribution, or ``None`` if any part is missing."""
+    parts = [value for key in keys if (value := bucket.value(key)) is not None]
+    return sum(parts) if len(parts) == len(keys) else None
+
+
+def night_ledger(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) -> dict[str, float]:
+    """Every channel's night total, over hours where all of them were readable.
+
+    Medians were what this reported before, and medians do not compose: knowing
+    the middle hour of load and the middle hour of discharge says nothing about
+    whether the two reconcile, because they are different hours. Totals over one
+    agreed set of hours do reconcile, exactly, which turns "the numbers do not
+    add up at night" from a summary into an arithmetic anyone can check a line at
+    a time.
+
+    Restricted to hours where every channel reported, so a channel that is
+    merely absent for part of the night cannot masquerade as one that is short.
+    ``night_ledger_hours`` says how many hours that was; if it is far below
+    ``night_hours``, the gap is coverage rather than physics.
+    """
+    pv_keys = [spec.key for spec in specs if spec.role is Role.PV]
+    if not pv_keys:
+        return {}
+
+    roles = [role for role in Role if role.in_balance]
+    keys_for = {role: [spec.key for spec in specs if spec.role is role] for role in roles}
+    present = [role for role in roles if keys_for[role]]
+
+    totals = dict.fromkeys(present, 0.0)
+    residual = 0.0
+    hours = 0
+    for day in days:
+        for bucket, raw in zip(day.buckets, day.r, strict=True):
+            if not _is_night(bucket, pv_keys):
+                continue
+            amounts = {role: _role_total(bucket, keys_for[role]) for role in present}
+            if any(amount is None for amount in amounts.values()):
+                continue
+            for role, amount in amounts.items():
+                totals[role] += amount  # type: ignore[operator]
+            residual += raw
+            hours += 1
+
+    if not hours:
+        return {}
+
+    # Rounded to the milliwatt-hour, far below anything a meter resolves, and
+    # here for two other reasons. It keeps a total that cancels to nothing from
+    # being reported as 2.6e-21, which reads as broken rather than as zero. And
+    # it makes the result independent of the order the channels were mapped in:
+    # the sums are the same either way, but floating point addition is not
+    # associative, so without this the last digits move.
+    def wh(value: float) -> float:
+        return round(value, 3)
+
+    out: dict[str, float] = {
+        "night_ledger_hours": float(hours),
+        "night_total_residual_wh": wh(residual),
+    }
+    for role, amount in totals.items():
+        out[f"night_total_{role.key}_wh"] = wh(amount)
+    # The identity itself, so the reader does not have to reassemble it from six
+    # numbers and the sign convention. It equals the residual total when every
+    # channel is telling the truth, and the size of the gap is the question.
+    out["night_sources_minus_sinks_wh"] = wh(
+        sum(role.sign * amount for role, amount in totals.items())
+    )
+    return out
+
+
 def _night_samples(
     days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
 ) -> tuple[list[float], list[float], list[float]] | None:
@@ -279,25 +362,19 @@ def _night_samples(
 
     load_keys = [s.key for s in specs if s.role is Role.LOAD]
 
-    def total(bucket: Bucket, keys: list[str]) -> float | None:
-        """The role's whole contribution, or ``None`` if any part is missing."""
-        parts = [value for key in keys if (value := bucket.value(key)) is not None]
-        return sum(parts) if len(parts) == len(keys) else None
-
     xs: list[float] = []
     ys: list[float] = []
     loads: list[float] = []
     for day in days:
         for bucket, raw in zip(day.buckets, day.r, strict=True):
-            generation = total(bucket, pv_keys)
-            if generation is None or generation > NIGHT_MAX_PV_WH:
+            if not _is_night(bucket, pv_keys):
                 continue
-            flow = total(bucket, discharge_keys)
+            flow = _role_total(bucket, discharge_keys)
             if flow is None:
                 continue
             xs.append(flow)
             ys.append(raw)
-            if load_keys and (drawn := total(bucket, load_keys)) is not None:
+            if load_keys and (drawn := _role_total(bucket, load_keys)) is not None:
                 loads.append(drawn)
 
     if len(xs) < MIN_STANDBY_SAMPLES:
@@ -356,6 +433,7 @@ def night_fit_raw(
     residual = median(ys)
     if residual is not None:
         out["median_night_residual_wh"] = residual
+    out.update(night_ledger(days, specs))
     return out
 
 

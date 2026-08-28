@@ -196,6 +196,10 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     if _would_be_ok(days):
         return AnalysisReport(
             status=Status.OK,
+            # The figures behind the verdict. A diagnostics download is most
+            # often asked for by somebody wanting to check a verdict rather than
+            # dispute it, and "OK" with nothing under it cannot be checked.
+            measurements=_measurements(days, specs),
             topology=estimate,
             loss_model=loss,
             residual=summary,
@@ -321,6 +325,9 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         status=Status.FAULT_FOUND,
         identity_fails=True,
         finding=_render_hypothesis(best, specs, days, summary),
+        # The evidence, beside the accusation. This is the verdict most worth
+        # being able to audit, and it was the one carrying no numbers at all.
+        measurements=_measurements(days, specs),
         deferred=tuple(h.code for h in scored[1:3]),
         topology=estimate,
         loss_model=loss,
