@@ -92,7 +92,11 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   @state() private _config?: ForecastCardConfig;
   @state() private _days?: ProviderDay[];
   @state() private _failed = false;
-  @state() private _day = new Date();
+  @state() private _day = tomorrow(new Date());
+  /** The lifecycle phase the last failure happened in. */
+  private _failedDuring?: string;
+  /** A load in progress, so a burst of hass updates does not start five. */
+  private _inflight?: Promise<void>;
 
   public setConfig(config: ForecastCardConfig): void {
     // Authoring errors only. Anything the data might do at runtime is a
@@ -115,18 +119,56 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
     return { rows: 5, min_rows: 4, columns: 12, min_columns: 6 };
   }
 
+  /**
+   * Everything that must settle before this render, rather than after it.
+   *
+   * Setting reactive state from `updated` schedules a second pass over the
+   * whole element; Lit says so out loud. These three are decisions about what
+   * the current render should show, so they belong here, where they fold into
+   * it.
+   */
+  protected willUpdate(changed: Map<string, unknown>): void {
+    if (!changed.has("hass") || !this.hass) return;
+
+    // A new lifecycle phase deserves another try. The usual way to see a
+    // recorder refuse is a Home Assistant restart, and latching the failure
+    // meant the card said "cannot read the record" for the rest of the day on
+    // an installation whose recorder had been fine for hours.
+    const phase = this.hass.config.state;
+    if (phase !== this._failedDuring) this._failed = false;
+    if (phase !== "RUNNING") return;
+
+    // Midnight moves the question, and what is held answers yesterday's.
+    const wanted = tomorrow(new Date());
+    if (wanted.getTime() !== this._day.getTime()) {
+      this._day = wanted;
+      this._days = undefined;
+      this._failed = false;
+    }
+  }
+
   public updated(changed: Map<string, unknown>): void {
-    if (changed.has("hass") && this.hass && this._days === undefined && !this._failed) {
+    if (!changed.has("hass") || !this.hass) return;
+    // Nothing to ask until the recorder can answer.
+    if (this.hass.config.state !== "RUNNING") return;
+
+    if (this._days === undefined && !this._failed && !this._inflight) {
       void this._load();
     }
   }
 
   private async _load(): Promise<void> {
     if (!this.hass) return;
-    const day = tomorrow(new Date());
+    this._inflight = this._loadOnce(this._day).finally(() => {
+      this._inflight = undefined;
+    });
+    return this._inflight;
+  }
+
+  private async _loadOnce(day: Date): Promise<void> {
+    if (!this.hass) return;
     try {
       const days = await loadDayAhead(this.hass, day);
-      this._day = day;
       this._days = this._config?.provider
         ? days.filter((d) => d.statisticId === this._config!.provider)
         : days;
@@ -134,6 +176,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       // The recorder can be disabled, and a card is not the place to explain a
       // stack trace. What the reader needs is one sentence and no red box.
       this._failed = true;
+      this._failedDuring = this.hass.config.state;
     }
   }
 
@@ -174,7 +217,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       <ha-card>
         <div class="root">
           <header>
-            <h2>Tomorrow</h2>
+            <h2>${this._heading()}</h2>
             <p class="when">${this._dayLabel()}</p>
           </header>
           ${withData.map((panel) => this._panel(panel))}
@@ -187,6 +230,24 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
     `;
   }
 
+  /**
+   * What the day is, relative to now rather than to when it was fetched.
+   *
+   * Derived at render rather than stored, so the heading cannot outlive its
+   * own truth. At five past midnight a card loaded the previous evening still
+   * holds the right *data*; calling it "Tomorrow" is the only part that would
+   * have become false, and doing this here means no refresh has to win a race
+   * for the card to stay honest.
+   */
+  private _heading(): string {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    const days = Math.round((this._day.getTime() - midnight.getTime()) / 86_400_000);
+    if (days === 1) return "Tomorrow";
+    if (days === 0) return "Today";
+    return "Forecast";
+  }
+
   private _dayLabel(): string {
     return this._day.toLocaleDateString(this.hass?.language ?? undefined, {
       weekday: "long",
@@ -196,7 +257,8 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   }
 
   private _panel(panel: Panel): TemplateResult {
-    const label = `${panel.label}: ${panel.kwh.toFixed(1)} kilowatt hours forecast for tomorrow`;
+    const when = this._heading().toLowerCase();
+    const label = `${panel.label}: ${panel.kwh.toFixed(1)} kilowatt hours forecast for ${when}`;
     return html`
       <section class="panel">
         <div class="heading">

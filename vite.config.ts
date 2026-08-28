@@ -1,8 +1,15 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
 const manifest = JSON.parse(
-  readFileSync("./custom_components/solar_sanity/manifest.json", "utf8"),
+  // Resolved against this file, not the shell's working directory. A relative
+  // path here means the config only loads from the repository root, and the
+  // failure is an ENOENT during startup rather than anything that names cwd.
+  readFileSync(
+    fileURLToPath(new URL("./custom_components/solar_sanity/manifest.json", import.meta.url)),
+    "utf8",
+  ),
 );
 
 export default defineConfig({

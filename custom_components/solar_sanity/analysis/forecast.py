@@ -60,6 +60,28 @@ FORECAST_AGREEMENT = 0.05
 FORECAST_BIAS_MIN_OVER = 0.08
 FORECAST_BIAS_MIN_UNDER = 0.12
 
+#: How wide a band around the figure counts as "days like this one", as a
+#: fraction of the observed spread. A quarter of the interquartile range would
+#: sit well inside the empty middle of a two-mode set; a half would span the
+#: whole of it and see nothing. This is measured against the spread rather than
+#: fixed, so a genuinely noisy installation is judged on its own scale.
+FORECAST_CENTRE_BAND = 0.35
+
+#: ...but never narrower than this in absolute terms. A provider that alternates
+#: between 13% and 17% over is two-mode in form and one figure in substance —
+#: both days are "15% over" to anyone reading it. Without a floor the band
+#: collapses with the spread and that installation is silenced for a split that
+#: does not matter. Set below the smallest difference worth reporting at all.
+FORECAST_CENTRE_MIN_BAND = 0.05
+
+#: How many days must actually look like the figure before it may be published.
+#: Calibrated, not chosen: across four unimodal error distributions at the
+#: minimum sample size, the first percentile of this share is 0.19 and the worst
+#: draw in four thousand is 0.10 — so a floor here silences well under one
+#: installation in a hundred, and fewer as days accumulate. A sharply two-mode
+#: set scores zero.
+FORECAST_MIN_CENTRE_SHARE = 0.15
+
 #: Widening applied when generation is derived from hourly means, matching what
 #: the residual bands already do for the same data. On an installation whose PV
 #: is mean-backed this lifts the under threshold to nineteen percent, and such
@@ -254,7 +276,28 @@ def _instability(
             "average of that describes no day you will actually see."
         )
 
+    # Spread is not shape. A month split between days 15% under and days 45%
+    # over has a median of +15%, an energy-weighted figure of +15%, and an
+    # interquartile range inside the cap above — every gate passes, and the
+    # published answer describes not one day in the window. So ask the question
+    # the figure itself implies: are there days that actually look like this?
+    if scatter is not None:
+        band = max(scatter * FORECAST_CENTRE_BAND, FORECAST_CENTRE_MIN_BAND)
+        centre = median(errors)
+        if centre is not None:
+            near = sum(1 for error in errors if abs(error - centre) <= band)
+            share = near / len(errors)
+            measured["forecast_centre_share"] = share
+            if share < FORECAST_MIN_CENTRE_SHARE:
+                return (
+                    "The forecast is either well over or well under, rarely in "
+                    "between. One figure would land in the gap where no day falls."
+                )
+
     half = len(days) // 2
+    # Both halves are always populated: every eligible day has a forecast well
+    # above zero, so none of them can fail to produce a ratio. The check is here
+    # because the types require it, not because a window can be too short.
     first = median([r - 1.0 for r in ratios[:half]])
     second = median([r - 1.0 for r in ratios[half:]])
     if first is None or second is None:

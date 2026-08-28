@@ -18,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from analysis.forecast import (
     FORECAST_BIAS_MIN_UNDER,
+    FORECAST_MIN_CENTRE_SHARE,
     FORECAST_MIN_DAYS,
     MEAN_TOLERANCE_FACTOR,
     ForecastDay,
@@ -129,6 +130,21 @@ class TestEligibility:
     def test_a_normal_day_survives(self) -> None:
         assert len(eligible(paired(30))) == 30
 
+    def test_every_eligible_day_yields_a_ratio(self) -> None:
+        """An invariant two gates quietly rest on.
+
+        Eligibility floors the forecast well above zero, so no eligible day can
+        fail to divide. Both halves of the window are therefore always
+        populated, and the split-half check downstream never has to cope with an
+        empty side. If this ever fails, that branch has just come alive and its
+        message — written for a case that could not occur — will be shown to
+        somebody.
+        """
+        days = paired(30)
+        days.append(ForecastDay(day=date(2026, 12, 1), forecast_kwh=0.0, actual_kwh=0.0))
+
+        assert all(day.ratio is not None for day in eligible(days))
+
 
 class TestSilence:
     """Most of the module. Each of these is a different reason to say nothing."""
@@ -223,6 +239,86 @@ class TestSilence:
         assert bias.reportable_pct is None
         assert "grows with the size of the day" in bias.reason
         assert bias.measurements["forecast_size_correlation"] > 0.5
+
+
+class TestTwoKindsOfDayAreNotOneFigure:
+    """The gate that spread alone cannot supply.
+
+    A month split between days well under and days well over has a median, an
+    energy-weighted figure that agrees with it, and a scatter inside the cap.
+    Every other gate passes. The figure it produces describes not one day in the
+    window — it lands in the empty middle between the two kinds of day.
+    """
+
+    @staticmethod
+    def split(count: int, under: float, over: float) -> list[ForecastDay]:
+        """Alternating days, so no half or third of the window is unlike another."""
+        return [
+            ForecastDay(
+                day=START + timedelta(days=index),
+                forecast_kwh=20.0,
+                actual_kwh=20.0 * (under if index % 2 else over),
+            )
+            for index in range(count)
+        ]
+
+    def test_the_figure_would_have_described_no_day(self) -> None:
+        bias = estimate(self.split(32, under=0.85, over=1.45))
+
+        # What it would have published: +15%, from a month containing no day
+        # within thirty points of that.
+        assert bias.value == pytest.approx(0.15)
+        assert bias.reportable_pct is None
+        assert "rarely in between" in bias.reason
+
+    @pytest.mark.parametrize("count", [32, 36, 40, 44])
+    def test_it_holds_whatever_the_window_length(self, count: int) -> None:
+        """The parity of the count decided this before the gate existed.
+
+        With an odd number of days in each half the medians of the two halves
+        landed on different modes and the drift gate caught it by luck. At these
+        lengths it did not, and the figure was published.
+        """
+        assert estimate(self.split(count, under=0.85, over=1.45)).reportable_pct is None
+
+    def test_the_share_of_days_near_the_figure_is_recorded(self) -> None:
+        """Diagnostics have to show the reader why, not just that."""
+        bias = estimate(self.split(32, under=0.85, over=1.45))
+
+        assert bias.measurements["forecast_centre_share"] == 0.0
+
+    @pytest.mark.parametrize(
+        ("under", "over"),
+        [(1.13, 1.17), (1.14, 1.16), (1.15, 1.15)],
+    )
+    def test_two_modes_a_hair_apart_are_one_figure(self, under: float, over: float) -> None:
+        """Two-mode in form, one figure in substance.
+
+        Thirteen and seventeen percent over are both "15% over" to anyone
+        reading it. Without an absolute floor under the band, the band collapses
+        with the spread and this installation is silenced for a split nobody
+        could act on.
+        """
+        bias = estimate(self.split(30, under=under, over=over))
+
+        assert bias.reportable_pct == 15
+        assert bias.measurements["forecast_centre_share"] == 1.0
+
+    def test_an_ordinary_noisy_installation_still_speaks(self) -> None:
+        """The gate must cost nothing to the systems it is not aimed at."""
+        days = [
+            ForecastDay(
+                day=START + timedelta(days=index),
+                forecast_kwh=20.0,
+                # Deterministic spread, wide but single-humped.
+                actual_kwh=20.0 * (1.15 + 0.20 * ((index * 7 % 11) / 10.0 - 0.5)),
+            )
+            for index in range(30)
+        ]
+        bias = estimate(days)
+
+        assert bias.reportable_pct == 15
+        assert bias.measurements["forecast_centre_share"] > FORECAST_MIN_CENTRE_SHARE
 
 
 class TestAFigureThatWasEarned:

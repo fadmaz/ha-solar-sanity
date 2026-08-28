@@ -189,3 +189,96 @@ describe("the card", () => {
     });
   });
 });
+
+describe("staying honest over time", () => {
+  const ID2 = `${DAYAHEAD_PREFIX}01ABC`;
+
+  function build() {
+    const calls: string[] = [];
+    const card = document.createElement("solar-sanity-forecast-card") as SolarSanityForecastCard;
+    card.setConfig({ type: "custom:solar-sanity-forecast-card" });
+    document.body.append(card);
+    const make = (state: string, reject = false) =>
+      ({
+        states: {},
+        config: { state },
+        language: "en",
+        callWS: vi.fn((msg: { type: string }) => {
+          calls.push(msg.type);
+          return reject
+            ? Promise.reject(new Error("recorder disabled"))
+            : Promise.resolve(msg.type === "recorder/list_statistic_ids" ? [{ statistic_id: ID2 }] : {});
+        }),
+      }) as unknown as HomeAssistant;
+    return { card, calls, make };
+  }
+
+  const settle = async (card: SolarSanityForecastCard) => {
+    await card.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    await card.updateComplete;
+  };
+
+  it("does not ask before Home Assistant is running", async () => {
+    const { card, calls, make } = build();
+    card.hass = make("NOT_RUNNING");
+    await settle(card);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("tries again after a restart rather than latching the failure", async () => {
+    // The usual way to see a recorder refuse is a restart. Latching meant the
+    // card said "cannot read the record" for the rest of the day on an
+    // installation whose recorder had been fine for hours.
+    const { card, calls, make } = build();
+    card.hass = make("RUNNING", true);
+    await settle(card);
+    expect((card.shadowRoot?.textContent ?? "")).toContain("Cannot read the record");
+
+    card.hass = make("NOT_RUNNING");
+    await settle(card);
+    card.hass = make("RUNNING");
+    await settle(card);
+
+    expect(calls.filter((c) => c === "recorder/list_statistic_ids").length).toBeGreaterThan(1);
+    expect(card.shadowRoot?.textContent ?? "").not.toContain("Cannot read the record");
+  });
+
+  it("asks once however many times hass is reassigned", async () => {
+    // Home Assistant hands every card a new `hass` on every state change, and
+    // there are dozens a minute. Each used to start its own pair of recorder
+    // queries against SQLite on a Pi.
+    const { card, calls, make } = build();
+    for (let i = 0; i < 5; i += 1) card.hass = make("RUNNING");
+    await settle(card);
+
+    expect(calls.filter((c) => c === "recorder/list_statistic_ids")).toHaveLength(1);
+  });
+
+  it("never calls a day in progress tomorrow", async () => {
+    // At five past midnight a card loaded the previous evening still holds the
+    // right data. Calling it "Tomorrow" is the only part that became false.
+    const { card, make } = build();
+    card.hass = make("RUNNING");
+    await settle(card);
+
+    const heading = card.shadowRoot?.querySelector("h2")?.textContent?.trim();
+    expect(["Tomorrow", "Today", "Forecast", "This record starts today"]).toContain(heading);
+  });
+
+  it("reloads when the day moves under it", async () => {
+    const { card, calls, make } = build();
+    card.hass = make("RUNNING");
+    await settle(card);
+    const before = calls.filter((c) => c === "recorder/list_statistic_ids").length;
+
+    // Pretend the clock rolled past midnight: what the card holds now answers
+    // yesterday's question.
+    (card as unknown as { _day: Date })._day = new Date(2000, 0, 1);
+    card.hass = make("RUNNING");
+    await settle(card);
+
+    expect(calls.filter((c) => c === "recorder/list_statistic_ids").length).toBeGreaterThan(before);
+  });
+});
