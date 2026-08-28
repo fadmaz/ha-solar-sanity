@@ -9,6 +9,11 @@ over them says whether the channels reconcile.
 Totals over one agreed set of hours do reconcile, exactly. That turns "the
 numbers do not add up at night" from a summary into a subtraction anyone can
 check a line at a time, and the size of each line says which channel is short.
+
+The reconciliation is an identity rather than a cross-check: the residual is
+what the lines sum to under the sign convention, by construction. Saying so
+matters, because the first version of this file published that sum twice under
+two names and described the second as verifying the first.
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ class TestItReconciles:
     def test_a_healthy_night_adds_up_to_nothing(self, seed: int) -> None:
         ledger = _ledger(house.build(days=DAYS, seed=seed))
 
-        assert ledger["night_sources_minus_sinks_wh"] == pytest.approx(0.0, abs=1.0)
+        assert ledger["night_total_residual_wh"] == pytest.approx(0.0, abs=1.0)
 
     @pytest.mark.parametrize(
         "name,corrupt",
@@ -58,15 +63,26 @@ class TestItReconciles:
             ("no import measured", lambda c: house.drop(c, "grid_import")),
         ],
     )
-    def test_the_identity_matches_the_residual_it_explains(self, name: str, corrupt) -> None:
-        """Two different computations of the same quantity — one from the
-        buckets, one from the residual the engine had already built. They must
-        agree, or the ledger is explaining a number nobody else is using."""
-        ledger = _ledger(corrupt(house.build(days=DAYS, seed=0)))
+    def test_the_totals_sum_to_the_residual(self, name: str, corrupt) -> None:
+        """The property the ledger is for: the reported residual is exactly what
+        the reported lines add up to under the sign convention, so a reader can
+        do the subtraction by hand and land on the same number.
 
-        assert ledger["night_sources_minus_sinks_wh"] == pytest.approx(
-            ledger["night_total_residual_wh"], abs=1e-6
-        ), name
+        This is an identity, not a cross-check. An earlier version of this test
+        compared the sum against a separately published key and called them
+        "two different computations" — they were the same sum reassociated, and
+        the difference was exactly zero on every input. A test that cannot fail
+        is worse than no test, because it is counted as coverage.
+        """
+        ledger = _ledger(corrupt(house.build(days=DAYS, seed=0)))
+        lines = {k: v for k, v in ledger.items() if k.startswith("night_total_")}
+        del lines["night_total_residual_wh"]
+        by_hand = sum(
+            next(r.sign for r in Role if r.key == key[len("night_total_") : -len("_wh")]) * value
+            for key, value in lines.items()
+        )
+
+        assert by_hand == pytest.approx(ledger["night_total_residual_wh"], abs=0.01), name
 
 
 class TestItNamesTheShortChannel:
@@ -77,7 +93,7 @@ class TestItNamesTheShortChannel:
         ledger = _ledger(house.add_standby(house.build(days=DAYS, seed=0), 80.0))
         hours = ledger["night_ledger_hours"]
 
-        assert ledger["night_sources_minus_sinks_wh"] == pytest.approx(80.0 * hours, rel=1e-6)
+        assert ledger["night_total_residual_wh"] == pytest.approx(80.0 * hours, rel=1e-6)
 
     def test_a_halved_channel_shows_up_as_half(self) -> None:
         clean = _ledger(house.build(days=DAYS, seed=0))
@@ -128,8 +144,17 @@ class TestTheHoursAreHonest:
 
         assert ledger["night_ledger_hours"] > 0
 
-    def test_the_count_is_reported_beside_the_fits_own(self) -> None:
-        """So a gap between them reads as coverage rather than as physics."""
+    def test_the_count_equals_the_fits_own_and_that_is_not_a_signal(self) -> None:
+        """Pinned as equality on purpose.
+
+        `build_days` has already discarded any bucket missing a balance channel,
+        so by the time an hour reaches the ledger every channel has reported and
+        the two counts cannot diverge. This was once asserted as `<=` and
+        documented as a coverage signal — an inequality that passes only by
+        equality, describing a diagnostic that cannot fire. If a change to
+        `bucket_is_valid` ever makes them differ, this fails and the docstring
+        gets rewritten rather than quietly becoming true again.
+        """
         series = house.build(days=DAYS, seed=0)
         specs = specs_for()
         request = to_request(series, specs=specs, declared=DECLARED)
@@ -139,9 +164,7 @@ class TestTheHoursAreHonest:
 
         raw = night_fit_raw(days, specs)
 
-        assert "night_hours" in raw
-        assert "night_ledger_hours" in raw
-        assert raw["night_ledger_hours"] <= raw["night_hours"]
+        assert raw["night_ledger_hours"] == raw["night_hours"]
 
     def test_daylight_is_not_counted(self) -> None:
         """Generation is zero across every hour the ledger used, or the totals

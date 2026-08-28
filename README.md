@@ -257,12 +257,13 @@ number that was measured and then not acted on — because "nothing could be
 established" is not a useful answer without them.
 
 When the numbers do not add up overnight it also carries a **night ledger**:
-every channel's total over one agreed set of hours, with the residual and the
-identity they should satisfy. The totals reconcile exactly, so a shortfall
-becomes a subtraction you can check a line at a time and the size of each line
-says which channel is carrying it. Hours where any channel was silent are left
-out — `night_ledger_hours` beside `night_hours` says whether that mattered — and
-a channel you have not configured gets no line rather than a zero.
+every channel's total over one agreed set of hours, with the residual those
+lines add up to. So a shortfall becomes a subtraction you can check a line at a
+time, and the size of each line says which channel is carrying it.
+`night_ledger_hours` turns the gap into a rate: 35,100 Wh over 390 hours is 90 W
+drawn continuously by something unmeasured. A channel you have not configured
+gets no line rather than a zero, because reporting no export on a system with no
+export meter states the one thing nobody can know without one.
 
 ## Development
 
