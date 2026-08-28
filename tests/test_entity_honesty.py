@@ -12,7 +12,6 @@ in CI and are absent when working on the pure engine locally.
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -200,11 +199,24 @@ class TestOrphanedIssuesAreSweptUp:
 
         return SimpleNamespace(issues={k: _Issue(k, v) for k, v in issue_ids.items()})
 
+    @staticmethod
+    def _drive(coro):
+        """Run a coroutine that never awaits, without touching the event loop.
+
+        Not `asyncio.run`: that creates a loop, closes it, and leaves none
+        current, so every Home Assistant test scheduled after this file died
+        with "There is no current event loop in thread 'MainThread'" — 23 of
+        them, none of them anything to do with repairs. Sending `None` into a
+        coroutine that never suspends runs it to completion and leaves the
+        surrounding loop exactly as it was found.
+        """
+        try:
+            coro.send(None)
+        except StopIteration as done:
+            return done.value
+        raise AssertionError("the coroutine awaited; it needs a real loop now")
+
     def _sweep(self, issues: dict[str, str], live: set[str]) -> list[str]:
-        """Driven directly rather than through a plugin. The function never
-        awaits anything, so its coroutine-ness is incidental to what is being
-        tested, and depending on pytest-asyncio here would mean these tests only
-        run where it happens to be installed."""
         from custom_components.solar_sanity.repairs import async_sweep_orphans
 
         deleted: list[str] = []
@@ -218,7 +230,7 @@ class TestOrphanedIssuesAreSweptUp:
                 side_effect=lambda _hass, _domain, issue_id: deleted.append(issue_id),
             ),
         ):
-            asyncio.run(async_sweep_orphans(object(), live))
+            self._drive(async_sweep_orphans(object(), live))
         return sorted(deleted)
 
     def test_the_reference_installations_stranded_card_is_removed(self) -> None:

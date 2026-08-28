@@ -6,14 +6,11 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.pytest.ini_options]
-# `asyncio_mode` is deliberately NOT set. pytest-asyncio is installed, via
-# pytest-homeassistant-custom-component, but that package manages the event loop
-# itself — setting "auto" hands the same job to two owners and 23 tests error
-# with "There is no current event loop in thread 'MainThread'". Tried on
-# 2026-08-28; the CI run is on PR #51 if anyone wants the evidence.
-#
-# So write `async def` tests only where HA's own fixtures drive them. A helper
-# that merely happens to be a coroutine is better driven with `asyncio.run`.
+# `asyncio_mode` is unset because nothing here needs it: Home Assistant's own
+# fixtures drive the async tests that have one, and a helper that merely happens
+# to be a coroutine is driven directly instead. See `_drive` in
+# tests/test_entity_honesty.py for why `asyncio.run` is the wrong tool for that
+# — it closes the loop out from under every test that follows.
 testpaths = ["tests"]
 # `analysis` is imported absolutely so the package can load with Home Assistant
 # absent. That is a structural purity guarantee, not a convention.
