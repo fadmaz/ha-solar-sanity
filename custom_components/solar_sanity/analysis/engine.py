@@ -15,7 +15,7 @@ from __future__ import annotations
 from . import faults, hypotheses, screen, topology
 from .faults import Code
 from .hypotheses import MIN_HOURS_FOR_SNAP, Hypothesis
-from .linalg import median
+from .linalg import median, pearson
 from .model import (
     AnalysisReport,
     AnalysisRequest,
@@ -49,6 +49,21 @@ MIN_ACTIONABLE_DAYS = 5
 
 #: Clean days out of the last seven that mean "say nothing".
 CLEAN_DAYS_FOR_OK = 6
+
+#: Below this in both channels, an hour is telling us nothing about whether two
+#: sensors track each other. Two channels that are asleep agree perfectly.
+TRACKING_MIN_WH = 25.0
+
+#: How closely a pair must move together before we will say in so many words
+#: that they track each other.
+#:
+#: Not a detection threshold — the counterfactual decides that, and it decides
+#: it without reference to how the pair looks. This exists because the sentence
+#: shown to the user quotes the figure, and a claim we print had better be true.
+#: Measured on the synthetic house, two sensors watching one flow correlate at
+#: 0.997 with realistic per-device error and still at 0.968 when each is given
+#: ten per cent of independent noise, so the margin here is wide.
+TRACKING_MIN_CORRELATION = 0.90
 
 
 def analyse(request: AnalysisRequest) -> AnalysisReport:
@@ -204,6 +219,29 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     # --- Attribution ---------------------------------------------------------
     candidates = hypotheses.generate(days, specs, closure.state is Closure.OPEN)
     candidates = [c for c in candidates if c.code not in request.suppressed_codes]
+
+    # Before scoring, because scoring is what destroys this one. Two channels
+    # carrying the same flow each look entirely spurious on their own, so both
+    # snap to DOUBLE_COUNTED with identical evidence, the margin between first
+    # and second place is nothing, and the margin gate rejects them both. The
+    # engine then says nothing at all about a house whose numbers are out by a
+    # third — which is the right instinct, expressed as the wrong answer. It
+    # cannot tell which of the two to blame because there is nothing to tell:
+    # the answer is the pair.
+    # Suppression first: a user who has dismissed this has also declined to pay
+    # for the counterfactuals behind it.
+    if Code.DUPLICATE_CHANNEL not in request.suppressed_codes and (
+        pair := _duplicate_pair(request, specs, buckets)
+    ):
+        return AnalysisReport(
+            status=Status.FAULT_FOUND,
+            finding=pair,
+            topology=estimate,
+            loss_model=loss,
+            residual=summary,
+            measurements=_measurements(days, specs),
+        )
+
     scored = hypotheses.score(days, candidates)
 
     if not scored or not hypotheses.passes_gates(scored[0], len(days)):
@@ -587,6 +625,154 @@ def _harmful_correction(channel_key: str, specs: tuple[ChannelSpec, ...]) -> Fin
         source_fix=fix,
         # Emphatically none. The remedy is to remove an override, and offering
         # to apply another one here is how this went wrong in the first place.
+        offered_correction=None,
+    )
+
+
+def _without_channels(buckets: tuple[Bucket, ...], keys: frozenset[str]) -> tuple[Bucket, ...]:
+    """The same buckets with these channels contributing nothing.
+
+    Zero rather than absent, because a missing reading and a reading of zero
+    are different facts everywhere else in this engine and a bucket with a
+    channel missing is not a valid bucket. This is exactly what the
+    ``drop_channel`` correction does, which is the point — the question being
+    asked is whether that correction would work.
+    """
+    return tuple(
+        Bucket(
+            start_utc=bucket.start_utc,
+            seconds=bucket.seconds,
+            wh={key: (0.0 if key in keys else value) for key, value in bucket.wh.items()},
+            quality=bucket.quality,
+            source=bucket.source,
+            solar_elevation_deg=bucket.solar_elevation_deg,
+            is_dst_transition=bucket.is_dst_transition,
+            local_date=bucket.local_date,
+        )
+        for bucket in buckets
+    )
+
+
+def _closes_without(
+    request: AnalysisRequest,
+    specs: tuple[ChannelSpec, ...],
+    buckets: tuple[Bucket, ...],
+    key: str,
+) -> bool:
+    """Whether dropping this one channel would settle the whole installation.
+
+    ``buckets`` arrive with the user's corrections already applied, because that
+    is the installation as this engine sees it — asking the question against the
+    raw readings would be asking about a house nobody is looking at.
+    """
+    without = _without_channels(buckets, frozenset({key}))
+    provisional = build_days(
+        without, specs, request.loss_model or LossModel(), request.utc_offset_hours
+    )
+    loss = topology.fit_loss_model(provisional, specs, request.loss_model)
+    return _would_be_ok(build_days(without, specs, loss, request.utc_offset_hours))
+
+
+def _tracking(buckets: tuple[Bucket, ...], first: str, second: str) -> float | None:
+    """How closely two channels move together, over the hours either is doing
+    anything. Night hours agree perfectly about nothing and would flatter any
+    pair, so they are left out."""
+    xs: list[float] = []
+    ys: list[float] = []
+    for bucket in buckets:
+        a = bucket.wh.get(first)
+        b = bucket.wh.get(second)
+        if a is None or b is None:
+            continue
+        if abs(a) < TRACKING_MIN_WH and abs(b) < TRACKING_MIN_WH:
+            continue
+        xs.append(a)
+        ys.append(b)
+    return pearson(xs, ys)
+
+
+def _duplicate_pair(
+    request: AnalysisRequest,
+    specs: tuple[ChannelSpec, ...],
+    buckets: tuple[Bucket, ...],
+) -> Finding | None:
+    """Two channels that are one flow counted twice, named as a pair.
+
+    The test is a counterfactual rather than a resemblance, and that matters
+    more than it sounds. Two sensors on the same array correlate at 1.00 with a
+    ratio of 1.00 — and so do two genuinely separate strings of equal size on
+    the same roof. Measured on the synthetic house, those two cases are
+    identical to four decimal places on every statistic of the channels
+    themselves. Nothing about how the pair *looks* can separate them.
+
+    What separates them is what happens if you take one away. Drop one of two
+    real strings and half the generation goes missing; drop one of two sensors
+    watching the same string and the balance closes. So the question asked here
+    is the one that has an answer: would dropping this channel, on its own,
+    settle the installation? When that is true of two channels, neither can be
+    singled out — they are interchangeable, and the pair is the finding.
+
+    Being self-gating is the useful part. It fires only when the pair is the
+    entire story: if anything else were also wrong, removing one channel would
+    not leave a clean house, and this returns nothing.
+    """
+    # Every channel in the balance, not only the ones a gamma estimate accused.
+    # Gamma needs a channel busy in at least a quarter of its hours, and battery
+    # charging and grid export are not: they run a few hours a day, so the
+    # upper-quartile cutoff comes out at zero and no estimate is ever produced.
+    # Gating on that missed a duplicated charge or export sensor entirely — half
+    # the roles a duplicate can land in.
+    keys = sorted(spec.key for spec in specs if spec.role.in_balance)
+    if len(keys) < 2:
+        return None
+
+    # Exactly two, or nothing. One means we know which channel to blame and the
+    # ordinary path names it. Three or more means no *pair* is the answer, and
+    # with three copies of one flow it is unreachable anyway — dropping any
+    # single one still leaves the house out by a third. Silence is right there:
+    # once the user removes one, two remain and this speaks.
+    interchangeable: list[str] = []
+    for key in keys:
+        if _closes_without(request, specs, buckets, key):
+            interchangeable.append(key)
+            if len(interchangeable) > 2:
+                return None
+    if len(interchangeable) != 2:
+        return None
+
+    first, second = interchangeable
+    correlation = _tracking(buckets, first, second)
+    if correlation is None:
+        # The copy quotes this figure, and there is no honest stand-in for a
+        # number that could not be computed.
+        return None
+    if correlation < TRACKING_MIN_CORRELATION:
+        # Interchangeable in the balance, but not moving together — so whatever
+        # these two are, "the same energy measured twice" is not a description
+        # of it, and that is the only sentence available here.
+        return None
+
+    names = [_spec_for(specs, key) for key in (first, second)]
+    if any(spec is None for spec in names):
+        return None
+
+    headline, detail, fix = faults.render(
+        Code.DUPLICATE_CHANNEL,
+        name=names[0].friendly_name,
+        other=names[1].friendly_name,
+        correlation=correlation,
+    )
+    return Finding(
+        code=Code.DUPLICATE_CHANNEL,
+        severity=Severity.FAULT,
+        confidence=Confidence.HIGH,
+        channel_keys=(first, second),
+        headline=headline,
+        detail=detail,
+        source_fix=fix,
+        # None, and not for want of a candidate. Dropping either one would close
+        # the balance, so an override here would be this engine picking which of
+        # the user's two sensors to silence on the strength of a coin toss.
         offered_correction=None,
     )
 

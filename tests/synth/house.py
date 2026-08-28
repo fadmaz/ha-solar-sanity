@@ -186,6 +186,32 @@ def net_meter_beside_export(series: Series) -> Series:
     return series.copy_with(grid_import=net)
 
 
+def two_aspects(series: Series, channel: str, target: str, tilt: float = 0.4) -> Series:
+    """Split one array into two genuinely separate ones, on different aspects.
+
+    The adversary for duplicate detection, and the reason it cannot be built out
+    of resemblance. The two channels sum to the original hour for hour, so the
+    house still balances exactly — these are two real halves of a real array,
+    not a copy of one.
+
+    ``tilt`` slides the share across the day: east takes more in the morning,
+    west more in the afternoon. At ``0.4`` the pair correlates at 0.89, close to
+    the 0.83 the project plan warns about. At ``0.0`` the two are byte-identical
+    curves correlating at 1.0000 with a ratio of exactly one — indistinguishable
+    from a duplicated sensor by any statistic of the channels themselves, and
+    the case any threshold on correlation or ratio is going to get wrong.
+    """
+    values = series.data[channel]
+    lead: list[float] = []
+    trail: list[float] = []
+    for index, value in enumerate(values):
+        hour = index % 24
+        share = min(1.0, max(0.0, 0.5 + tilt * (12 - hour) / 12.0))
+        lead.append(value * share)
+        trail.append(value * (1.0 - share))
+    return series.copy_with(**{channel: lead, target: trail})
+
+
 def halve(series: Series, channel: str) -> Series:
     """One current clamp on a supply that has two live conductors."""
     return series.copy_with(**{channel: [v * 0.5 for v in series.data[channel]]})

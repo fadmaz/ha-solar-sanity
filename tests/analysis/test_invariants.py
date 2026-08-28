@@ -529,7 +529,6 @@ class TestNoFaultCodeIsWrittenAndNeverRaised:
     #: the copy explaining that to the user is never reached either, so it is
     #: told to nobody.
     KNOWN_UNRAISED = {
-        "duplicate_channel_pair",
         "channels_swapped",
         "submeter_included_in_parent",
         "missing_generation_channel",
