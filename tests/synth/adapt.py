@@ -56,6 +56,24 @@ def specs_for(
     )
 
 
+def extra_spec(key: str, role: Role, friendly_name: str) -> ChannelSpec:
+    """A channel beyond the six the standard house has.
+
+    ``ROLES`` maps one key to one role, which is all the clean house needs.
+    Anything about two sensors in the same role — a duplicate, or two real
+    arrays — needs a second channel carrying that role, and this is how it gets
+    one.
+    """
+    return ChannelSpec(
+        key=key,
+        role=role,
+        entity_id=f"sensor.{key}",
+        friendly_name=friendly_name,
+        declared_unit="Wh",
+        origin="user",
+    )
+
+
 def to_request(
     series: Series,
     *,

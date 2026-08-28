@@ -15,7 +15,7 @@ from __future__ import annotations
 from . import faults, hypotheses, screen, topology
 from .faults import Code
 from .hypotheses import MIN_HOURS_FOR_SNAP, Hypothesis
-from .linalg import median
+from .linalg import median, pearson, sum_squares
 from .model import (
     AnalysisReport,
     AnalysisRequest,
@@ -50,6 +50,37 @@ MIN_ACTIONABLE_DAYS = 5
 #: Clean days out of the last seven that mean "say nothing".
 CLEAN_DAYS_FOR_OK = 6
 
+#: Below this in both channels, an hour is telling us nothing about whether two
+#: sensors track each other. Two channels that are asleep agree perfectly.
+TRACKING_MIN_WH = 25.0
+
+#: How far the unexplained energy may differ from a channel, as a share of that
+#: channel, before it stops being that channel.
+#:
+#: The counterfactual alone is a magnitude test: it asks whether the house is
+#: out by about one of these, not whether the missing energy *is* this one. Two
+#: real strings on a roof each answer yes the moment an unrelated fault happens
+#: to be roughly their size, and the engine then tells somebody to unmap half
+#: their generation. Found by an adversarial sweep at one house in sixty.
+#:
+#: Measured: a duplicated sensor sits at 0.000 with clean data and 0.056 with
+#: ten per cent of independent error on both devices, while two real strings
+#: beside an unmetered draw sit at 0.459 to 0.543. An order of magnitude apart,
+#: so this sits three times above the worst duplicate and half the best
+#: adversary.
+DUPLICATE_MAX_MISMATCH = 0.20
+
+#: How closely a pair must move together before we will say in so many words
+#: that they track each other.
+#:
+#: Not a detection threshold — the counterfactual decides that, and it decides
+#: it without reference to how the pair looks. This exists because the sentence
+#: shown to the user quotes the figure, and a claim we print had better be true.
+#: Measured on the synthetic house, two sensors watching one flow correlate at
+#: 0.997 with realistic per-device error and still at 0.968 when each is given
+#: ten per cent of independent noise, so the margin here is wide.
+TRACKING_MIN_CORRELATION = 0.90
+
 
 def analyse(request: AnalysisRequest) -> AnalysisReport:
     """Return at most one finding about this installation."""
@@ -81,10 +112,21 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         )
 
     # --- Stage A: categorical facts, before anything statistical -------------
+    # A channel we ourselves inverted reads negative in every hour, which is
+    # precisely what the backwards-sensor screen is looking for. Telling the
+    # user their sensor is wired backwards, when an override they accepted here
+    # is what turned it around, is our own doing reported as their fault —
+    # complete with advice to negate it a second time.
+    flipped = {
+        correction.channel_key
+        for correction in request.active_corrections
+        if correction.kind == "sign_flip"
+    }
     hits = [
         hit
         for hit in screen.run_all(buckets, specs, request.live_snapshots)
         if hit.code not in request.suppressed_codes
+        and not (hit.code == Code.CHANNEL_NEVER_POSITIVE and set(hit.channel_keys) <= flipped)
     ]
     if hits:
         primary = hits[0]
@@ -204,6 +246,30 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     # --- Attribution ---------------------------------------------------------
     candidates = hypotheses.generate(days, specs, closure.state is Closure.OPEN)
     candidates = [c for c in candidates if c.code not in request.suppressed_codes]
+
+    # Before scoring, because scoring is what destroys this one. Two channels
+    # carrying the same flow each look entirely spurious on their own, so both
+    # snap to DOUBLE_COUNTED with identical evidence, the margin between first
+    # and second place is nothing, and the margin gate rejects them both. The
+    # engine then says nothing at all about a house whose numbers are out by a
+    # third — which is the right instinct, expressed as the wrong answer. It
+    # cannot tell which of the two to blame because there is nothing to tell:
+    # the answer is the pair.
+    # Suppression first: a user who has dismissed this has also declined to pay
+    # for the counterfactuals behind it.
+    if Code.DUPLICATE_CHANNEL not in request.suppressed_codes and (
+        pair := _duplicate_pair(request, specs, buckets, days, candidates)
+    ):
+        return AnalysisReport(
+            status=Status.FAULT_FOUND,
+            finding=pair,
+            identity_fails=True,
+            topology=estimate,
+            loss_model=loss,
+            residual=summary,
+            measurements=_measurements(days, specs),
+        )
+
     scored = hypotheses.score(days, candidates)
 
     if not scored or not hypotheses.passes_gates(scored[0], len(days)):
@@ -588,6 +654,299 @@ def _harmful_correction(channel_key: str, specs: tuple[ChannelSpec, ...]) -> Fin
         # Emphatically none. The remedy is to remove an override, and offering
         # to apply another one here is how this went wrong in the first place.
         offered_correction=None,
+    )
+
+
+def _without_channels(buckets: tuple[Bucket, ...], keys: frozenset[str]) -> tuple[Bucket, ...]:
+    """The same buckets with these channels contributing nothing.
+
+    Zero rather than absent, because a missing reading and a reading of zero
+    are different facts everywhere else in this engine and a bucket with a
+    channel missing is not a valid bucket. This is exactly what the
+    ``drop_channel`` correction does, which is the point — the question being
+    asked is whether that correction would work.
+    """
+    return tuple(
+        Bucket(
+            start_utc=bucket.start_utc,
+            seconds=bucket.seconds,
+            wh={key: (0.0 if key in keys else value) for key, value in bucket.wh.items()},
+            quality=bucket.quality,
+            source=bucket.source,
+            solar_elevation_deg=bucket.solar_elevation_deg,
+            is_dst_transition=bucket.is_dst_transition,
+            local_date=bucket.local_date,
+        )
+        for bucket in buckets
+    )
+
+
+def _closes_without(
+    request: AnalysisRequest,
+    specs: tuple[ChannelSpec, ...],
+    buckets: tuple[Bucket, ...],
+    key: str,
+) -> tuple[bool, tuple[DayResidual, ...]]:
+    """Whether dropping this one channel would settle the whole installation.
+
+    Returns the days it judged along with the verdict, because the caller needs
+    to say by how much and rebuilding them to find out would double the cost of
+    the most expensive thing this engine does.
+
+    ``buckets`` arrive with the user's corrections already applied, because that
+    is the installation as this engine sees it — asking the question against the
+    raw readings would be asking about a house nobody is looking at.
+    """
+    without = _without_channels(buckets, frozenset({key}))
+    provisional = build_days(
+        without, specs, request.loss_model or LossModel(), request.utc_offset_hours
+    )
+    loss = topology.fit_loss_model(provisional, specs, request.loss_model)
+    settled = build_days(without, specs, loss, request.utc_offset_hours)
+    return _would_be_ok(settled), settled
+
+
+def _tracking(buckets: tuple[Bucket, ...], first: str, second: str) -> float | None:
+    """How closely two channels move together, over the hours either is doing
+    anything. Night hours agree perfectly about nothing and would flatter any
+    pair, so they are left out."""
+    xs: list[float] = []
+    ys: list[float] = []
+    for bucket in buckets:
+        # `value`, not `wh`, because this is a statistic and not a raw-stream
+        # screen. A single reset-suspect hour carrying a counter artefact is
+        # discarded everywhere else in the package; read raw it drags the
+        # correlation from 1.00 to -0.03, which is below the floor below, which
+        # silences a correct finding on a house that is out by a third.
+        a = bucket.value(first)
+        b = bucket.value(second)
+        if a is None or b is None:
+            continue
+        if abs(a) < TRACKING_MIN_WH and abs(b) < TRACKING_MIN_WH:
+            continue
+        xs.append(a)
+        ys.append(b)
+    return pearson(xs, ys)
+
+
+def _residual_mismatch(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...], key: str
+) -> float | None:
+    """How far the unexplained energy is from being exactly this channel.
+
+    Over the hours the channel is doing something, compare what is missing with
+    what the channel contributed: zero means the residual *is* this channel,
+    hour for hour, which is what a second sensor on the same flow produces.
+
+    Deliberately not the gamma estimate the snap table uses. Gamma needs a
+    channel busy in a quarter of its hours and battery charging and grid export
+    are not, so it cannot answer this question for half the roles a duplicate
+    can land in. This one only ever looks at the channel's own active hours, so
+    a channel that runs four hours a day is judged on those four.
+    """
+    spec = _spec_for(specs, key)
+    if spec is None:
+        return None
+
+    deviations: list[float] = []
+    magnitudes: list[float] = []
+    for day in days:
+        for bucket, dr in zip(day.buckets, day.dr, strict=True):
+            value = bucket.value(key)
+            if value is None or abs(value) < TRACKING_MIN_WH:
+                continue
+            contribution = spec.role.sign * value
+            deviations.append(abs(dr - contribution))
+            magnitudes.append(abs(contribution))
+
+    typical = median(magnitudes)
+    spread = median(deviations)
+    if typical is None or spread is None or typical <= 0:
+        return None
+    return spread / typical
+
+
+def _duplicate_pair(
+    request: AnalysisRequest,
+    specs: tuple[ChannelSpec, ...],
+    buckets: tuple[Bucket, ...],
+    days: tuple[DayResidual, ...],
+    candidates: list[Hypothesis],
+) -> Finding | None:
+    """Two channels that are one flow counted twice, named as a pair.
+
+    The test is a counterfactual rather than a resemblance, and that matters
+    more than it sounds. Two sensors on the same array correlate at 1.00 with a
+    ratio of 1.00 — and so do two genuinely separate strings of equal size on
+    the same roof. Measured on the synthetic house, those two cases are
+    identical to four decimal places on every statistic of the channels
+    themselves. Nothing about how the pair *looks* can separate them.
+
+    What separates them is what happens if you take one away. Drop one of two
+    real strings and half the generation goes missing; drop one of two sensors
+    watching the same string and the balance closes. So the first question asked
+    here is the one that has an answer: would dropping this channel, on its own,
+    settle the installation? When that is true of two channels, neither can be
+    singled out — they are interchangeable.
+
+    That on its own is a magnitude test, and not enough. It asks whether the
+    house is out by about one of these, not whether the missing energy *is* one
+    of these — and two real strings both answer yes the moment an unrelated
+    fault happens to be roughly their size. So the second question is the
+    identity one: is the unexplained energy this channel, hour for hour? A
+    duplicated sensor answers to within a few per cent; two real strings beside
+    an unmetered draw are out by half.
+
+    Being self-gating is the useful part of the first test. It fires only when
+    the pair is the entire story: if anything else were also wrong, removing one
+    channel would not leave a clean house.
+    """
+    # Every channel in the balance, not only the ones a gamma estimate accused.
+    # Gamma needs a channel busy in at least a quarter of its hours, and battery
+    # charging and grid export are not: they run a few hours a day, so the
+    # upper-quartile cutoff comes out at zero and no estimate is ever produced.
+    # Gating on that missed a duplicated charge or export sensor entirely — half
+    # the roles a duplicate can land in.
+    keys = sorted(spec.key for spec in specs if spec.role.in_balance)
+    if len(keys) < 2:
+        return None
+
+    # Exactly two, or nothing.
+    #
+    # One is not this finding: the pair is what makes it unnameable, and when a
+    # single channel is singled out there is something more specific to say. The
+    # ordinary path usually says it — but not always, and the gap is worth being
+    # honest about. Between roughly 0.90 and 0.95 of the original, a copy is
+    # near enough its partner that the two DOUBLE_COUNTED hypotheses score
+    # within 0.01 of each other, and the margin gate wants 0.15. The correct
+    # hypothesis is top of the list and rejected anyway, so the house stays at
+    # "investigating" with a 36% residual. Fixing that means letting the
+    # counterfactual break the tie the margin gate cannot, which is a change to
+    # the attribution path rather than to this one. Tracked separately.
+    #
+    # Three or more is unreachable rather than merely unhandled: with three
+    # copies of one flow, dropping any single one still leaves the house out by
+    # a third, so none of them closes it. Silence is right there too — once the
+    # user removes one, two remain and this speaks.
+    interchangeable: list[str] = []
+    settled: dict[str, tuple[DayResidual, ...]] = {}
+    for key in keys:
+        closes, without = _closes_without(request, specs, buckets, key)
+        if closes:
+            interchangeable.append(key)
+            settled[key] = without
+            if len(interchangeable) > 2:
+                return None
+    if len(interchangeable) != 2:
+        return None
+
+    # Interchangeable, but is either of them actually the missing energy? Two
+    # real strings pass the test above whenever something unrelated is about
+    # their size; neither passes this one.
+    for key in interchangeable:
+        mismatch = _residual_mismatch(days, specs, key)
+        if mismatch is None or mismatch > DUPLICATE_MAX_MISMATCH:
+            return None
+
+    # Is the pair the only thing that fits? When some channel outside it also
+    # snaps to a fault, two physical explanations are on the table.
+    #
+    # Not hypothetical. Two real battery banks beside a load CT on one of two
+    # live conductors collide exactly: at night the battery carries the house,
+    # so what is missing is half the load, and each bank contributes half the
+    # load. The residual *is* one bank's output, hour for hour, to machine
+    # precision. Both tests above pass and the engine would tell somebody to
+    # unmap a real battery — while the CT sits there reading half.
+    #
+    # There is no separating the two. A genuine duplicate of the load channel
+    # throws a competing candidate of exactly the same shape, so refusing to
+    # speak whenever one exists would cost real findings and buy nothing. What
+    # it is good for is knowing how much to claim: with a rival explanation in
+    # play this is a question rather than a conclusion, and the copy then says
+    # so instead of instructing somebody to unmap a sensor.
+    contested = any(
+        key not in set(interchangeable) for hyp in candidates for key in hyp.channel_keys
+    )
+
+    first, second = interchangeable
+    correlation = _tracking(buckets, first, second)
+    if correlation is None:
+        # The copy quotes this figure, and there is no honest stand-in for a
+        # number that could not be computed.
+        return None
+    if not correlation >= TRACKING_MIN_CORRELATION:
+        # Interchangeable in the balance, but not moving together — so whatever
+        # these two are, "the same energy measured twice" is not a description
+        # of it, and that is the only sentence available here.
+        return None
+
+    names = [_spec_for(specs, key) for key in (first, second)]
+    if any(spec is None for spec in names):
+        return None
+
+    # How much of the mismatch this accounts for, measured the same way the
+    # scored hypotheses measure it, so the two are comparable in diagnostics.
+    # Left absent rather than defaulted when it cannot be computed: a finding
+    # that explains nothing and a finding whose share is unknown are different
+    # facts, and this project has a suite that says so.
+    baseline = sum_squares([value for day in days for value in day.dr])
+    explained = 0.0
+    evidence: tuple[Evidence, ...] = ()
+    if baseline > 0:
+        remaining = sum_squares([value for day in settled[first] for value in day.dr])
+        explained = 1.0 - (remaining / baseline)
+        evidence = (
+            Evidence(
+                label="Mismatch this pair accounts for",
+                value=explained * 100.0,
+                unit="%",
+                window_days=len(days),
+            ),
+            Evidence(
+                label="How closely the two track each other",
+                value=correlation * 100.0,
+                unit="%",
+                window_days=len(days),
+            ),
+        )
+
+    headline, detail, fix = faults.render(
+        Code.DUPLICATE_CHANNEL,
+        name=names[0].friendly_name,
+        other=names[1].friendly_name,
+        correlation=correlation,
+    )
+    # The same two downgrades every other finding takes. A pair inferred from
+    # channels this integration guessed at, or from hourly means rather than our
+    # own integration, is not as certain as one from channels the user mapped
+    # and readings we took — and asserting it at full confidence anyway is the
+    # inconsistency the screen path was already fixed for.
+    confidence = Confidence.HIGH
+    if contested:
+        confidence = confidence.downgrade()
+    if any(spec.autodetected for spec in names if spec is not None):
+        confidence = confidence.downgrade()
+    if _rests_on_means(buckets, (first, second)):
+        confidence = confidence.downgrade()
+
+    return Finding(
+        code=Code.DUPLICATE_CHANNEL,
+        severity=Severity.QUESTION if confidence is Confidence.PROBABLE else Severity.FAULT,
+        confidence=confidence,
+        channel_keys=(first, second),
+        headline=headline,
+        detail=detail,
+        source_fix=fix,
+        # None, and not for want of a candidate. Dropping either one would close
+        # the balance, so an override here would be this engine picking which of
+        # the user's two sensors to silence on the strength of a coin toss.
+        offered_correction=None,
+        evidence=evidence,
+        explained_fraction=explained,
+        # The counterfactual is evaluated over the whole window rather than
+        # sampled, so every day supports it or none does.
+        days_supporting=len(days),
+        days_evaluated=len(days),
     )
 
 

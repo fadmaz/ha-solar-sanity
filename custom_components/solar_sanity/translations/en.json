@@ -114,6 +114,10 @@
         }
       }
     },
+    "finding_unfixable": {
+      "title": "{headline}",
+      "description": "{detail}\n\n**How to fix it properly**\n{source_fix}"
+    },
     "finding_question": {
       "title": "{headline}",
       "fix_flow": {
@@ -127,6 +131,10 @@
           "entry_gone": "That installation is no longer configured."
         }
       }
+    },
+    "finding_question_unfixable": {
+      "title": "{headline}",
+      "description": "{detail}\n\nThis one is a question rather than a conclusion — the pattern fits, but not well enough to assert it.\n\n**What to check**\n{source_fix}"
     }
   },
   "entity": {

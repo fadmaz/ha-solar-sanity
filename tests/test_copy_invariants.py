@@ -110,3 +110,135 @@ def test_stripping_comments_leaves_a_url_intact() -> None:
     kept = _copy_only(ROOT / "frontend" / "src" / "main.ts")
 
     assert "https://github.com/fadmaz/ha-solar-sanity" in kept
+
+
+class TestEveryFindingHasABody:
+    """A finding the user cannot get past the headline of is barely a finding.
+
+    Home Assistant renders ``issues.<key>.description`` for an issue with no Fix
+    button, and ``fix_flow`` only for one that has it. Every finding's detail and
+    remedy lived exclusively inside ``fix_flow`` — so a finding that offers no
+    correction showed its headline and nothing else. The reader was told
+    "Solar production and Second sensor are the same energy measured twice" and
+    given no way to reach the sentence explaining what to do about it.
+
+    Not a rare corner. Findings are non-fixable whenever the honest answer is a
+    configuration change rather than an internal override, which is most of
+    them: a duplicated pair, a correction that has outlived its fault, partial
+    CT coverage, a net meter mapped beside an export sensor.
+
+    And the status card sends people there in as many words —
+    ``frontend/src/status-card.ts`` offers "Show me" pointing at
+    ``/config/repairs``, on the promise that the explanation is waiting.
+    """
+
+    #: The keys a finding with no Fix button renders through. Home Assistant's
+    #: own schema makes `description` and `fix_flow` mutually exclusive, so
+    #: these are separate templates rather than one carrying both — hassfest
+    #: rejects the file outright otherwise.
+    ISSUE_KEYS = ("finding_unfixable", "finding_question_unfixable")
+
+    #: ...and the ones that do have a button, whose body lives in the flow.
+    FIXABLE_KEYS = ("finding", "finding_question")
+
+    @staticmethod
+    def _issues(path: pathlib.Path) -> dict:
+        import json
+
+        return json.loads(path.read_text(encoding="utf-8"))["issues"]
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            COMPONENT / "strings.json",
+            COMPONENT / "translations" / "en.json",
+        ],
+        ids=["strings", "en"],
+    )
+    @pytest.mark.parametrize("key", ISSUE_KEYS)
+    def test_a_non_fixable_issue_can_still_be_read(self, path: pathlib.Path, key: str) -> None:
+        entry = self._issues(path)[key]
+
+        assert "description" in entry, (
+            f"{path.name}:{key} has no description, so a finding that offers no "
+            f"correction renders as a headline and nothing else"
+        )
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            COMPONENT / "strings.json",
+            COMPONENT / "translations" / "en.json",
+        ],
+        ids=["strings", "en"],
+    )
+    @pytest.mark.parametrize("key", ISSUE_KEYS)
+    def test_the_body_carries_both_halves(self, path: pathlib.Path, key: str) -> None:
+        """What is wrong, and what to do — the second is the useful one."""
+        description = self._issues(path)[key]["description"]
+
+        assert "{detail}" in description
+        assert "{source_fix}" in description
+
+    def test_every_placeholder_is_one_repairs_actually_supplies(self) -> None:
+        """Otherwise Home Assistant renders the brace and the user reads it."""
+        import json
+        import re
+
+        supplied = set(
+            re.findall(
+                r'"(\w+)":',
+                (COMPONENT / "repairs.py")
+                .read_text(encoding="utf-8")
+                .split("translation_placeholders={", 1)[1]
+                .split("}", 1)[0],
+            )
+        )
+        assert supplied, "the placeholder block moved — this test cannot see it"
+
+        for key in self.ISSUE_KEYS:
+            entry = json.loads((COMPONENT / "strings.json").read_text(encoding="utf-8"))["issues"][
+                key
+            ]
+            used = set(re.findall(r"\{(\w+)\}", entry["description"]))
+
+            assert used <= supplied, f"{key} asks for {sorted(used - supplied)}"
+
+    def test_both_files_say_the_same_thing(self) -> None:
+        """They drifted once already; en.json is what users actually read."""
+        for key in self.ISSUE_KEYS:
+            assert (
+                self._issues(COMPONENT / "strings.json")[key]["description"]
+                == self._issues(COMPONENT / "translations" / "en.json")[key]["description"]
+            ), key
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            COMPONENT / "strings.json",
+            COMPONENT / "translations" / "en.json",
+        ],
+        ids=["strings", "en"],
+    )
+    def test_the_two_kinds_of_issue_stay_mutually_exclusive(self, path: pathlib.Path) -> None:
+        """hassfest rejects a key carrying both, and says so unhelpfully."""
+        issues = self._issues(path)
+
+        for key in self.FIXABLE_KEYS:
+            assert "description" not in issues[key], f"{key} would fail hassfest"
+        for key in self.ISSUE_KEYS:
+            assert "fix_flow" not in issues[key], f"{key} would fail hassfest"
+
+    def test_repairs_picks_a_key_that_exists(self) -> None:
+        """The four names in repairs.py have to be the four in the file."""
+        import json
+        import re
+
+        source = (COMPONENT / "repairs.py").read_text(encoding="utf-8")
+        stems = set(re.findall(r'"(finding(?:_question)?)"', source))
+        assert stems == {"finding", "finding_question"}, stems
+
+        issues = json.loads((COMPONENT / "strings.json").read_text(encoding="utf-8"))["issues"]
+        for stem in stems:
+            assert stem in issues
+            assert f"{stem}_unfixable" in issues
