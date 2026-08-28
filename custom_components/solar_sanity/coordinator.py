@@ -329,8 +329,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 # The sensor was away. The counter advanced while it was, and
                 # nothing here knows when — so crediting the whole difference to
                 # the hour it came back would put an outage's worth of energy
-                # into one bucket and call it measured. Re-baseline instead, and
-                # distrust the hour that straddles the gap.
+                # into one bucket and call it measured. Re-baseline instead.
+                # The hours it was absent for were marked as they closed, above,
+                # so every hour the gap touches is distrusted rather than just
+                # this one.
                 self._suspect.add(spec.key)
                 continue
 
@@ -454,6 +456,21 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         """
         self.async_update_listeners()
 
+    def _counter_went_quiet(self, key: str, closing: datetime) -> bool:
+        """Whether a cumulative counter had stopped reporting by the hour's end.
+
+        Only cumulative energy channels appear in ``_last_energy``, so this is
+        silent about power channels — those carry their own gap accounting in
+        ``_gap_seconds``, which a counter never gets because it never enters
+        ``_live_power``. A channel with no baseline yet is not quiet, it is
+        simply new, and marking it would distrust every hour of an installation
+        whose sensor has not arrived.
+        """
+        held = self._last_energy.get(key)
+        if held is None:
+            return False
+        return (closing - held[1]).total_seconds() > ENERGY_MAX_AGE_SECONDS
+
     def _close_bucket(self, start: datetime, end: datetime | None = None) -> None:
         specs = self.specs
         self._settle_power(end or (start + timedelta(hours=1)))
@@ -467,6 +484,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         quality: dict[str, Quality] = {}
         source: dict[str, BucketSource] = {}
 
+        closing = end or (start + timedelta(hours=1))
         for spec in specs:
             value = self._accumulator.get(spec.key)
             gap = self._gap_seconds.get(spec.key, 0.0)
@@ -476,7 +494,27 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 # the whole product.
                 value = None
             wh[spec.key] = value
-            if spec.key in self._suspect:
+            if self._counter_went_quiet(spec.key, closing):
+                # The hour a counter went quiet in has exactly the same hole in
+                # it as the hour it comes back in, and only the second was ever
+                # marked — the staleness guard runs when a *reading* arrives,
+                # and no reading arrives while the sensor is away. So a dropout
+                # across an hour boundary stopped moving energy between two
+                # hours and started deleting it: this hour shipped a partial
+                # total stamped OK and counted as a full 3600 seconds, the next
+                # one was discarded whole, and nothing balanced the loss.
+                #
+                # On a healthy eight-kilowatt array a lunchtime dropout was
+                # enough to take the day out by kilowatt-hours, turn on the
+                # problem flag and print "the numbers do not add up" — the exact
+                # false alarm this product cannot afford.
+                #
+                # Asked here rather than on the sampling tick because the tick
+                # that would notice may not exist: `_close_bucket` runs before
+                # the sampling loop, so a gap opening late in the hour crosses
+                # the boundary before anything looks at it.
+                quality[spec.key] = Quality.RESET_SUSPECT
+            elif spec.key in self._suspect:
                 quality[spec.key] = Quality.RESET_SUSPECT
             elif value is None:
                 quality[spec.key] = Quality.MISSING
