@@ -287,7 +287,8 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
                 measurements=_measurements(days, specs),
             )
 
-        if _rescued_by_the_counterfactual(best, settled, len(days)):
+        runner_up = scored[1] if len(scored) > 1 else None
+        if _rescued_by_the_counterfactual(best, runner_up, settled, len(days)):
             return AnalysisReport(
                 status=Status.FAULT_FOUND,
                 identity_fails=True,
@@ -848,6 +849,7 @@ def _interchangeable_channels(
 
 def _rescued_by_the_counterfactual(
     best: Hypothesis | None,
+    runner_up: Hypothesis | None,
     settled: dict[str, tuple[DayResidual, ...]],
     days_evaluated: int,
 ) -> bool:
@@ -872,6 +874,20 @@ def _rescued_by_the_counterfactual(
     which is what double counting is. It says nothing about a channel being
     backwards or half-read, so it may not rescue those.
     """
+    if runner_up is not None and not runner_up.channel_keys:
+        # The runner-up names no channel, so the counterfactual could not have
+        # tested it — and a test only one side can sit is not evidence about
+        # which side is right.
+        #
+        # It matters because the two can be the same arithmetic. On a roof that
+        # exports nearly everything with no export meter mapped, "generation is
+        # counted twice" and "energy leaves by a path nothing measures" explain
+        # the residual equally well; the first won by 0.011 of explained
+        # fraction, and its remedy is to delete the generation channel. The user
+        # follows it, the engine says OK, and they have thrown away the sensor
+        # that was telling the truth. MISSING_EXPORT was passing every gate on
+        # its own.
+        return False
     return _could_be_rescued(best, days_evaluated) and (
         best is not None and len(settled) == 1 and best.channel_keys == tuple(settled)
     )
