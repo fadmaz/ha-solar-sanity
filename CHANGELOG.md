@@ -2,6 +2,88 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.11.0] - 2026-08-28
+
+Everything here was found by reading the code or by attacking it, not by a
+failing test. Every one of them failed quietly — no exception, no entity going
+unavailable, nothing turning red.
+
+### Fixed
+
+- **Forecast history was never being kept.** The recorder validates the ids we
+  file forecasts under against a lowercase-only pattern, and Home Assistant has
+  minted uppercase ids for new configuration entries since 2023.4 — so every
+  write was refused, on every installation set up since then, and said so only
+  in a debug line. Forecast history is the one record this integration cannot
+  rebuild afterwards. **If you installed before this release, capture has not
+  been running; it starts now, from today.**
+- **A single net meter is no longer reported as a fault.** The setup screen asks
+  you to put a meter that goes negative when exporting in the import slot and
+  leave export empty. Doing exactly that produced a fault report, an instruction
+  pointing at a slot that has never existed, and an offered correction that was
+  implemented nowhere — it counted itself as applied and changed no number.
+- **A sensor wired backwards now has a name.** It reads negative in every hour
+  of its life, which is not a direction any of these measurements can flow in.
+  Generation and consumption were never checked for it at all, so an inverted
+  sensor left the numbers out by more than a hundred per cent and the verdict
+  sat at "still investigating" indefinitely. Grid and battery were checked, and
+  told they measured both directions at once — the wrong answer, and one with no
+  remedy attached.
+- **Two ways an hour could be credited with energy that never flowed.** An hour
+  rolls over on the wall clock but nothing notices until the next five-minute
+  tick, so a reading arriving in between was counted twice. And differencing a
+  cumulative counter says energy flowed, never over how long — so an inverter
+  reconnecting after a two-hour dropout put the whole gap into the hour it came
+  back. Both inflated the mismatch on exactly the systems this exists to
+  reassure.
+- **The forecast card stopped giving up for the day.** The ordinary way to see
+  the recorder refuse a query is a restart, before it has finished coming up,
+  and the card latched that failure until midnight. It also still said
+  "Tomorrow" at five past midnight while showing what was by then today.
+- **The engine no longer depends on the order you mapped your channels in.** It
+  measured a role — generation, say — by looking at whichever channel carrying
+  that role happened to be listed first. On an installation with two arrays that
+  made the loss model, and the verdict, depend on configuration order. The same
+  fault was hiding a duplicated sensor on any system whose generation is
+  measured before the inverter.
+- **A finding you cannot act on is no longer shown as one you can.** The detail
+  and the remedy lived only behind the Fix button, so every finding whose honest
+  answer is a configuration change rather than an internal adjustment showed its
+  headline and nothing else.
+- **A non-finite reading no longer reaches the copy.** One could make a
+  percentage come out as `nan`, and slip past its own guard, because every
+  comparison against a `nan` is false. The gates are written the way round that
+  rejects it now.
+
+### Added
+
+- **Two sensors measuring the same flow are named as a pair.** Each looks
+  entirely spurious on its own, so the engine could not tell which of the two to
+  blame and said nothing at all about an installation out by a third. It does
+  not guess: it reports the pair, and offers no correction, because dropping
+  either would close the balance and choosing between them would be a coin toss.
+- **A near-copy is named on its own.** A second sensor reading a few per cent
+  off its partner is a different case — one of them settles the numbers and the
+  other does not — and that is now said plainly, with the one-click adjustment
+  it has always had.
+- **A correction that has outlived its fault is now noticed.** Adjustments here
+  are applied so the rest of your system can keep being checked, never as a fix,
+  so the underlying sensor usually does get repaired eventually. At that moment
+  the adjustment stops compensating for a fault and becomes one. You are asked
+  to remove it, rather than being told the now-correct sensor is broken and
+  advised to break it again.
+- **A forecast figure that describes no day is no longer published.** A month
+  split between days well under and days well over has a perfectly ordinary
+  average, and quoting it describes not one day you will actually see.
+
+### Notes
+
+- Nothing reports currency, and an AST check in CI keeps it that way.
+- The analysis engine imports nothing from Home Assistant; purity is enforced
+  structurally rather than by convention, and the report is now checked to be
+  identical whatever order the channels arrive in.
+- 750 tests, up from 466 at 0.10.0.
+
 ## [0.10.0] - 2026-08-28
 
 ### Added
