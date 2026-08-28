@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildPanel, SolarSanityForecastCard } from "./forecast-card";
-import { DAYAHEAD_PREFIX, type ProviderDay } from "./forecast-data";
+import { DAYAHEAD_PREFIX, type ProviderDay, tomorrow } from "./forecast-data";
 import type { HomeAssistant } from "./types/hass";
 
 const ID = `${DAYAHEAD_PREFIX}01ABC`;
@@ -145,8 +145,20 @@ describe("the card", () => {
   });
 
   it("draws the day once there is one", async () => {
+    // Derived from the same clock the card reads, not a literal. This fixture
+    // used to name a date that was tomorrow on the morning it was written, and
+    // it passed until midnight rolled it into today — at which point the card
+    // correctly filtered every row out and the test failed with no bug behind
+    // it. A card that asks "what does tomorrow look like" can only be tested
+    // against a tomorrow that moves with it.
+    const target = tomorrow(new Date());
     const rows = Array.from({ length: 6 }, (_, index) => ({
-      start: new Date(2026, 7, 29, 8 + index).getTime(),
+      start: new Date(
+        target.getFullYear(),
+        target.getMonth(),
+        target.getDate(),
+        8 + index,
+      ).getTime(),
       state: index,
     }));
     card.hass = hass({
