@@ -6,13 +6,14 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.pytest.ini_options]
-# pytest-asyncio arrives with pytest-homeassistant-custom-component, so this
-# applies in CI and is an ignored setting locally, where Home Assistant is
-# absent and every test needing it skips anyway. Without it an `async def`
-# test is silently collected and then fails with "async def functions are not
-# natively supported", which reads as a broken test rather than a missing
-# plugin.
-asyncio_mode = "auto"
+# `asyncio_mode` is deliberately NOT set. pytest-asyncio is installed, via
+# pytest-homeassistant-custom-component, but that package manages the event loop
+# itself — setting "auto" hands the same job to two owners and 23 tests error
+# with "There is no current event loop in thread 'MainThread'". Tried on
+# 2026-08-28; the CI run is on PR #51 if anyone wants the evidence.
+#
+# So write `async def` tests only where HA's own fixtures drive them. A helper
+# that merely happens to be a coroutine is better driven with `asyncio.run`.
 testpaths = ["tests"]
 # `analysis` is imported absolutely so the package can load with Home Assistant
 # absent. That is a structural purity guarantee, not a convention.
