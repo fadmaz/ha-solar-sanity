@@ -212,6 +212,20 @@ async def async_classify_statistics(
     return sum_backed, mean_backed, absent
 
 
+def provider_label(product: str, title: str | None) -> str:
+    """How a forecast provider should be named wherever it is shown.
+
+    A bare entry title is not enough to identify one. A Forecast.Solar entry is
+    very often just called "Home", which says nothing about which integration
+    it came from — and on a card comparing providers it is the one thing the
+    reader needs. The product name leads; the title is added only when it says
+    something the product name does not.
+    """
+    if not title or title == product:
+        return product
+    return f"{product} — {title}"
+
+
 def forecast_statistic_id(provider_key: str) -> str:
     """External statistic id for one provider's *latest* forecast.
 
@@ -567,7 +581,6 @@ async def async_forecast_providers(hass: HomeAssistant) -> list[tuple[str, str]]
             product = domain
 
         for entry in hass.config_entries.async_entries(domain):
-            title = entry.title
-            label = product if not title or title == product else f"{product} — {title}"
+            label = provider_label(product, entry.title)
             providers.append((entry.entry_id, label))
     return providers

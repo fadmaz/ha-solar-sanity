@@ -80,6 +80,7 @@ from .statistics_source import (
     async_record_forecast,
     dayahead_statistic_id,
     forecast_statistic_id,
+    provider_label,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -552,7 +553,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             if not isinstance(wh_hours, dict):
                 continue
             if self._owns_archive(entry_id) and await async_record_forecast(
-                self.hass, entry_id, provider.title or provider.domain, wh_hours
+                self.hass, entry_id, await self._provider_name(provider), wh_hours
             ):
                 written += 1
 
@@ -563,6 +564,23 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
         self._expected_tomorrow_kwh = tomorrow_kwh
         return written
+
+    async def _provider_name(self, provider: ConfigEntry) -> str:
+        """The name to store on the archive's metadata.
+
+        Stored rather than derived at read time, because the archive outlives
+        the entry: a provider that is deleted leaves real history behind, and a
+        row labelled only by a config entry id nobody can resolve any more is
+        history nobody can read.
+        """
+        from homeassistant.loader import async_get_integration
+
+        try:
+            integration = await async_get_integration(self.hass, provider.domain)
+            product = integration.name
+        except Exception:
+            product = provider.domain
+        return provider_label(product, provider.title)
 
     def _owns_archive(self, provider_entry_id: str) -> bool:
         """Whether this entry is the one that writes that provider's archive.

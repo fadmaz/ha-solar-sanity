@@ -2,6 +2,27 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.8.2] - 2026-08-28
+
+### Fixed
+
+- **The status card reported "More than one installation" on a house with one.**
+  0.7.1 fixed a lookup that broke on a renamed entity, and replaced it with one
+  that matched *any* `sensor.*_status` — so a camera, an alarm panel, a router
+  and an inverter all counted. Matching on the entity id does not work in either
+  direction: requiring the domain slug breaks on a rename, and dropping it picks
+  up the rest of the house.
+
+  The card now recognises its entity by what it publishes. An enum sensor
+  carries its `options`, and no other integration publishes this particular list
+  of five verdicts. That survives a rename and cannot collide.
+- **The forecast card labelled the provider "Home".** A Forecast.Solar entry is
+  very often titled that, which says nothing about which integration it came
+  from — and on a card whose point is comparing providers it is the one thing
+  the reader needs. The archive metadata now leads with the product name, the
+  way the setup flow already did. Existing archives are relabelled on the next
+  capture.
+
 ## [0.8.1] - 2026-08-28
 
 ### Fixed
