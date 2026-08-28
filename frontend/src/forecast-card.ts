@@ -40,6 +40,15 @@ import type {
 } from "./types/hass";
 
 /** Chart geometry, in user units. The viewBox scales it to whatever fits. */
+/**
+ * How long a failed read is believed before the card tries again.
+ *
+ * Long enough that a genuinely disabled recorder is not polled at the rate
+ * `hass` is reassigned, short enough that a momentary blip is not treated as
+ * the state of the world for the rest of the day.
+ */
+const RETRY_AFTER_MS = 5 * 60_000;
+
 const WIDTH = 600;
 const HEIGHT = 180;
 const PAD_START = 34;
@@ -95,6 +104,8 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   @state() private _day = tomorrow(new Date());
   /** The lifecycle phase the last failure happened in. */
   private _failedDuring?: string;
+  /** When the last failure happened, so the latch can expire on its own. */
+  private _failedAt = 0;
   /** A load in progress, so a burst of hass updates does not start five. */
   private _inflight?: Promise<void>;
 
@@ -130,12 +141,25 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   protected willUpdate(changed: Map<string, unknown>): void {
     if (!changed.has("hass") || !this.hass) return;
 
-    // A new lifecycle phase deserves another try. The usual way to see a
-    // recorder refuse is a Home Assistant restart, and latching the failure
-    // meant the card said "cannot read the record" for the rest of the day on
-    // an installation whose recorder had been fine for hours.
+    // Two ways out of a failure, because the first one alone never fires.
+    //
+    // A new lifecycle phase deserves another try: the usual way to see the
+    // recorder refuse is a restart. But `_load` is only reachable past the
+    // RUNNING gate below, so every failure is recorded during RUNNING and this
+    // comparison is always "RUNNING" against "RUNNING". Written to release the
+    // latch, it never released it, and the card said "cannot read the record"
+    // until midnight on a recorder that had been fine seconds later.
+    //
+    // So also let it expire. A websocket blip — a laptop waking, wifi roaming,
+    // the recorder reloading — rejects the request in flight and is over before
+    // the next reassignment, of which there are dozens a minute. Nothing about
+    // that deserves to be believed for sixteen hours.
     const phase = this.hass.config.state;
-    if (phase !== this._failedDuring) this._failed = false;
+    if (phase !== this._failedDuring) {
+      this._failed = false;
+    } else if (this._failed && Date.now() - this._failedAt > RETRY_AFTER_MS) {
+      this._failed = false;
+    }
     if (phase !== "RUNNING") return;
 
     // Midnight moves the question, and what is held answers yesterday's.
@@ -169,13 +193,21 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
     if (!this.hass) return;
     try {
       const days = await loadDayAhead(this.hass, day);
+      // The day may have moved while this was in flight. A request started at
+      // 23:59:59 answers about the day that has just become today, and
+      // publishing it would leave the card showing yesterday's forecast under
+      // the word "Tomorrow" until something else happened to reload it — which,
+      // on a card that only loads when `_days` is undefined, is nothing.
+      if (day.getTime() !== this._day.getTime()) return;
       this._days = this._config?.provider
         ? days.filter((d) => d.statisticId === this._config!.provider)
         : days;
+      this._failedDuring = undefined;
     } catch {
       // The recorder can be disabled, and a card is not the place to explain a
       // stack trace. What the reader needs is one sentence and no red box.
       this._failed = true;
+      this._failedAt = Date.now();
       this._failedDuring = this.hass.config.state;
     }
   }
