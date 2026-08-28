@@ -2,6 +2,19 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.8.1] - 2026-08-28
+
+### Fixed
+
+- **The test DOM added in 0.8.0 carried a critical advisory.** `happy-dom` 16
+  has a VM context escape that can lead to remote code execution, plus two
+  more. It is a development dependency and never reaches a user — the card
+  ships as a bundle containing only Lit — but it runs in CI against this
+  repository, and a public project should not carry that. Upgraded to 20.
+- Added a Dependabot configuration, which the repository has never had. Finding
+  the first advisory by cutting a release and reading the warning afterwards is
+  not a process.
+
 ## [0.8.0] - 2026-08-28
 
 ### Added
