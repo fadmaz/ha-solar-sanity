@@ -177,3 +177,122 @@ class TestIssueOwnership:
         from custom_components.solar_sanity import async_remove_entry
 
         assert callable(async_remove_entry)
+
+
+class TestOrphanedIssuesAreSweptUp:
+    """Cards left by entries that no longer exist.
+
+    Removal has been handled since v0.3.2, but only at the moment an entry goes.
+    Anything orphaned before that shipped is stranded forever, because every
+    other path reconciles against *this* entry's id and an old card does not
+    carry it. The reference installation has one, for an entry deleted half an
+    hour before the removal hook existed, and its Fix button leads to a flow
+    that can only abort.
+    """
+
+    @staticmethod
+    def _registry(issue_ids: dict[str, str]):
+        class _Issue:
+            def __init__(self, issue_id: str, domain: str) -> None:
+                self.issue_id = issue_id
+                self.domain = domain
+
+        return SimpleNamespace(issues={k: _Issue(k, v) for k, v in issue_ids.items()})
+
+    @staticmethod
+    def _drive(coro):
+        """Run a coroutine that never awaits, without touching the event loop.
+
+        Not `asyncio.run`: that creates a loop, closes it, and leaves none
+        current, so every Home Assistant test scheduled after this file died
+        with "There is no current event loop in thread 'MainThread'" — 23 of
+        them, none of them anything to do with repairs. Sending `None` into a
+        coroutine that never suspends runs it to completion and leaves the
+        surrounding loop exactly as it was found.
+        """
+        try:
+            coro.send(None)
+        except StopIteration as done:
+            return done.value
+        raise AssertionError("the coroutine awaited; it needs a real loop now")
+
+    def _sweep(self, issues: dict[str, str], live: set[str]) -> list[str]:
+        from custom_components.solar_sanity.repairs import async_sweep_orphans
+
+        deleted: list[str] = []
+        with (
+            patch(
+                "custom_components.solar_sanity.repairs.ir.async_get",
+                return_value=self._registry(issues),
+            ),
+            patch(
+                "custom_components.solar_sanity.repairs.ir.async_delete_issue",
+                side_effect=lambda _hass, _domain, issue_id: deleted.append(issue_id),
+            ),
+        ):
+            self._drive(async_sweep_orphans(object(), live))
+        return sorted(deleted)
+
+    def test_the_reference_installations_stranded_card_is_removed(self) -> None:
+        from custom_components.solar_sanity.const import DOMAIN
+
+        gone = "01M0X6H534EZXNCW0X86RXE1D3"
+        live = "01M115AWKC3N083Y1YANVMB7CZ"
+
+        deleted = self._sweep(
+            {
+                f"signed_net_battery_slot_{gone}": DOMAIN,
+                f"signed_net_battery_slot_{live}": DOMAIN,
+            },
+            {live},
+        )
+
+        assert deleted == [f"signed_net_battery_slot_{gone}"]
+
+    def test_a_live_entrys_cards_are_left_alone(self) -> None:
+        from custom_components.solar_sanity.const import DOMAIN
+
+        live = "01M115AWKC3N083Y1YANVMB7CZ"
+
+        deleted = self._sweep(
+            {
+                f"signed_net_battery_slot_{live}": DOMAIN,
+                f"missing_export_channel_{live}": DOMAIN,
+            },
+            {live},
+        )
+
+        assert deleted == []
+
+    def test_every_live_entry_counts_not_just_one(self) -> None:
+        """Two installations, and sweeping for one must not take the other's."""
+        from custom_components.solar_sanity.const import DOMAIN
+
+        first = "01M115AWKC3N083Y1YANVMB7CZ"
+        second = "01M113N4N74WEFYB26341HJ8W4"
+
+        deleted = self._sweep(
+            {
+                f"signed_net_battery_slot_{first}": DOMAIN,
+                f"signed_net_battery_slot_{second}": DOMAIN,
+            },
+            {first, second},
+        )
+
+        assert deleted == []
+
+    def test_another_integrations_cards_are_never_touched(self) -> None:
+        deleted = self._sweep(
+            {"signed_net_battery_slot_01M0X6H534EZXNCW0X86RXE1D3": "other_domain"},
+            {"01M115AWKC3N083Y1YANVMB7CZ"},
+        )
+
+        assert deleted == []
+
+    def test_no_live_entries_sweeps_all_of_ours(self) -> None:
+        """The last installation removed, and its card outliving it."""
+        from custom_components.solar_sanity.const import DOMAIN
+
+        deleted = self._sweep({"signed_net_battery_slot_01M0X6H534EZXNCW0X86RXE1D3": DOMAIN}, set())
+
+        assert deleted == ["signed_net_battery_slot_01M0X6H534EZXNCW0X86RXE1D3"]

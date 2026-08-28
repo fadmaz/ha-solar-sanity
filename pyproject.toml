@@ -6,7 +6,11 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.pytest.ini_options]
-# asyncio_mode set once pytest-asyncio is installed (HA integration tests)
+# `asyncio_mode` is unset because nothing here needs it: Home Assistant's own
+# fixtures drive the async tests that have one, and a helper that merely happens
+# to be a coroutine is driven directly instead. See `_drive` in
+# tests/test_entity_honesty.py for why `asyncio.run` is the wrong tool for that
+# — it closes the loop out from under every test that follows.
 testpaths = ["tests"]
 # `analysis` is imported absolutely so the package can load with Home Assistant
 # absent. That is a structural purity guarantee, not a convention.
