@@ -2,6 +2,70 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.12.0] - 2026-08-29
+
+Found in a real installation's own diagnostics rather than in synthetic data.
+
+### Added
+
+- **The night ledger.** When the numbers do not add up overnight, the download
+  now shows every channel's night total side by side — generation, import,
+  export, battery in, battery out, consumption — over one agreed set of hours,
+  along with the residual and the signed identity they should satisfy. Totals
+  reconcile exactly, so the question becomes a subtraction you can check a line
+  at a time, and the size of each line says which channel is short.
+
+  What was there before was three medians: the middle hour of load, the middle
+  hour of discharge, the middle hour of residual. Those are three *different*
+  hours, so no arithmetic over them ever said whether the channels agreed — and
+  grid import was not reported at all, which ruled out the most likely
+  explanation for a night shortfall before anyone could look at it.
+
+  Hours where any channel was silent are left out, so a channel that is merely
+  absent for part of the night cannot look like one that is short.
+  ``night_ledger_hours`` beside ``night_hours`` says whether that mattered. A
+  channel you have not configured gets no line at all rather than a zero:
+  reporting no export on a system with no export meter would state the one thing
+  nobody can know without it.
+
+- **The verdict now says what was measured.** A healthy installation used to get
+  the word OK and nothing else, while the analysis behind it had fitted a loss
+  model and measured a continuous draw nobody's sensors account for. If there is
+  one, it is now said out loud — "About 35 W flows continuously that nothing
+  measures" — and the figures behind every verdict, including OK and including a
+  named fault, are in the diagnostics download. They were previously attached
+  only where the engine was *unsure*, so the file was richest when there was
+  least to say and empty on the verdict most worth auditing.
+
+### Fixed
+
+- **Data completeness no longer reads 0% before it knows anything.** Home
+  Assistant gives an integration no way to wait for another one's entities, so
+  at startup your inverter has usually not published yet, every channel reads as
+  absent, and none-of-five was reported as 0%. On the device page that is
+  indistinguishable from the failure the sensor exists to report, at the moment
+  you are most likely to be looking at it. It now reads unknown until something
+  has been read once, and 0 only after — nothing has arrived yet and everything
+  has stopped are the same arithmetic and opposite facts.
+
+- **Repair cards left behind by an installation you removed are cleared.**
+  Removal has been handled since 0.3.2, but only from that version onward;
+  anything orphaned earlier was stranded, because every other path matches
+  against the current installation's id and an old card does not carry one. Its
+  Fix button led to a flow that could only abort, making it a repair you could
+  neither action nor permanently dismiss. Swept once at startup.
+
+### Notes
+
+- Two of the three loss-model notes are written and deliberately still silent.
+  Their copy says a few per cent of loss is normal conversion and there is
+  nothing to fix, and the fit cannot yet tell that apart from a continuous draw
+  you are paying for — an 80 W draw on a system whose sensors both read AC
+  produces a larger figure than a genuinely DC-measured one does. They wait for
+  a fit that separates the terms.
+- Nothing reports currency, and a check in CI keeps it that way.
+- 817 tests, up from 750 at 0.11.0.
+
 ## [0.11.0] - 2026-08-28
 
 Everything here was found by reading the code or by attacking it, not by a
