@@ -196,6 +196,11 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     if _would_be_ok(days):
         return AnalysisReport(
             status=Status.OK,
+            # A healthy installation is where these are worth having and the
+            # only place they were missing. The engine fits a loss model on
+            # every run and this path threw all of it away, so the one verdict
+            # most people ever see carried nothing but the word OK.
+            notes=_loss_notes(loss),
             topology=estimate,
             loss_model=loss,
             residual=summary,
@@ -406,7 +411,7 @@ def _restricted_report(
         return None
 
     summary = _summarise(days)
-    notes = _unverifiable_notes(days, full_days) + _draw_note(days, specs)
+    notes = _unverifiable_notes(days, full_days) + _draw_note(days, specs) + _loss_notes(loss)
     recent = days[-7:]
 
     common = {
@@ -477,6 +482,31 @@ def _measurements(
         out[f"days_{band}"] = float(count)
     out.update(topology.night_fit_raw(days, specs))
     return out
+
+
+def _loss_notes(loss: LossModel) -> tuple[str, ...]:
+    """What the fitted loss model established, said out loud rather than only
+    subtracted.
+
+    Standby, and deliberately only standby. Copy exists for the two DC terms as
+    well, and they stay silent, because the three terms are not identifiable
+    from one another: a continuous unmetered draw of 80 W on a system whose
+    sensors both read AC fits `pv_dc_gamma` at 0.045 and `battery_dc_gamma` at
+    0.061 — the second of those larger than a genuinely DC-measured battery fits
+    at, on an installation that reports OK. Telling somebody that a draw they
+    are paying for is "normal conversion loss, nothing to fix" is the worst
+    thing this product could say, so the DC notes wait for a fit that can
+    separate the terms.
+
+    Standby carries none of that risk. Measured against known draws it comes
+    back exact wherever it is fitted at all, and across five different faults it
+    was never once fitted on a house with something genuinely wrong — its
+    failure is silence, not a false reassurance.
+    """
+    if not loss.established("standby") or loss.standby_w <= 0.0:
+        return ()
+    headline, detail, _ = faults.render(Code.UNMETERED_STANDBY, watts=loss.standby_w)
+    return (f"{headline}. {detail}",)
 
 
 def _draw_note(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) -> tuple[str, ...]:

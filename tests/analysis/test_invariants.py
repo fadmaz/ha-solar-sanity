@@ -574,10 +574,18 @@ class TestNoFaultCodeIsWrittenAndNeverRaised:
         "load_boundary_mismatch",
         "stale_channel",
         "unexplained_residual",
-        # Notes, not faults.
+        # Notes, not faults — and these two are silent on purpose rather than
+        # by omission. The loss model's three terms are not identifiable from
+        # one another: a continuous unmetered draw on a system whose sensors
+        # both read AC fits `pv_dc_gamma` at 0.045 and `battery_dc_gamma` at
+        # 0.061, the latter larger than a genuinely DC-measured battery fits at,
+        # on an installation reporting OK. Their copy says "normal conversion
+        # loss, nothing to fix", which is the worst possible thing to tell
+        # somebody about a draw they are paying for. They wait for a fit that
+        # separates the terms. `unmetered_standby` had no such problem and is
+        # raised — see `engine._loss_notes`.
         "pv_measured_dc",
         "battery_measured_dc",
-        "unmetered_standby",
     }
 
     @staticmethod
