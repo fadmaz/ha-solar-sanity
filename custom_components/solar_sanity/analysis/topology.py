@@ -14,6 +14,7 @@ from .faults import DC_MEASUREMENT_MAX_IQR, DC_MEASUREMENT_WINDOW
 from .linalg import median, theil_sen_intercept, theil_sen_slope
 from .model import (
     Answer,
+    Bucket,
     ChannelSpec,
     Coupling,
     DeclaredTopology,
@@ -137,17 +138,28 @@ def _gamma_for_role(
     estimate again — and the reported status oscillates with it on every
     refresh. Against ``r`` the fit is idempotent.
     """
-    spec = next((s for s in specs if s.role is role), None)
-    if spec is None:
+    keys = [spec.key for spec in specs if spec.role is role]
+    if not keys:
         return None
 
     ratios: list[float] = []
     for day in days:
         for bucket, raw in zip(day.buckets, day.r, strict=True):
-            value = bucket.value(spec.key)
-            if value is None or value <= 0:
+            # The whole role, not the first channel carrying it. Measuring one
+            # of two generation sensors made this depend on which the user
+            # happened to map first — so a house with a second array, or with a
+            # channel temporarily set aside, got a different loss model and a
+            # different verdict from the same data in a different order. It also
+            # made the DC-loss term collapse whenever the channel it had picked
+            # was the one being examined, which is silence on exactly the
+            # topology this project was built against.
+            parts = [value for key in keys if (value := bucket.value(key)) is not None]
+            if len(parts) < len(keys):
                 continue
-            ratios.append(raw / value)
+            total = sum(parts)
+            if total <= 0:
+                continue
+            ratios.append(raw / total)
     if len(ratios) < 50:
         return None
     return median(ratios)
@@ -256,27 +268,36 @@ def _night_samples(
     residual the previous model has already been subtracted from makes the fit
     oscillate rather than converge.
     """
-    pv = next((s for s in specs if s.role is Role.PV), None)
-    discharge = next((s for s in specs if s.role is Role.BATTERY_DISCHARGE), None)
-    if pv is None or discharge is None:
+    # Whole roles, not their first channel. Night is when *nothing* is
+    # generating, so an installation with a second array had hours counted as
+    # night while half its roof was still producing — and which half depended on
+    # the order the two were mapped in.
+    pv_keys = [s.key for s in specs if s.role is Role.PV]
+    discharge_keys = [s.key for s in specs if s.role is Role.BATTERY_DISCHARGE]
+    if not pv_keys or not discharge_keys:
         return None
 
-    load = next((s for s in specs if s.role is Role.LOAD), None)
+    load_keys = [s.key for s in specs if s.role is Role.LOAD]
+
+    def total(bucket: Bucket, keys: list[str]) -> float | None:
+        """The role's whole contribution, or ``None`` if any part is missing."""
+        parts = [value for key in keys if (value := bucket.value(key)) is not None]
+        return sum(parts) if len(parts) == len(keys) else None
 
     xs: list[float] = []
     ys: list[float] = []
     loads: list[float] = []
     for day in days:
         for bucket, raw in zip(day.buckets, day.r, strict=True):
-            generation = bucket.value(pv.key)
+            generation = total(bucket, pv_keys)
             if generation is None or generation > NIGHT_MAX_PV_WH:
                 continue
-            flow = bucket.value(discharge.key)
+            flow = total(bucket, discharge_keys)
             if flow is None:
                 continue
             xs.append(flow)
             ys.append(raw)
-            if load is not None and (drawn := bucket.value(load.key)) is not None:
+            if load_keys and (drawn := total(bucket, load_keys)) is not None:
                 loads.append(drawn)
 
     if len(xs) < MIN_STANDBY_SAMPLES:

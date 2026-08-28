@@ -41,7 +41,16 @@ from dataclasses import replace
 import pytest
 from analysis.engine import analyse
 from analysis.faults import Code
-from analysis.model import Answer, DeclaredTopology, Role, Status
+from analysis.model import (
+    Answer,
+    BucketSource,
+    Confidence,
+    Correction,
+    DeclaredTopology,
+    Role,
+    Severity,
+    Status,
+)
 
 from tests.synth import house
 from tests.synth.adapt import extra_spec, specs_for, to_request
@@ -770,3 +779,94 @@ class TestTheReportSaysWhatItKnows:
         exact = self._report()
 
         assert close.finding.explained_fraction < exact.finding.explained_fraction
+
+
+class TestItIsAsCertainAsItsEvidence:
+    """The two downgrades every other finding takes, which this one did not.
+
+    A pair inferred from channels the integration guessed at, or from hourly
+    means rather than our own integration, is not as certain as one from
+    channels the user mapped and readings we took. The screen path was fixed for
+    exactly this inconsistency once already.
+    """
+
+    @staticmethod
+    def _duplicated():
+        clean = house.build(days=DAYS, seed=0)
+        return clean.copy_with(pv_b=list(clean.data["pv"]))
+
+    def test_user_mapped_channels_and_our_own_readings(self) -> None:
+        report = _analyse(self._duplicated(), extra_spec("pv_b", Role.PV, "Solar B"))
+
+        assert report.finding.confidence is Confidence.HIGH
+        assert report.finding.severity is Severity.FAULT
+
+    def test_guessed_channels_are_a_question_not_a_conclusion(self) -> None:
+        specs = tuple(
+            replace(spec, origin="autodetected") if spec.key in ("pv", "pv_b") else spec
+            for spec in (*specs_for(), extra_spec("pv_b", Role.PV, "Solar B"))
+        )
+
+        report = analyse(to_request(self._duplicated(), specs=specs, declared=DECLARED))
+
+        assert report.finding.confidence is Confidence.PROBABLE
+        assert report.finding.severity is Severity.QUESTION
+
+    def test_hourly_means_are_a_question_too(self) -> None:
+        report = analyse(
+            to_request(
+                self._duplicated(),
+                specs=(*specs_for(), extra_spec("pv_b", Role.PV, "Solar B")),
+                declared=DECLARED,
+                source=BucketSource.LTS_MEAN,
+            )
+        )
+
+        assert report.finding.confidence is Confidence.PROBABLE
+
+
+class TestWeDoNotBlameASensorForOurOwnOverride:
+    """A channel we inverted reads negative in every hour of its life.
+
+    That is exactly what the backwards-sensor screen looks for, so a user who
+    accepted a sign flip that turned out not to help was told their sensor was
+    wired backwards — and advised to negate it a second time. Our own doing,
+    reported as their fault.
+    """
+
+    def test_a_flipped_channel_is_not_called_backwards(self) -> None:
+        clean = house.build(days=DAYS, seed=0)
+        request = to_request(
+            clean.copy_with(pv_b=list(clean.data["pv"])),
+            specs=(*specs_for(), extra_spec("pv_b", Role.PV, "Solar B")),
+            declared=DECLARED,
+        )
+
+        report = analyse(
+            replace(
+                request,
+                active_corrections=(Correction(channel_key="pv_b", kind="sign_flip"),),
+            )
+        )
+
+        if report.finding is not None:
+            assert report.finding.code != Code.CHANNEL_NEVER_POSITIVE
+
+    def test_a_genuinely_backwards_sensor_is_still_named(self) -> None:
+        """The masking must be exact, or it hides the real thing."""
+        report = _analyse(house.invert(house.build(days=DAYS, seed=0), "pv"))
+
+        assert report.finding.code == Code.CHANNEL_NEVER_POSITIVE
+
+    def test_a_flip_on_a_different_channel_masks_nothing(self) -> None:
+        request = to_request(house.invert(house.build(days=DAYS, seed=0), "pv"), declared=DECLARED)
+
+        report = analyse(
+            replace(
+                request,
+                active_corrections=(Correction(channel_key="load", kind="sign_flip"),),
+            )
+        )
+
+        assert report.finding.code == Code.CHANNEL_NEVER_POSITIVE
+        assert report.finding.channel_keys == ("pv",)

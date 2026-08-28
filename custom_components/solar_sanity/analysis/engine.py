@@ -112,10 +112,21 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         )
 
     # --- Stage A: categorical facts, before anything statistical -------------
+    # A channel we ourselves inverted reads negative in every hour, which is
+    # precisely what the backwards-sensor screen is looking for. Telling the
+    # user their sensor is wired backwards, when an override they accepted here
+    # is what turned it around, is our own doing reported as their fault —
+    # complete with advice to negate it a second time.
+    flipped = {
+        correction.channel_key
+        for correction in request.active_corrections
+        if correction.kind == "sign_flip"
+    }
     hits = [
         hit
         for hit in screen.run_all(buckets, specs, request.live_snapshots)
         if hit.code not in request.suppressed_codes
+        and not (hit.code == Code.CHANNEL_NEVER_POSITIVE and set(hit.channel_keys) <= flipped)
     ]
     if hits:
         primary = hits[0]
@@ -884,10 +895,21 @@ def _duplicate_pair(
         other=names[1].friendly_name,
         correlation=correlation,
     )
+    # The same two downgrades every other finding takes. A pair inferred from
+    # channels this integration guessed at, or from hourly means rather than our
+    # own integration, is not as certain as one from channels the user mapped
+    # and readings we took — and asserting it at full confidence anyway is the
+    # inconsistency the screen path was already fixed for.
+    confidence = Confidence.HIGH
+    if any(spec.autodetected for spec in names if spec is not None):
+        confidence = confidence.downgrade()
+    if _rests_on_means(buckets, (first, second)):
+        confidence = confidence.downgrade()
+
     return Finding(
         code=Code.DUPLICATE_CHANNEL,
-        severity=Severity.FAULT,
-        confidence=Confidence.HIGH,
+        severity=Severity.QUESTION if confidence is Confidence.PROBABLE else Severity.FAULT,
+        confidence=confidence,
         channel_keys=(first, second),
         headline=headline,
         detail=detail,

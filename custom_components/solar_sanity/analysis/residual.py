@@ -260,8 +260,10 @@ def build_days(
     if not keys:
         return ()
 
-    pv_key = next((s.key for s in specs if s.role is Role.PV), None)
-    if verifiable_only and pv_key is None:
+    # Every generation channel. Picking the first made "was the sun up" depend
+    # on which array the user mapped first.
+    pv_keys = [s.key for s in specs if s.role is Role.PV]
+    if verifiable_only and not pv_keys:
         return ()
 
     offset = timedelta(hours=utc_offset_hours)
@@ -273,8 +275,8 @@ def build_days(
         if not bucket_is_valid(bucket, keys):
             continue
         if verifiable_only:
-            generation = bucket.value(pv_key) if pv_key else None
-            if generation is None or generation > PV_NEGLIGIBLE_WH:
+            parts = [value for key in pv_keys if (value := bucket.value(key)) is not None]
+            if len(parts) < len(pv_keys) or sum(parts) > PV_NEGLIGIBLE_WH:
                 continue
         # The resolved date when the caller knew the zone; the flat offset only
         # as a fallback for input that never had one.

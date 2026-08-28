@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 from analysis.engine import analyse
-from analysis.model import Status
+from analysis.model import Role, Status
 
 from tests.synth import house
 from tests.synth.adapt import to_request
@@ -228,6 +228,45 @@ class TestDeterminism:
 
         assert a.status is b.status
         assert (a.finding and a.finding.code) == (b.finding and b.finding.code)
+
+    def test_channel_order_does_not_matter_past_the_screens_either(self) -> None:
+        """The case above returns at a Stage A screen and never reaches the
+        inferential path, so it could not see the worst breach of this rule.
+
+        Several places measured a *role* by looking up the first channel
+        carrying it. On a house with two generation sensors that made the loss
+        model, the definition of night, and the verdict itself depend on which
+        one the user happened to map first — a duplicated sensor was named or
+        not named on the strength of the configuration order alone.
+        """
+        from dataclasses import replace
+
+        from tests.synth.adapt import extra_spec, specs_for
+
+        # DC-metered generation, which is what makes the loss model matter, plus
+        # a second generation sensor. Deliberately not a screen-catchable fault.
+        series = house.measure_pv_dc(house.build(days=21, seed=0), efficiency=0.90)
+        series = series.copy_with(pv_b=[value * 0.95 for value in series.data["pv"]])
+        second = extra_spec("pv_b", Role.PV, "Solar B")
+        base = specs_for()
+
+        orders = [
+            (*base, second),
+            (second, *base),
+            (*base[:3], second, *base[3:]),
+            tuple(reversed((*base, second))),
+        ]
+        request = to_request(series, specs=orders[0])
+        verdicts = {
+            (
+                analyse(replace(request, specs=order)).status,
+                (analyse(replace(request, specs=order)).finding or None)
+                and analyse(replace(request, specs=order)).finding.code,
+            )
+            for order in orders
+        }
+
+        assert len(verdicts) == 1, f"the order of the channels changed the answer: {verdicts}"
 
 
 class TestNoneHostility:
