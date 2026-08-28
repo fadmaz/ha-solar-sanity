@@ -249,9 +249,8 @@ class TestTwoRealChannelsAreNeverAPair:
         buckets = engine._apply_corrections(request.buckets, request.active_corrections)
 
         for key in ("pv", "pv_west"):
-            assert not engine._closes_without(request, specs, buckets, key), (
-                f"dropping the real array {key} was thought to settle the house"
-            )
+            closes, _ = engine._closes_without(request, specs, buckets, key)
+            assert not closes, f"dropping the real array {key} was thought to settle the house"
 
     def test_a_balanced_house_never_gets_that_far_anyway(self) -> None:
         """Belt and braces, and the reason the cost is acceptable: on a house
@@ -499,7 +498,7 @@ class TestNoOtherFaultIsMistakenForAPair:
         closing = [
             spec.key
             for spec in specs
-            if spec.role.in_balance and engine._closes_without(request, specs, buckets, spec.key)
+            if spec.role.in_balance and engine._closes_without(request, specs, buckets, spec.key)[0]
         ]
 
         assert not closing, f"{name} seed={seed}: {closing} looked interchangeable"
@@ -554,7 +553,7 @@ class TestTheBandWhereNothingSpeaks:
         request = to_request(series, specs=specs, declared=DECLARED)
         buckets = engine._apply_corrections(request.buckets, request.active_corrections)
         closing = [
-            key for key in ("pv", "pv_b") if engine._closes_without(request, specs, buckets, key)
+            key for key in ("pv", "pv_b") if engine._closes_without(request, specs, buckets, key)[0]
         ]
         return closing, engine.analyse(request)
 
@@ -669,7 +668,9 @@ class TestTheCounterfactualIsNotEnoughOnItsOwn:
         buckets = engine._apply_corrections(request.buckets, request.active_corrections)
 
         closing = [
-            key for key in ("pv", "pv_west") if engine._closes_without(request, specs, buckets, key)
+            key
+            for key in ("pv", "pv_west")
+            if engine._closes_without(request, specs, buckets, key)[0]
         ]
 
         assert closing == ["pv", "pv_west"], (
@@ -715,3 +716,57 @@ class TestAFigureWeCannotComputeIsNeverPrinted:
 
         assert not nan < TRACKING_MIN_CORRELATION, "the naive guard lets NaN past"
         assert not nan >= TRACKING_MIN_CORRELATION, "the guard used must reject it"
+
+
+class TestTheReportSaysWhatItKnows:
+    """A finding that reports nothing about itself is hard to trust or check.
+
+    The first version set none of these. Diagnostics recorded a fault that
+    explained 0% of the mismatch over 0 days with no evidence behind it, on a
+    house it had just proved was 38% out — and the report said the identity
+    held, which is the one thing it demonstrably does not.
+    """
+
+    @staticmethod
+    def _report():
+        clean = house.build(days=DAYS, seed=0)
+        return _analyse(
+            clean.copy_with(pv_b=list(clean.data["pv"])),
+            extra_spec("pv_b", Role.PV, "Solar B"),
+        )
+
+    def test_the_identity_is_reported_as_failing(self) -> None:
+        """Every other fault says so. This one is 38% out and said otherwise."""
+        assert self._report().identity_fails is True
+
+    def test_it_reports_how_much_of_the_mismatch_it_accounts_for(self) -> None:
+        report = self._report()
+
+        assert report.finding.explained_fraction > 0.9
+        assert report.finding.explained_fraction <= 1.0
+
+    def test_it_reports_the_window_it_was_judged_over(self) -> None:
+        """The counterfactual runs over the whole window rather than sampling,
+        so every day supports it — but zero was never the honest answer."""
+        report = self._report()
+
+        assert report.finding.days_evaluated == DAYS
+        assert report.finding.days_supporting == DAYS
+
+    def test_it_carries_numbers_a_user_can_check(self) -> None:
+        evidence = self._report().finding.evidence
+
+        assert evidence, "a finding the reader has to take on trust"
+        assert all(e.window_days == DAYS for e in evidence)
+        assert all(e.unit for e in evidence)
+
+    def test_the_explained_share_is_measured_and_not_assumed(self) -> None:
+        """A near-copy accounts for slightly less, and should say so."""
+        clean = house.build(days=DAYS, seed=0)
+        close = _analyse(
+            clean.copy_with(pv_b=[v * 0.96 for v in clean.data["pv"]]),
+            extra_spec("pv_b", Role.PV, "Solar B"),
+        )
+        exact = self._report()
+
+        assert close.finding.explained_fraction < exact.finding.explained_fraction

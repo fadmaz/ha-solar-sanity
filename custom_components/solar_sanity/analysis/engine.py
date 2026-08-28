@@ -15,7 +15,7 @@ from __future__ import annotations
 from . import faults, hypotheses, screen, topology
 from .faults import Code
 from .hypotheses import MIN_HOURS_FOR_SNAP, Hypothesis
-from .linalg import median, pearson
+from .linalg import median, pearson, sum_squares
 from .model import (
     AnalysisReport,
     AnalysisRequest,
@@ -252,6 +252,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         return AnalysisReport(
             status=Status.FAULT_FOUND,
             finding=pair,
+            identity_fails=True,
             topology=estimate,
             loss_model=loss,
             residual=summary,
@@ -674,8 +675,12 @@ def _closes_without(
     specs: tuple[ChannelSpec, ...],
     buckets: tuple[Bucket, ...],
     key: str,
-) -> bool:
+) -> tuple[bool, tuple[DayResidual, ...]]:
     """Whether dropping this one channel would settle the whole installation.
+
+    Returns the days it judged along with the verdict, because the caller needs
+    to say by how much and rebuilding them to find out would double the cost of
+    the most expensive thing this engine does.
 
     ``buckets`` arrive with the user's corrections already applied, because that
     is the installation as this engine sees it — asking the question against the
@@ -686,7 +691,8 @@ def _closes_without(
         without, specs, request.loss_model or LossModel(), request.utc_offset_hours
     )
     loss = topology.fit_loss_model(provisional, specs, request.loss_model)
-    return _would_be_ok(build_days(without, specs, loss, request.utc_offset_hours))
+    settled = build_days(without, specs, loss, request.utc_offset_hours)
+    return _would_be_ok(settled), settled
 
 
 def _tracking(buckets: tuple[Bucket, ...], first: str, second: str) -> float | None:
@@ -811,9 +817,12 @@ def _duplicate_pair(
     # a third, so none of them closes it. Silence is right there too — once the
     # user removes one, two remain and this speaks.
     interchangeable: list[str] = []
+    settled: dict[str, tuple[DayResidual, ...]] = {}
     for key in keys:
-        if _closes_without(request, specs, buckets, key):
+        closes, without = _closes_without(request, specs, buckets, key)
+        if closes:
             interchangeable.append(key)
+            settled[key] = without
             if len(interchangeable) > 2:
                 return None
     if len(interchangeable) != 2:
@@ -843,6 +852,32 @@ def _duplicate_pair(
     if any(spec is None for spec in names):
         return None
 
+    # How much of the mismatch this accounts for, measured the same way the
+    # scored hypotheses measure it, so the two are comparable in diagnostics.
+    # Left absent rather than defaulted when it cannot be computed: a finding
+    # that explains nothing and a finding whose share is unknown are different
+    # facts, and this project has a suite that says so.
+    baseline = sum_squares([value for day in days for value in day.dr])
+    explained = 0.0
+    evidence: tuple[Evidence, ...] = ()
+    if baseline > 0:
+        remaining = sum_squares([value for day in settled[first] for value in day.dr])
+        explained = 1.0 - (remaining / baseline)
+        evidence = (
+            Evidence(
+                label="Mismatch this pair accounts for",
+                value=explained * 100.0,
+                unit="%",
+                window_days=len(days),
+            ),
+            Evidence(
+                label="How closely the two track each other",
+                value=correlation * 100.0,
+                unit="%",
+                window_days=len(days),
+            ),
+        )
+
     headline, detail, fix = faults.render(
         Code.DUPLICATE_CHANNEL,
         name=names[0].friendly_name,
@@ -861,6 +896,12 @@ def _duplicate_pair(
         # the balance, so an override here would be this engine picking which of
         # the user's two sensors to silence on the strength of a coin toss.
         offered_correction=None,
+        evidence=evidence,
+        explained_fraction=explained,
+        # The counterfactual is evaluated over the whole window rather than
+        # sampled, so every day supports it or none does.
+        days_supporting=len(days),
+        days_evaluated=len(days),
     )
 
 
