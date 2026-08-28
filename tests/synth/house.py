@@ -173,6 +173,19 @@ def merge_to_net(series: Series) -> Series:
     return series.copy_with(grid_import=net, grid_export=[0.0] * series.hours)
 
 
+def net_meter_beside_export(series: Series) -> Series:
+    """A signed net meter in the import slot while export is *also* mapped.
+
+    The mistake worth reporting. Every exported hour is now counted twice: once
+    as a negative in the net channel, and again in the export channel it was
+    already being measured by.
+    """
+    net = [
+        series.data["grid_import"][i] - series.data["grid_export"][i] for i in range(series.hours)
+    ]
+    return series.copy_with(grid_import=net)
+
+
 def halve(series: Series, channel: str) -> Series:
     """One current clamp on a supply that has two live conductors."""
     return series.copy_with(**{channel: [v * 0.5 for v in series.data[channel]]})

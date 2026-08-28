@@ -210,12 +210,25 @@ class TestSignedBatteryChannel:
         # override would quietly discard half the channel.
         assert report.finding.offered_correction is None
 
-    def test_the_grid_case_still_offers_its_correction(self) -> None:
-        series = house.merge_to_net(house.build(days=10, seed=1))
+    def test_the_grid_case_offers_no_override_either(self) -> None:
+        """Both sides of the pair have to be unmapped by hand.
+
+        This used to offer a "reinterpret_as_net" correction. Nothing
+        implemented it: accepting it stored a correction, counted it in
+        `corrections_active`, and changed not one number — the residual stayed
+        exactly as it was and the same finding came back the next night.
+        """
+        series = house.net_meter_beside_export(house.build(days=10, seed=1))
         report = analyse(to_request(series, declared=DECLARED))
 
         assert report.finding.code == Code.SIGNED_NET_IN_DEDICATED
-        assert report.finding.offered_correction is not None
+        assert report.finding.offered_correction is None
+
+    def test_a_lone_net_meter_is_left_alone(self) -> None:
+        series = house.merge_to_net(house.build(days=10, seed=1))
+        report = analyse(to_request(series, declared=DECLARED))
+
+        assert report.finding is None
 
 
 class TestRolesNotScreenedForSign:

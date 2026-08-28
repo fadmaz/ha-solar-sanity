@@ -159,8 +159,10 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
         "measures net flow — positive one way, negative the other — rather than "
         "only one direction. Mapped as one-way, everything on the other side is "
         "being counted as a negative.",
-        "Map it to the net-grid slot instead, and leave the opposite slot empty. "
-        "Solar Sanity will split it correctly.",
+        "Map only one of the two. A single meter that swings both ways belongs "
+        "in the import slot with export left empty — Solar Sanity reads the "
+        "negatives as export. Mapping a second sensor alongside it counts the "
+        "same energy twice.",
     ),
     Code.SIGNED_NET_BATTERY: (
         "{name} measures both directions at once",

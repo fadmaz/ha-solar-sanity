@@ -290,6 +290,31 @@ _MAGNITUDE_ROLES: dict[Role, str] = {
     Role.BATTERY_DISCHARGE: Code.SIGNED_NET_BATTERY,
 }
 
+#: The slot on the other side of the same flow.
+_OPPOSITE_ROLE: dict[Role, Role] = {
+    Role.GRID_IMPORT: Role.GRID_EXPORT,
+    Role.GRID_EXPORT: Role.GRID_IMPORT,
+    Role.BATTERY_CHARGE: Role.BATTERY_DISCHARGE,
+    Role.BATTERY_DISCHARGE: Role.BATTERY_CHARGE,
+}
+
+#: Energy below which the opposite channel is not really carrying anything —
+#: an empty slot, or one whose sensor reports a flat zero.
+_OPPOSITE_MIN_WH = 100.0
+
+
+def _carries_energy(
+    buckets: tuple[Bucket, ...], specs: tuple[ChannelSpec, ...], role: Role
+) -> bool:
+    """Whether any channel in this role reports material energy in the window."""
+    for spec in specs:
+        if spec.role is not role:
+            continue
+        total = sum(abs(v) for b in buckets if (v := b.wh.get(spec.key)) is not None)
+        if total >= _OPPOSITE_MIN_WH:
+            return True
+    return False
+
 
 def screen_signed_net(
     buckets: tuple[Bucket, ...], specs: tuple[ChannelSpec, ...]
@@ -332,18 +357,33 @@ def screen_signed_net(
         if len(days_with_negatives) < NEGATIVE_MIN_DAYS:
             continue
 
+        # A signed sensor alone in its pair is not a fault. Import carries +1
+        # and export -1, so one channel reporting `import - export` contributes
+        # exactly what the two would have contributed separately: the identity
+        # closes to floating-point noise, and the setup screen tells the user to
+        # configure it this way in as many words. Firing here reported a fault
+        # on a house that had done exactly what it was asked, and pointed the
+        # fix at a slot that does not exist.
+        #
+        # What is a fault is the same energy arriving twice — a signed sensor in
+        # one slot while the other slot is also carrying. Then the negatives
+        # duplicate what the opposite channel already reports.
+        opposite = _OPPOSITE_ROLE.get(spec.role)
+        if opposite is None or not _carries_energy(tuple(ordered), specs, opposite):
+            continue
+
         hits.append(
             ScreenHit(
                 code=code,
                 channel_keys=(spec.key,),
                 confidence=Confidence.CERTAIN,
-                # Only the grid has a net slot to be reinterpreted into. For a
-                # battery the fix is a remap, and offering an internal override
-                # that silently drops half the channel would be worse than
-                # saying nothing.
-                correction_kind=(
-                    "reinterpret_as_net" if code == Code.SIGNED_NET_IN_DEDICATED else None
-                ),
+                # No internal override. The fix is to unmap one of the two
+                # sensors, which is a configuration change we must not make on
+                # somebody's behalf — and the override previously offered here,
+                # "reinterpret_as_net", was implemented nowhere: accepting it
+                # recorded a correction, counted it in `corrections_active`, and
+                # changed not one number.
+                correction_kind=None,
                 fields={"name": spec.friendly_name},
             )
         )

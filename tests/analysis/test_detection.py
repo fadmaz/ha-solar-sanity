@@ -56,14 +56,35 @@ class TestStageA:
         assert report.finding.code == Code.CUMULATIVE_IN_PERIODIC
         assert report.finding.channel_keys == ("pv",)
 
-    def test_net_meter_in_a_one_way_slot(self) -> None:
-        """A signed net sensor mapped to import-only goes negative on sunny days."""
-        series = house.merge_to_net(house.build(days=14, seed=7))
+    def test_a_net_meter_counted_twice(self) -> None:
+        """A signed net sensor in the import slot while export is mapped too.
+
+        Every exported hour is then counted twice — once as a negative in the
+        net channel, once in the export channel that already measured it.
+        """
+        series = house.net_meter_beside_export(house.build(days=14, seed=7))
         report = _analyse(series)
 
         assert report.finding is not None
         assert report.finding.code == Code.SIGNED_NET_IN_DEDICATED
         assert "net meter" in report.finding.headline
+
+    def test_a_net_meter_on_its_own_is_not_a_fault(self) -> None:
+        """The configuration the setup screen asks for, and it must be silent.
+
+        Import carries +1 in the identity and export -1, so a single channel
+        reporting ``import - export`` contributes exactly what the two would
+        have contributed apart. The balance closes to floating-point noise. The
+        field description for the import slot tells the user to map it this way
+        in as many words, and this used to report a fault on them for doing so
+        — then point the fix at a "net-grid slot" that has never existed.
+        """
+        series = house.merge_to_net(house.build(days=14, seed=7))
+        report = _analyse(series)
+
+        assert report.finding is None, (
+            f"a correctly mapped net meter was blamed: {report.finding}" if report.finding else ""
+        )
 
     def test_frozen_sensor_is_named_and_blocks_everything_else(self) -> None:
         """A dead channel makes every other statistic meaningless."""
