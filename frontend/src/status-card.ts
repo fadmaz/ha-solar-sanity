@@ -63,12 +63,46 @@ interface StatusCardConfig extends LovelaceCardConfig {
   show_evidence?: boolean;
 }
 
+/**
+ * The most the card may say before it stops being a glance.
+ *
+ * A fault's full explanation runs to 281 characters, and this card is pinned to
+ * three rows on purpose: one that reflows the whole dashboard the moment
+ * something goes wrong is worse than no card. But truncating an explanation
+ * mid-thought is its own small dishonesty, and the reader is left holding half
+ * a sentence about their own house.
+ *
+ * So the card takes the *lead* — the observation, which is the part that is
+ * about them — and the rest stays where it was always going to be read
+ * properly: the Repairs entry the "Show me" button opens, which carries the
+ * whole thing plus how to fix it.
+ */
+const LEAD_MAX_CHARS = 130;
+
+/** The first sentence, or a clean truncation if that sentence is itself long. */
+export function leadSentence(text: string, maxChars = LEAD_MAX_CHARS): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+
+  // A period followed by a space and a capital. Not a bare period: the copy is
+  // full of figures like "1234.5" and "8.83%", and splitting those mid-number
+  // would be worse than not splitting at all.
+  const boundary = trimmed.search(/\.\s+[A-Z]/);
+  const first = boundary === -1 ? trimmed : trimmed.slice(0, boundary + 1);
+  if (first.length <= maxChars) return first;
+
+  const cut = first.lastIndexOf(" ", maxChars);
+  return `${first.slice(0, cut === -1 ? maxChars : cut)}…`;
+}
+
 type Glyph = "ok" | "alert" | "waiting" | "unknown";
 
 interface Verdict {
   glyph: Glyph;
   headline: string;
   body: string;
+  /** The unabridged text, when `body` is a lead rather than the whole thing. */
+  full?: string;
   action?: { label: string; href: string };
 }
 
@@ -101,7 +135,10 @@ export function verdictFor(
       return {
         glyph: "alert",
         headline: attrs.headline ?? "Something does not add up",
-        body: attrs.detail ?? "",
+        body: leadSentence(attrs.detail ?? ""),
+        // The rest of the explanation, and what to do about it, is in the
+        // Repairs entry this opens. It is never only on the card.
+        full: attrs.detail ?? undefined,
         action: { label: "Show me", href: "/config/repairs" },
       };
 
@@ -263,7 +300,7 @@ export class SolarSanityCard extends LitElement {
             </svg>
             <h2 class="headline">${verdict.headline}</h2>
           </div>
-          <p class="body">${verdict.body}</p>
+          <p class="body" title=${verdict.full ?? nothing}>${verdict.body}</p>
           ${verdict.action
             ? html`<button
                 class="action"
@@ -330,6 +367,16 @@ export class SolarSanityCard extends LitElement {
       font-size: var(--ha-font-size-m, 0.875rem);
       line-height: 1.45;
       text-align: start;
+      /* Belt and braces. The lead sentence keeps the text short enough for
+         two lines at any reasonable width; this stops a narrow card or a
+         large font pushing the action button out of a box that cannot
+         grow. Backticks are avoided in here on purpose: this whole block
+         is a tagged template, and one would end it. */
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      overflow: hidden;
     }
     .action {
       align-self: start;
@@ -353,6 +400,8 @@ export class SolarSanityCard extends LitElement {
     /* The card knows its own box; the viewport is the wrong instrument. */
     @container (max-width: 260px) {
       .body {
+        /* Wins over the -webkit-box above; the headline and the button carry
+           the card at this width. */
         display: none;
       }
     }

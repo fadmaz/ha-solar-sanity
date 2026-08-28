@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { isStatusEntity, SolarSanityCard, verdictFor } from "./status-card";
+import { isStatusEntity, leadSentence, SolarSanityCard, verdictFor } from "./status-card";
 import type { HassEntity, HomeAssistant } from "./types/hass";
 
 const OPTIONS = ["ok", "insufficient_data", "not_checkable", "investigating", "fault_found"];
@@ -121,5 +121,111 @@ describe("the card", () => {
     card.hass = hass([ours("sensor.a"), ours("sensor.b", "fault_found")]);
 
     expect(await text()).toContain("does not add up");
+  });
+});
+
+
+describe("leadSentence", () => {
+  /**
+   * Verbatim from `analysis/faults.py`, rendered. These are the actual longest
+   * things this card is ever asked to show, and the reason it needed a lead at
+   * all: the card is pinned to three rows and cannot grow.
+   */
+  const REAL = {
+    signedNetBattery:
+      "Battery charging goes negative for part of most days. A sensor mapped to one battery direction should only ever report that direction; one that swings both ways is a net figure, so charging and discharging cancel each other out inside a single channel and neither is counted properly.",
+    unitScale:
+      "Grid import reports values around 1234.5 while the rest of your system sits near 1.2. That is the signature of a sensor publishing one unit while declaring another — watts labelled as kilowatts, or watt-hours labelled as kilowatt-hours.",
+    signInverted:
+      "When Battery charging reads a positive number, the energy is actually flowing the other way. Every hour it is counted on the wrong side of the sum, which is why the total misses by twice its size.",
+  };
+
+  it("takes the observation and leaves the explanation", () => {
+    expect(leadSentence(REAL.signedNetBattery)).toBe(
+      "Battery charging goes negative for part of most days.",
+    );
+  });
+
+  it("does not split a decimal number", () => {
+    // "1234.5" and "1.2" both sit inside the first sentence of a real fault.
+    expect(leadSentence(REAL.unitScale)).toContain("1234.5");
+    expect(leadSentence(REAL.unitScale)).toContain("1.2");
+  });
+
+  it("keeps every real fault within the space the card has", () => {
+    for (const [name, detail] of Object.entries(REAL)) {
+      expect(leadSentence(detail).length, name).toBeLessThanOrEqual(131);
+    }
+  });
+
+  it("truncates at a word, not mid-word, when a sentence is itself long", () => {
+    const long = `${"word ".repeat(40)}end.`;
+    const lead = leadSentence(long);
+
+    expect(lead.endsWith("…")).toBe(true);
+    expect(lead).not.toMatch(/wo…$/);
+  });
+
+  it("leaves a short body exactly as it was", () => {
+    expect(leadSentence("Everything reconciles across 30 days of data.")).toBe(
+      "Everything reconciles across 30 days of data.",
+    );
+  });
+
+  it("survives nothing at all", () => {
+    expect(leadSentence("")).toBe("");
+    expect(leadSentence("   ")).toBe("");
+  });
+
+  it("returns text with no sentence end unchanged when it fits", () => {
+    expect(leadSentence("no full stop here")).toBe("no full stop here");
+  });
+});
+
+describe("a fault on a card that cannot grow", () => {
+  const DETAIL =
+    "Battery charging goes negative for part of most days. A sensor mapped to one battery direction should only ever report that direction; one that swings both ways is a net figure, so charging and discharging cancel each other out inside a single channel and neither is counted properly.";
+
+  it("shows the lead, not the whole thing", () => {
+    const verdict = verdictFor("fault_found", {
+      headline: "Battery charging measures both directions at once",
+      detail: DETAIL,
+    });
+
+    expect(verdict.body).toBe("Battery charging goes negative for part of most days.");
+    expect(verdict.body.length).toBeLessThan(DETAIL.length);
+  });
+
+  it("never leaves the rest unreachable", () => {
+    // The abridged text is only acceptable because the whole of it is one
+    // click away, and carried on the element for a hover as well.
+    const verdict = verdictFor("fault_found", { detail: DETAIL });
+
+    expect(verdict.full).toBe(DETAIL);
+    expect(verdict.action?.href).toBe("/config/repairs");
+  });
+
+  it("puts the whole text on the element", async () => {
+    const card = document.createElement("solar-sanity-card") as SolarSanityCard;
+    card.setConfig({ type: "custom:solar-sanity-card" });
+    document.body.append(card);
+    card.hass = {
+      states: {
+        "sensor.solar_sanity_status": {
+          entity_id: "sensor.solar_sanity_status",
+          state: "fault_found",
+          attributes: {
+            options: ["ok", "insufficient_data", "not_checkable", "investigating", "fault_found"],
+            detail: DETAIL,
+          },
+          last_updated: "",
+        },
+      },
+      config: { state: "RUNNING" },
+      language: "en",
+    } as never;
+    await card.updateComplete;
+
+    expect(card.shadowRoot?.querySelector(".body")?.getAttribute("title")).toBe(DETAIL);
   });
 });

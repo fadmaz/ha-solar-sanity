@@ -191,8 +191,8 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
     Code.MISSING_STORAGE: (
         "Something is storing energy that nothing measures",
         "About {daily:,.1f} kWh a day builds up while you have surplus, then "
-        "drains again overnight — and it stops at the same level on every sunny "
-        "day. That is how a battery behaves. Nothing in your configuration "
+        "drains again overnight. It stops at the same level on every sunny day, "
+        "which is how a battery behaves, and nothing in your configuration "
         "measures it.",
         "Map your battery's charge and discharge sensors, or its single net "
         "power sensor if that is what your inverter exposes.",
@@ -246,8 +246,8 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
     ),
     Code.PV_MEASURED_DC: (
         "Your generation sensor reads before the inverter",
-        "About {loss:.0f}% of what {name} reports never reaches your house — "
-        "that is normal conversion loss, and it means the sensor measures the "
+        "About {loss:.0f}% of what {name} reports never reaches your house. "
+        "That is normal conversion loss, and it means the sensor measures the "
         "panels directly rather than the inverter's output. Accounted for; "
         "nothing to fix.",
         "",
@@ -255,7 +255,7 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
     Code.BATTERY_MEASURED_DC: (
         "Your battery sensors read on the DC side",
         "Charging and discharging both lose a few percent against the rest of "
-        "the system, which is what round-trip efficiency looks like when it is "
+        "the system. That is what round-trip efficiency looks like when it is "
         "measured before conversion. Accounted for; nothing to fix.",
         "",
     ),
@@ -268,7 +268,7 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
     Code.CORRECTION_NOW_HARMFUL: (
         "A correction on {name} is no longer needed",
         "The adjustment applied to {name} now makes the numbers worse rather "
-        "than better, which usually means the underlying sensor has been fixed.",
+        "than better. That usually means the underlying sensor has been fixed.",
         "Remove the correction in the Solar Sanity settings.",
     ),
     Code.UNEXPLAINED: (
