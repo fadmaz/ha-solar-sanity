@@ -503,3 +503,120 @@ class TestEveryOfferedCorrectionDoesSomething:
         assert self._handled() <= self._offered(), (
             f"handled but unreachable: {sorted(self._handled() - self._offered())}"
         )
+
+
+class TestNoFaultCodeIsWrittenAndNeverRaised:
+    """Copy without a producer is a promise the product does not keep.
+
+    Three of these have been found and fixed by hand, each after it had been
+    sitting there for some time: a correction kind offered to users and applied
+    nowhere, ``CORRECTION_NOW_HARMFUL`` with finished copy and a stub that
+    always returned nothing, and ``DUPLICATE_CHANNEL``, still open. Every one
+    looked correct in isolation — a code, and a well-written sentence to go with
+    it. Only the join was missing, and nothing was looking at the join.
+
+    So this is the mechanical version of that search. A code counts as raised if
+    anything outside ``faults.py`` names it, or if ``faults.py`` itself puts it
+    in a dispatch table rather than only in the copy.
+    """
+
+    #: Codes with copy and no producer. This list exists to shrink; adding to it
+    #: means writing a sentence for a user who will never be shown it.
+    #:
+    #: The first group are faults nothing detects yet. The second are *notes*
+    #: rather than faults — the engine folds DC-side measurement and standby
+    #: into the loss model rather than raising them, exactly as designed, but
+    #: the copy explaining that to the user is never reached either, so it is
+    #: told to nobody.
+    KNOWN_UNRAISED = {
+        "duplicate_channel_pair",
+        "channels_swapped",
+        "submeter_included_in_parent",
+        "missing_generation_channel",
+        "load_boundary_mismatch",
+        "stale_channel",
+        "unexplained_residual",
+        # Notes, not faults.
+        "pv_measured_dc",
+        "battery_measured_dc",
+        "unmetered_standby",
+    }
+
+    @staticmethod
+    def _codes() -> dict[str, str]:
+        """Every member of ``Code``, as ``value -> member name``."""
+        tree = ast.parse((ANALYSIS_DIR / "faults.py").read_text(encoding="utf-8"))
+        klass = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef) and node.name == "Code"
+        )
+        return {
+            stmt.value.value: stmt.targets[0].id
+            for stmt in klass.body
+            if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name)
+        }
+
+    @staticmethod
+    def _raised() -> set[str]:
+        """Member names something can actually reach."""
+        raised: set[str] = set()
+        for path, tree in _parsed():
+            copy_table = path.name == "faults.py"
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "Code"
+                ):
+                    continue
+                if copy_table and _inside_copy_table(tree, node):
+                    continue
+                raised.add(node.attr)
+        return raised
+
+    def test_every_code_has_something_that_raises_it(self) -> None:
+        codes = self._codes()
+        raised = self._raised()
+
+        unraised = {value for value, name in codes.items() if name not in raised}
+
+        assert unraised <= self.KNOWN_UNRAISED, (
+            f"new fault copy with nothing to produce it: {sorted(unraised - self.KNOWN_UNRAISED)}"
+        )
+
+    def test_the_known_list_does_not_outlive_its_entries(self) -> None:
+        """So fixing one and forgetting the list is caught, not carried."""
+        codes = self._codes()
+        raised = self._raised()
+        unraised = {value for value, name in codes.items() if name not in raised}
+
+        assert unraised >= self.KNOWN_UNRAISED, (
+            "listed as unraised but now raised — delete from KNOWN_UNRAISED: "
+            f"{sorted(self.KNOWN_UNRAISED - unraised)}"
+        )
+
+    def test_every_listed_code_exists(self) -> None:
+        """A renamed code must not leave a silent hole in the list."""
+        assert set(self._codes()) >= self.KNOWN_UNRAISED
+
+
+def _inside_copy_table(tree: ast.Module, target: ast.Attribute) -> bool:
+    """Whether this ``Code.X`` is a key in ``_TEMPLATES`` and nothing more.
+
+    ``_TEMPLATES`` carries a type annotation, so it is an ``AnnAssign`` and not
+    an ``Assign``. Matching only the latter quietly found no copy table at all
+    and passed everything — which is how a gate against dead code comes to be
+    dead itself.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign):
+            named = isinstance(node.target, ast.Name) and node.target.id == "_TEMPLATES"
+        elif isinstance(node, ast.Assign):
+            named = any(isinstance(t, ast.Name) and t.id == "_TEMPLATES" for t in node.targets)
+        else:
+            continue
+        if not named or not isinstance(node.value, ast.Dict):
+            continue
+        return any(key is target for key in node.value.keys)
+    return False
