@@ -431,16 +431,43 @@ class TestItStaysWithinBudget:
 
         assert calls == 0, f"a screened fault ran {calls} counterfactuals"
 
-    def test_a_dismissed_finding_costs_nothing_to_not_report(self) -> None:
-        """Suppression is checked before the counterfactuals, not after.
-
-        A user who has dismissed this has also declined to pay for the seven
-        loss-model refits behind it, every night, for as long as it stays
-        dismissed.
+    def test_a_fault_the_ordinary_path_can_name_never_pays_for_it(self) -> None:
+        """The saving that came out of running this after scoring rather than
+        before. A house with a clear single fault used to pay seven loss-model
+        refits to be told what the scored hypotheses already knew.
         """
+        _, calls = self._counting_analyse(
+            to_request(house.halve(house.build(days=30, seed=0), "load"), declared=DECLARED)
+        )
+
+        assert calls == 0
+
+    def test_dismissing_both_findings_costs_nothing(self) -> None:
+        """The counterfactual serves two findings now, so it takes both being
+        unwanted before it can be skipped — and then it is skipped entirely."""
         clean = house.build(days=30, seed=0)
         request = to_request(
-            clean.copy_with(pv_b=list(clean.data["pv"])),
+            clean.copy_with(pv_b=[v * 0.92 for v in clean.data["pv"]]),
+            specs=(*specs_for(), extra_spec("pv_b", Role.PV, "Solar B")),
+            declared=DECLARED,
+        )
+
+        report, calls = self._counting_analyse(
+            replace(
+                request,
+                suppressed_codes=(Code.DUPLICATE_CHANNEL, Code.DOUBLE_COUNTED),
+            )
+        )
+
+        assert calls == 0
+        assert report.finding is None
+
+    def test_dismissing_only_the_pair_still_leaves_the_other_question_open(self) -> None:
+        """And it has to be asked, because the answer might have been the one
+        that is still wanted."""
+        clean = house.build(days=30, seed=0)
+        request = to_request(
+            clean.copy_with(pv_b=[v * 0.92 for v in clean.data["pv"]]),
             specs=(*specs_for(), extra_spec("pv_b", Role.PV, "Solar B")),
             declared=DECLARED,
         )
@@ -449,8 +476,8 @@ class TestItStaysWithinBudget:
             replace(request, suppressed_codes=(Code.DUPLICATE_CHANNEL,))
         )
 
-        assert calls == 0
-        assert report.finding is None or report.finding.code != Code.DUPLICATE_CHANNEL
+        assert calls > 0
+        assert report.finding.code == Code.DOUBLE_COUNTED
 
     def test_the_worst_path_is_bounded_by_the_channel_count(self) -> None:
         """One refit per channel in the balance, and not one more.
@@ -534,26 +561,23 @@ class TestNoOtherFaultIsMistakenForAPair:
             assert report.finding.code != Code.DUPLICATE_CHANNEL, f"seed={seed}"
 
 
-class TestTheBandWhereNothingSpeaks:
-    """A known gap, pinned so it cannot widen unnoticed.
+class TestTheBandThatUsedToBeSilent:
+    """A near-copy, where the margin gate rejected the hypothesis that was right.
 
-    A copy that disagrees with its partner by 5 to 10 per cent is close enough that both
-    DOUBLE_COUNTED hypotheses score within 0.01 of each other, and the margin
-    gate wants 0.15. The correct hypothesis — the copy, correctly identified —
-    is top of the list and rejected anyway.
+    A second sensor reading a few per cent off its partner makes the two
+    DOUBLE_COUNTED hypotheses score within a hundredth of each other, and the
+    margin gate wants fifteen hundredths. So the correct hypothesis, naming the
+    correct channel, sat at the top of the list and was rejected for not being
+    sufficiently better than the wrong one — and between 0.90 and 0.95 of the
+    original the engine said nothing at all about a house out by a third.
 
-    Only one channel closes the house here, so this is not the pair finding: the
-    engine knows which one to blame and still says nothing. Fixing it means
-    letting the counterfactual break the tie the margin gate cannot, in the
-    attribution path rather than this one.
-
-    The test asserts today's behaviour rather than the behaviour we want, which
-    is unusual and deliberate: it fails the moment either edge of the band
-    moves, in either direction.
+    The counterfactual settles what the margin cannot: dropping that one channel
+    makes the installation add up, and dropping the other does not. That is not
+    a closer score, it is a different answer.
     """
 
     @staticmethod
-    def _closing(scale: float) -> tuple[list[str], object]:
+    def _closing(scale: float):
         from analysis import engine
 
         clean = house.build(days=DAYS, seed=0)
@@ -568,29 +592,130 @@ class TestTheBandWhereNothingSpeaks:
 
     @pytest.mark.parametrize("scale", [1.00, 0.98, 0.96])
     def test_a_close_copy_is_still_a_pair(self, scale: float) -> None:
+        """Both close, so neither can be singled out."""
         closing, report = self._closing(scale)
 
         assert closing == ["pv", "pv_b"]
         assert report.finding.code == Code.DUPLICATE_CHANNEL
 
+    @pytest.mark.parametrize("scale", [0.94, 0.92, 0.90])
+    def test_the_band_the_margin_gate_used_to_swallow(self, scale: float) -> None:
+        """One channel closes and it is the one the top hypothesis names, so the
+        tie the margin measured was never a real one."""
+        closing, report = self._closing(scale)
+
+        assert closing == ["pv_b"]
+        assert report.finding is not None, f"scale={scale}: still silent"
+        assert report.finding.code == Code.DOUBLE_COUNTED
+        assert report.finding.channel_keys == ("pv_b",)
+
     @pytest.mark.parametrize("scale", [0.88, 0.85, 0.80])
-    def test_a_distant_copy_is_named_on_its_own(self, scale: float) -> None:
+    def test_a_distant_copy_never_needed_the_help(self, scale: float) -> None:
+        """Far enough apart that the margin gate was satisfied on its own."""
         closing, report = self._closing(scale)
 
         assert closing == ["pv_b"]
         assert report.finding.code == Code.DOUBLE_COUNTED
 
-    @pytest.mark.parametrize("scale", [0.94, 0.92, 0.90])
-    def test_and_in_between_nothing_is_said(self, scale: float) -> None:
-        """The gap. One channel is singled out by the counterfactual and the
-        margin gate rejects the hypothesis that says so."""
-        closing, report = self._closing(scale)
+    def test_the_rescued_finding_carries_the_same_evidence_as_any_other(self) -> None:
+        """It goes through the ordinary rendering path, so the copy quotes real
+        figures rather than the rescue inventing any."""
+        _, report = self._closing(0.92)
+        finding = report.finding
 
-        assert closing == ["pv_b"], "the counterfactual knows which one it is"
-        assert report.finding is None, (
-            f"scale={scale} now names something — good news, and this test and "
-            f"the comment in _duplicate_pair both need updating"
+        assert finding.explained_fraction > 0.8
+        assert finding.days_evaluated == DAYS
+        assert "nan" not in finding.detail.lower()
+        assert "{" not in finding.detail
+
+
+class TestTheRescueIsNarrow:
+    """It may only speak where the evidence does.
+
+    Dropping a channel and watching the house settle says that channel
+    contributes nothing real — which is what double counting is. It says nothing
+    about a channel being backwards or half-read, so it may not rescue a
+    hypothesis making either of those claims, and it may not rescue one that
+    fails a gate the counterfactual cannot vouch for.
+    """
+
+    @staticmethod
+    def _fixture():
+        from analysis import engine
+
+        clean = house.build(days=DAYS, seed=0)
+        series = clean.copy_with(pv_b=[v * 0.92 for v in clean.data["pv"]])
+        specs = (*specs_for(), extra_spec("pv_b", Role.PV, "Solar B"))
+        request = to_request(series, specs=specs, declared=DECLARED)
+        buckets = engine._apply_corrections(request.buckets, request.active_corrections)
+        settled = engine._interchangeable_channels(request, specs, buckets)
+        return request, specs, settled
+
+    def test_the_case_it_exists_for_is_rescued(self) -> None:
+        from analysis import engine
+
+        request, specs, settled = self._fixture()
+
+        assert list(settled) == ["pv_b"]
+        assert engine._rescued_by_the_counterfactual(_top_hypothesis(request, specs), settled, DAYS)
+
+    def test_it_only_rescues_a_double_counting_claim(self) -> None:
+        from analysis import engine
+
+        request, specs, settled = self._fixture()
+        wrong = replace(_top_hypothesis(request, specs), code=Code.PARTIAL_COVERAGE)
+
+        assert not engine._rescued_by_the_counterfactual(wrong, settled, DAYS)
+
+    def test_it_will_not_rescue_a_hypothesis_failing_anything_else(self) -> None:
+        """Explaining almost none of the mismatch is not something a
+        counterfactual can vouch for."""
+        from analysis import engine
+
+        request, specs, settled = self._fixture()
+        weak = replace(_top_hypothesis(request, specs), explained=0.1)
+
+        assert not engine._rescued_by_the_counterfactual(weak, settled, DAYS)
+
+    def test_it_will_not_rescue_a_claim_about_a_different_channel(self) -> None:
+        from analysis import engine
+
+        request, specs, settled = self._fixture()
+        elsewhere = replace(_top_hypothesis(request, specs), channel_keys=("pv",))
+
+        assert not engine._rescued_by_the_counterfactual(elsewhere, settled, DAYS)
+
+    def test_it_will_not_rescue_when_two_channels_close(self) -> None:
+        """That is the pair finding's territory, and naming one of the two would
+        be the guess this whole design exists to avoid."""
+        from analysis import engine
+
+        clean = house.build(days=DAYS, seed=0)
+        series = clean.copy_with(pv_b=list(clean.data["pv"]))
+        specs = (*specs_for(), extra_spec("pv_b", Role.PV, "Solar B"))
+        request = to_request(series, specs=specs, declared=DECLARED)
+        buckets = engine._apply_corrections(request.buckets, request.active_corrections)
+        settled = engine._interchangeable_channels(request, specs, buckets)
+
+        assert len(settled) == 2
+        assert not engine._rescued_by_the_counterfactual(
+            _top_hypothesis(request, specs), settled, DAYS
         )
+
+
+def _top_hypothesis(request, specs):
+    """The hypothesis the engine would rank first for this request."""
+    from analysis import hypotheses, topology
+    from analysis.model import LossModel
+    from analysis.residual import build_days
+
+    provisional = build_days(
+        request.buckets, specs, request.loss_model or LossModel(), request.utc_offset_hours
+    )
+    loss = topology.fit_loss_model(provisional, specs, request.loss_model)
+    days = build_days(request.buckets, specs, loss, request.utc_offset_hours)
+    hypotheses.register_specs(specs)
+    return hypotheses.score(days, hypotheses.generate(days, specs, False))[0]
 
 
 class TestTheCounterfactualIsNotEnoughOnItsOwn:

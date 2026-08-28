@@ -23,10 +23,10 @@ from dataclasses import replace
 import pytest
 from analysis.engine import analyse
 from analysis.faults import Code
-from analysis.model import Answer, Correction, DeclaredTopology, Status
+from analysis.model import Answer, Correction, DeclaredTopology, Role, Status
 
 from tests.synth import house
-from tests.synth.adapt import to_request
+from tests.synth.adapt import extra_spec, specs_for, to_request
 
 DECLARED = DeclaredTopology(
     has_battery=Answer.YES,
@@ -49,7 +49,28 @@ def _broken(kind: str, seed: int) -> house.Series:
         return house.scale(clean, "grid_import", 0.001)
     if kind == "scale_down":
         return house.scale(clean, "grid_import", 1000.0)
+    if kind == "drop_channel":
+        # A second generation sensor a few per cent off the first. Not close
+        # enough to be indistinguishable from it, which would be the pair
+        # finding and would rightly offer nothing.
+        return clean.copy_with(pv_b=[value * 0.92 for value in clean.data["pv"]])
     raise AssertionError(f"unknown corruption {kind!r}")
+
+
+def _specs(kind: str):
+    """The channels this corruption needs mapped.
+
+    Only the double-count adds one: it is the presence of a *second* generation
+    sensor that makes the first redundant, and a channel nobody has mapped
+    cannot be counted twice.
+    """
+    if kind == "drop_channel":
+        return (*specs_for(), extra_spec("pv_b", Role.PV, "Solar B"))
+    return specs_for()
+
+
+def _request(kind: str, series: house.Series):
+    return to_request(series, specs=_specs(kind), declared=DECLARED)
 
 
 def _apply(series: house.Series, correction: Correction) -> house.Series:
@@ -73,19 +94,22 @@ def _apply(series: house.Series, correction: Correction) -> house.Series:
     return series.copy_with(**{key: values})
 
 
-#: Every corruption whose fault the engine both names *and* offers a remedy
-#: for. ``drop_channel`` is deliberately absent: the double-count it belongs
-#: to is not currently reachable, because two channels carrying the same
-#: energy produce two identically scored hypotheses and the engine will not
-#: guess which of the pair to blame. That is the right instinct and the wrong
-#: outcome — the code written to name the pair, DUPLICATE_CHANNEL, is emitted
-#: by nothing at all. Tracked separately; adding it here now would assert a
-#: remedy for a fault that never fires.
-@pytest.mark.parametrize("kind", ["sign_flip", "sign_flip_pv", "scale_up", "scale_down"])
+#: Every corruption whose fault the engine both names *and* offers a remedy for.
+#:
+#: ``drop_channel`` was absent for a long time and is not any more. Two channels
+#: carrying the *same* energy score identically, the engine will not guess which
+#: to blame, and it names the pair instead — correctly, and with no correction,
+#: because dropping either would close the balance. But a second sensor reading
+#: a few per cent off its partner is not that case: exactly one of them settles
+#: the house, the engine knows which, and the remedy it offers can be round
+#: tripped like any other.
+@pytest.mark.parametrize(
+    "kind", ["sign_flip", "sign_flip_pv", "scale_up", "scale_down", "drop_channel"]
+)
 @pytest.mark.parametrize("seed", range(3))
 class TestTheRemedyIsRight:
     def test_the_fault_is_found_and_a_correction_offered(self, kind: str, seed: int) -> None:
-        report = analyse(to_request(_broken(kind, seed), declared=DECLARED))
+        report = analyse(_request(kind, _broken(kind, seed)))
 
         assert report.finding is not None, f"{kind}/{seed}: nothing found to correct"
         assert report.finding.offered_correction is not None, (
@@ -96,10 +120,10 @@ class TestTheRemedyIsRight:
         """The whole point. A correction that does not restore the identity is
         not a correction, however confidently it was offered."""
         broken = _broken(kind, seed)
-        report = analyse(to_request(broken, declared=DECLARED))
+        report = analyse(_request(kind, broken))
         correction = report.finding.offered_correction
 
-        after = analyse(to_request(_apply(broken, correction), declared=DECLARED))
+        after = analyse(_request(kind, _apply(broken, correction)))
 
         assert after.finding is None, (
             f"{kind}/{seed}: applying the offered correction left {after.finding.code}"
@@ -114,10 +138,10 @@ class TestTheRemedyIsRight:
         lying to the user about what accepting the fix will do.
         """
         broken = _broken(kind, seed)
-        request = to_request(broken, declared=DECLARED)
+        request = _request(kind, broken)
         correction = analyse(request).finding.offered_correction
 
-        by_hand = analyse(to_request(_apply(broken, correction), declared=DECLARED))
+        by_hand = analyse(_request(kind, _apply(broken, correction)))
         by_engine = analyse(replace(request, active_corrections=(correction,)))
 
         assert by_engine.finding is None, (

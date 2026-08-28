@@ -551,6 +551,40 @@ def _spec_stub(key: str) -> ChannelSpec:
     return _SPEC_STUBS[key]
 
 
+#: Names for the gates, so a caller can ask *which* one closed rather than only
+#: whether one did. Nothing else in the engine should be re-deriving them.
+GATE_EXPLAINED = "explained"
+GATE_MARGIN = "margin"
+GATE_DAYS_SUPPORTING = "days_supporting"
+GATE_DAYS_EVALUATED = "days_evaluated"
+GATE_GAMMA_CV = "gamma_cv"
+
+
+def gate_failures(hyp: Hypothesis, days_evaluated: int) -> frozenset[str]:
+    """Which gates this hypothesis fails, by name.
+
+    Split out from ``passes_gates`` because one caller needs to know that the
+    *only* thing standing in the way is the margin — a hypothesis that is right
+    about everything except being distinguishable from its runner-up. Deriving
+    that anywhere else would mean a second copy of the gate logic, and a second
+    copy is how the two come to disagree.
+    """
+    failed: set[str] = set()
+    # Written the way round that rejects a NaN rather than waving it through: a
+    # single non-finite reading makes `explained` NaN, and `NaN < 0.8` is false.
+    if not hyp.explained >= MIN_EXPLAINED:
+        failed.add(GATE_EXPLAINED)
+    if not hyp.margin >= hyp.required_margin:
+        failed.add(GATE_MARGIN)
+    if hyp.days_supporting < MIN_DAYS_SUPPORTING:
+        failed.add(GATE_DAYS_SUPPORTING)
+    if days_evaluated < days_needed(hyp):
+        failed.add(GATE_DAYS_EVALUATED)
+    if hyp.gamma_cv is not None and not hyp.gamma_cv <= MAX_GAMMA_CV:
+        failed.add(GATE_GAMMA_CV)
+    return frozenset(failed)
+
+
 def passes_gates(hyp: Hypothesis, days_evaluated: int) -> bool:
     """All seven gates. Failing any one means silence.
 
@@ -561,22 +595,10 @@ def passes_gates(hyp: Hypothesis, days_evaluated: int) -> bool:
     and holding both to the shorter one would claim a floor the arithmetic
     cannot meet.
 
-    The float comparisons are written the way round that rejects a NaN rather
-    than waving it through. A single non-finite reading makes ``explained`` NaN,
-    and ``NaN < 0.8`` is false — so the gate passed, and the copy rendered
-    "accounts for nan% of the mismatch over 21 days" to a user. Every comparison
-    against a NaN is false, which means the safe form is always the one that has
-    to be satisfied to continue.
+    The NaN handling lives in ``gate_failures``, which this defers to so the two
+    cannot drift.
     """
-    if not hyp.explained >= MIN_EXPLAINED:
-        return False
-    if not hyp.margin >= hyp.required_margin:
-        return False
-    if hyp.days_supporting < MIN_DAYS_SUPPORTING:
-        return False
-    if days_evaluated < days_needed(hyp):
-        return False
-    return hyp.gamma_cv is None or hyp.gamma_cv <= MAX_GAMMA_CV
+    return not gate_failures(hyp, days_evaluated)
 
 
 def days_needed(hyp: Hypothesis) -> int:

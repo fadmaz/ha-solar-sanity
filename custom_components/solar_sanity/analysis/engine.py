@@ -247,32 +247,50 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     candidates = hypotheses.generate(days, specs, closure.state is Closure.OPEN)
     candidates = [c for c in candidates if c.code not in request.suppressed_codes]
 
-    # Before scoring, because scoring is what destroys this one. Two channels
-    # carrying the same flow each look entirely spurious on their own, so both
-    # snap to DOUBLE_COUNTED with identical evidence, the margin between first
-    # and second place is nothing, and the margin gate rejects them both. The
-    # engine then says nothing at all about a house whose numbers are out by a
-    # third — which is the right instinct, expressed as the wrong answer. It
-    # cannot tell which of the two to blame because there is nothing to tell:
-    # the answer is the pair.
-    # Suppression first: a user who has dismissed this has also declined to pay
-    # for the counterfactuals behind it.
-    if Code.DUPLICATE_CHANNEL not in request.suppressed_codes and (
-        pair := _duplicate_pair(request, specs, buckets, days, candidates)
-    ):
-        return AnalysisReport(
-            status=Status.FAULT_FOUND,
-            finding=pair,
-            identity_fails=True,
-            topology=estimate,
-            loss_model=loss,
-            residual=summary,
-            measurements=_measurements(days, specs),
+    scored = hypotheses.score(days, candidates)
+    best = scored[0] if scored else None
+
+    if best is None or not hypotheses.passes_gates(best, len(days)):
+        # Only now does the counterfactual earn what it costs. If the ordinary
+        # path has something to say, asking what would happen without each
+        # channel in turn cannot change the answer — and it is the most
+        # expensive thing this engine does, a loss-model refit per channel.
+        #
+        # Both things it can tell us live here because both are the same
+        # failure: two explanations that score alike, which the margin gate
+        # answers with silence. When two channels each settle the house neither
+        # can be singled out and the pair is the finding. When exactly one does,
+        # the tie was never real and the hypothesis naming it was right all
+        # along.
+        wants_pair = Code.DUPLICATE_CHANNEL not in request.suppressed_codes
+        settled = (
+            _interchangeable_channels(request, specs, buckets)
+            if wants_pair or _could_be_rescued(best, len(days))
+            else {}
         )
 
-    scored = hypotheses.score(days, candidates)
+        if wants_pair and (pair := _duplicate_pair(specs, buckets, days, candidates, settled)):
+            return AnalysisReport(
+                status=Status.FAULT_FOUND,
+                finding=pair,
+                identity_fails=True,
+                topology=estimate,
+                loss_model=loss,
+                residual=summary,
+                measurements=_measurements(days, specs),
+            )
 
-    if not scored or not hypotheses.passes_gates(scored[0], len(days)):
+        if _rescued_by_the_counterfactual(best, settled, len(days)):
+            return AnalysisReport(
+                status=Status.FAULT_FOUND,
+                identity_fails=True,
+                finding=_render_hypothesis(best, specs, days, summary),
+                deferred=tuple(h.code for h in scored[1:3]),
+                topology=estimate,
+                loss_model=loss,
+                residual=summary,
+            )
+
         restricted = _restricted_report(
             request,
             specs,
@@ -299,7 +317,6 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             residual=summary,
         )
 
-    best = scored[0]
     return AnalysisReport(
         status=Status.FAULT_FOUND,
         identity_fails=True,
@@ -766,12 +783,84 @@ def _residual_mismatch(
     return spread / typical
 
 
-def _duplicate_pair(
+def _interchangeable_channels(
     request: AnalysisRequest,
+    specs: tuple[ChannelSpec, ...],
+    buckets: tuple[Bucket, ...],
+) -> dict[str, tuple[DayResidual, ...]]:
+    """Channels that would settle the whole installation if dropped, and the
+    days each of those counterfactuals produced.
+
+    Every channel in the balance, not only the ones a gamma estimate accused.
+    Gamma needs a channel busy in at least a quarter of its hours, and battery
+    charging and grid export are not: they run a few hours a day, so the
+    upper-quartile cutoff comes out at zero and no estimate is ever produced.
+    Gating on that missed a duplicated charge or export sensor entirely — half
+    the roles a duplicate can land in.
+
+    Stops at three, because nothing above it uses more than two and each of
+    these costs a loss-model refit.
+    """
+    settled: dict[str, tuple[DayResidual, ...]] = {}
+    for key in sorted(spec.key for spec in specs if spec.role.in_balance):
+        closes, without = _closes_without(request, specs, buckets, key)
+        if closes:
+            settled[key] = without
+            if len(settled) > 2:
+                return {}
+    return settled
+
+
+def _rescued_by_the_counterfactual(
+    best: Hypothesis | None,
+    settled: dict[str, tuple[DayResidual, ...]],
+    days_evaluated: int,
+) -> bool:
+    """Whether the top hypothesis is right and only the margin disagrees.
+
+    A near-copy of a channel — a second sensor reading a few per cent off its
+    partner — makes the two DOUBLE_COUNTED hypotheses score within a hundredth
+    of each other, and the margin gate wants fifteen hundredths. So the correct
+    hypothesis, naming the correct channel, sat at the top of the list and was
+    rejected for being insufficiently better than the wrong one. Between 0.90
+    and 0.95 of the original the engine said nothing at all about a house that
+    was out by a third.
+
+    The counterfactual settles what the margin cannot. Dropping that one channel
+    makes the whole installation add up and dropping the other does not, which
+    is not a closer score — it is a different answer.
+
+    Deliberately narrow: only the margin may be outstanding, only one channel
+    may close, and it has to be the one the hypothesis names. Restricted to
+    DOUBLE_COUNTED because that is the claim the evidence makes — "dropping this
+    channel settles everything" means the channel contributes nothing real,
+    which is what double counting is. It says nothing about a channel being
+    backwards or half-read, so it may not rescue those.
+    """
+    return _could_be_rescued(best, days_evaluated) and (
+        best is not None and len(settled) == 1 and best.channel_keys == tuple(settled)
+    )
+
+
+def _could_be_rescued(best: Hypothesis | None, days_evaluated: int) -> bool:
+    """Everything `_rescued_by_the_counterfactual` asks that does not need the
+    counterfactual to have been run.
+
+    Separate so the scan can be skipped entirely. It is the most expensive thing
+    this engine does, and if the top hypothesis is not the kind this evidence
+    could speak to, running it answers a question nobody asked.
+    """
+    if best is None or best.code != Code.DOUBLE_COUNTED:
+        return False
+    return hypotheses.gate_failures(best, days_evaluated) == {hypotheses.GATE_MARGIN}
+
+
+def _duplicate_pair(
     specs: tuple[ChannelSpec, ...],
     buckets: tuple[Bucket, ...],
     days: tuple[DayResidual, ...],
     candidates: list[Hypothesis],
+    settled: dict[str, tuple[DayResidual, ...]],
 ) -> Finding | None:
     """Two channels that are one flow counted twice, named as a pair.
 
@@ -801,44 +890,15 @@ def _duplicate_pair(
     the pair is the entire story: if anything else were also wrong, removing one
     channel would not leave a clean house.
     """
-    # Every channel in the balance, not only the ones a gamma estimate accused.
-    # Gamma needs a channel busy in at least a quarter of its hours, and battery
-    # charging and grid export are not: they run a few hours a day, so the
-    # upper-quartile cutoff comes out at zero and no estimate is ever produced.
-    # Gating on that missed a duplicated charge or export sensor entirely — half
-    # the roles a duplicate can land in.
-    keys = sorted(spec.key for spec in specs if spec.role.in_balance)
-    if len(keys) < 2:
+    # Exactly two. One means the ordinary path has a channel to name — and now
+    # says so even when the margin gate would have stopped it, see
+    # `_rescued_by_the_counterfactual`. Three or more means no pair is the
+    # answer, and with three copies of one flow it is unreachable rather than
+    # merely unhandled: dropping any single one still leaves the house out by a
+    # third, so none of them closes it.
+    if len(settled) != 2:
         return None
-
-    # Exactly two, or nothing.
-    #
-    # One is not this finding: the pair is what makes it unnameable, and when a
-    # single channel is singled out there is something more specific to say. The
-    # ordinary path usually says it — but not always, and the gap is worth being
-    # honest about. Between roughly 0.90 and 0.95 of the original, a copy is
-    # near enough its partner that the two DOUBLE_COUNTED hypotheses score
-    # within 0.01 of each other, and the margin gate wants 0.15. The correct
-    # hypothesis is top of the list and rejected anyway, so the house stays at
-    # "investigating" with a 36% residual. Fixing that means letting the
-    # counterfactual break the tie the margin gate cannot, which is a change to
-    # the attribution path rather than to this one. Tracked separately.
-    #
-    # Three or more is unreachable rather than merely unhandled: with three
-    # copies of one flow, dropping any single one still leaves the house out by
-    # a third, so none of them closes it. Silence is right there too — once the
-    # user removes one, two remain and this speaks.
-    interchangeable: list[str] = []
-    settled: dict[str, tuple[DayResidual, ...]] = {}
-    for key in keys:
-        closes, without = _closes_without(request, specs, buckets, key)
-        if closes:
-            interchangeable.append(key)
-            settled[key] = without
-            if len(interchangeable) > 2:
-                return None
-    if len(interchangeable) != 2:
-        return None
+    interchangeable = list(settled)
 
     # Interchangeable, but is either of them actually the missing energy? Two
     # real strings pass the test above whenever something unrelated is about
