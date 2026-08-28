@@ -2,6 +2,41 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.9.0] - 2026-08-28
+
+### Added
+
+- **The forecast scoring engine**, as a pure module with no entity behind it
+  yet. It decides whether a bias figure has been earned, and its default answer
+  is no.
+
+  The residual check works because physics leaves an empty band — meter noise
+  stops around five percent, the smallest real fault starts around fifty.
+  **Forecast error has no such gap.** Model error, an omitted temperature
+  derate, light soiling and a little shading all sit in the same five-to-fifteen
+  percent range, so no forecast figure may ever be a fault, however large or
+  however steady. At most it is a note, and the copy has to say plainly that it
+  cannot tell a forecast running high apart from an array producing less than it
+  could.
+
+  The headline is the median of daily ratios, cross-checked against the
+  energy-weighted figure and abandoned if the two disagree by more than five
+  points. Then: twenty-one comparable days across at least twenty-eight, five in
+  each third of the window with the sign agreeing in all three, day-to-day
+  scatter under 0.60, no correlation between the gap and the size of the day, no
+  steady drift, and split-half agreement. Only then a magnitude gate — eight
+  percent to say a forecast runs low, twelve to say it runs high, because that
+  second claim is the one that sends somebody onto a roof.
+
+  Every threshold is multiplied by 1.6 when generation comes from hourly means,
+  matching what the residual bands already do with the same data. An
+  installation whose PV is mean-backed may therefore never qualify to state a
+  bias at all. That is the correct outcome, not a reason to lower a constant.
+
+  Reported to the nearest five points and never with a decimal, while the
+  unrounded figure stays in `measurements` — measuring and asserting are
+  different things.
+
 ## [0.8.2] - 2026-08-28
 
 ### Fixed
