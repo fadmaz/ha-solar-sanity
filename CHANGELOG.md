@@ -2,6 +2,34 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.10.0] - 2026-08-28
+
+### Added
+
+- **A dashboard, laid out for you.** Settings → Dashboards → Add dashboard →
+  **Solar Sanity** builds one with both cards already arranged. No YAML, nothing
+  to configure.
+- **A view strategy**, for a dashboard you already have:
+
+  ```yaml
+  views:
+    - strategy:
+        type: custom:solar-sanity
+  ```
+
+  The dashboard delegates to the view rather than repeating it, so there is one
+  place that decides what a Solar Sanity view contains.
+
+  The verdict goes first and the forecast under it — the forecast is what you
+  look at when the verdict is boring, and putting it first would bury the
+  answer. More than one installation gets one status card each, told which house
+  it belongs to, rather than letting a card choose silently between them.
+
+  With nothing installed the strategy still emits the status card, which already
+  says "Solar Sanity is not set up yet" and offers a button that goes and sets it
+  up. Writing that sentence a second time here would mean two copies to keep in
+  step.
+
 ## [0.9.1] - 2026-08-28
 
 ### Fixed

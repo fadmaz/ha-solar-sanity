@@ -89,6 +89,14 @@ export interface SolarSanityStatusAttributes {
 
 declare global {
   interface Window {
+    /** Dashboard strategies offered in the new-dashboard dialog. */
+    customStrategies?: Array<{
+      type: string;
+      strategyType: "dashboard";
+      name?: string;
+      description?: string;
+      documentationURL?: string;
+    }>;
     customCards?: Array<{
       type: string;
       name: string;
