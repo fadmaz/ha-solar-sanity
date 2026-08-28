@@ -29,8 +29,33 @@ import type {
 } from "./types/hass";
 
 const ENTITY_PREFIX = "sensor.";
-//: Anywhere in the id, not at the end: a second entry appends `_2`.
-const STATUS_SEGMENT = /_status(_\d+)?$/;
+
+/**
+ * The five verdicts, which together identify our status entity.
+ *
+ * Matching on the entity id does not work, in either direction. Requiring
+ * `solar_sanity` in it breaks the moment somebody renames the entity — and
+ * renaming is ordinary. Dropping that and matching `_status` instead picks up
+ * every other integration in the house: a camera, an alarm panel, a router.
+ *
+ * An enum sensor publishes its `options`, and no other integration publishes
+ * this particular list. It survives a rename, cannot collide, and needs no
+ * lookup — which is the whole reason this card takes no `entity:` option.
+ */
+const STATUSES = [
+  "ok",
+  "insufficient_data",
+  "not_checkable",
+  "investigating",
+  "fault_found",
+] as const;
+
+/** Whether a state object is one of ours. */
+export function isStatusEntity(entity: HassEntity | undefined): boolean {
+  const options = entity?.attributes?.options;
+  if (!Array.isArray(options)) return false;
+  return STATUSES.every((status) => options.includes(status));
+}
 
 interface StatusCardConfig extends LovelaceCardConfig {
   entity?: string;
@@ -174,16 +199,14 @@ export class SolarSanityCard extends LitElement {
   /**
    * Every status entity this integration owns, in a stable order.
    *
-   * Matched on the `_status` segment rather than on the end of the id: a second
-   * installation gets `_status_2`, and a user who renames the entity keeps the
-   * segment while losing the suffix. Both used to fall through to "Solar Sanity
-   * is not set up yet" — an assertion about the world that the card had no
-   * grounds for, on a product whose whole rule is not to overclaim.
+   * Identified by what the entity publishes rather than by what it is called.
+   * See `isStatusEntity`.
    */
   private get _candidates(): string[] {
     if (!this.hass) return [];
-    return Object.keys(this.hass.states)
-      .filter((id) => id.startsWith(ENTITY_PREFIX) && STATUS_SEGMENT.test(id))
+    const states = this.hass.states;
+    return Object.keys(states)
+      .filter((id) => id.startsWith(ENTITY_PREFIX) && isStatusEntity(states[id]))
       .sort();
   }
 
