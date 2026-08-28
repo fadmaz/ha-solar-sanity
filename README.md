@@ -33,9 +33,10 @@ solar + grid import + battery discharge  =  house load + grid export + battery c
 Solar Sanity checks that identity against your own sensors. When it does not
 close, it names the sensor and explains what is wrong with it:
 
-> **Grid export is being counted as import.**
-> The number is right; the sign is backwards. Over the last 6 days this
-> accounts for 94% of the energy that does not add up.
+> **Grid export is counted the wrong way round**
+> When Grid export reads a positive number, the energy is actually flowing the
+> other way. The magnitude is right; the direction is backwards. Over the last
+> 6 days this explains 94% of the energy that does not add up.
 
 Findings appear in Home Assistant's **Repairs** panel, with the real fix
 alongside — not buried in a log.
@@ -64,10 +65,11 @@ set:
 | Estimate | Means |
 | --- | --- |
 | ~0 | healthy |
-| +0.02 … +0.08 | measured before the inverter — normal conversion loss, not a fault |
+| +0.02 … +0.10 | measured before the inverter — normal conversion loss, not a fault |
 | +1 | the channel is counted twice |
 | +2 | the sign is backwards |
 | −1 | it sees half — one clamp on a two-conductor supply |
+| −2 | it sees a third — one clamp on a three-phase supply |
 | −999 | kW reported as W |
 
 Land at 1.43 and that is not a fault anyone can name, so nothing is said.
@@ -75,9 +77,10 @@ Possibly forever. That single rule is the main defence against false alarms.
 
 **A perfect zero would be wrong.** Real systems lose energy — inverters are
 95–97% efficient, batteries 85–95% round-trip — so expected loss is fitted per
-installation over about three weeks and subtracted before any test runs. What
-makes this workable is that the noise floor (4–5%) and the fault floor (50%+)
-do not overlap.
+installation and subtracted before any test runs. The conversion term needs a
+few days; the inverter's own idle draw is measured on hours with no generation
+and needs about two hundred of them. What makes any of this workable is that
+the noise floor (4–5%) and the fault floor (50%+) do not overlap.
 
 **Five honest answers, not two:** `ok`, `insufficient_data`, `not_checkable`,
 `investigating`, `fault_found`. Most systems are `insufficient_data` on day one
@@ -85,6 +88,37 @@ and plenty stay `investigating`. That is a real answer, not a failure.
 
 **One finding at a time.** An uncorrected fault dominates everything, so a list
 of five would mostly be echoes of the first.
+
+**Naming a sensor takes a week.** The per-channel estimate is taken from the
+largest hours only, so it needs about a hundred and sixty complete hours before
+it means anything. Structural findings — an unmeasured battery, an unmeasured
+export path — rest on shape rather than arithmetic and can be named from five
+days.
+
+---
+
+## When your balance cannot close
+
+Plenty of systems have no grid export sensor. Nothing measures what leaves the
+house, so the identity is short a term and can never close — and the energy that
+leaves looks exactly like generation that went missing.
+
+Solar Sanity says so, and then checks what it still can. In the hours with no
+generation nothing can be exported, so the arithmetic has to close, and that
+half of the day is verified normally:
+
+> Nothing measures what leaves your house, so only the 11 hours a day with no
+> generation could be checked — in those, nothing can be exported and the
+> arithmetic has to close. Your generation sensor is not covered by this,
+> because it only produces energy during the hours that cannot be checked.
+
+> About 4.9 kWh a day is unaccounted for while you have a surplus. With no
+> export meter that is most likely what you are sending to the grid, but it
+> cannot be told apart from a generation sensor reading high.
+
+Those are **notes**: never a fault, never a Repairs entry, never an alarm. They
+say what a verdict covers, because a clean status that quietly covered half the
+hours would be worse than no status.
 
 ---
 
@@ -96,18 +130,55 @@ statistics are recorded and the history is purged within about ten days. The
 Energy Dashboard also *sums* multiple forecast providers into one line, so you
 cannot compare them even while they are live.
 
-Solar Sanity records each provider's day-ahead forecast as it is issued, into
-Home Assistant's own statistics engine. It starts the moment you install it —
-this is the one thing in the product that cannot be backfilled later.
+Solar Sanity records each provider's forecast into Home Assistant's own
+statistics engine, as two separate series:
+
+| Series | What it holds |
+| --- | --- |
+| `solar_sanity:forecast_<provider>` | The latest revision of every hour. Right for display |
+| `solar_sanity:dayahead_<provider>` | Each hour as first seen at twelve hours of lead, and never revised |
+
+The split matters. A provider revises its forecast all day, so by the time an
+hour has passed the rolling series holds a figure issued *minutes* before it —
+a nowcast. Scoring that would flatter every provider equally and mean nothing.
+
+Capture starts the moment you install the integration. It is the one thing in
+the product that cannot be backfilled later.
+
+**Scoring is not shipped yet.** The engine that decides whether a bias figure has
+been earned is written and tested, and its default answer is no: twenty-one
+comparable days across at least twenty-eight, spread across the window, stable
+under a split-half test, uncorrelated with the size of the day and not drifting.
+Only then a magnitude gate — and every threshold widens by 1.6 when generation
+comes from hourly means, so some installations will never qualify. That is the
+correct outcome rather than a reason to lower a constant.
+
+---
+
+## Cards
+
+Both ship inside the integration and register themselves. One install, both
+halves, always version-matched.
+
+**Solar Sanity** — the verdict, in three rows that never grow. A healthy day
+says so in one line and shows nothing else; a fault shows the observation and a
+button to the Repairs entry carrying the rest. Every degraded state is a
+sentence rather than an empty box.
+
+**Solar Sanity: tomorrow's forecast** — what your provider said a day ahead
+about tomorrow, drawn from the immutable series above. Hand-rolled inline SVG,
+so it re-themes with no JavaScript and uses Home Assistant's own solar colour.
+
+Neither takes any configuration. Drop one on a dashboard and it finds its own
+data.
 
 ## Installation
 
 Via HACS as a custom repository (category: **Integration**), then restart and
 add **Solar Sanity** from Settings → Devices & Services.
 
-The dashboard card ships inside the integration and registers itself. One
-install, both halves, always version-matched. If your dashboards are in YAML
-mode you will need to add the resource by hand; the log says so explicitly.
+If your dashboards are in YAML mode you will need to add the card resource by
+hand; the log says so explicitly rather than failing silently.
 
 ## Setup
 
@@ -120,8 +191,10 @@ rather than making you guess.
 zero, and nothing is actually verified. Solar Sanity reports `not_checkable`
 rather than a reassuring lie.
 
-Mappings can be changed later without deleting the entry, so you keep your
-history.
+Everything chosen at setup can be changed afterwards through **Reconfigure**,
+including the topology answers and the forecast providers, without losing any
+history. Adding a second entry for the same house is caught rather than allowed
+to quietly corrupt a shared forecast archive.
 
 ## Corrections
 
@@ -141,29 +214,38 @@ They exist because one uncorrected fault masks every other one.
 
 | Entity | Meaning |
 | --- | --- |
-| `sensor.*_status` | One of the five outcomes. Never a percentage |
-| `binary_sensor.*_data_problem` | On when something needs attention |
+| `sensor.*_status` | One of the five outcomes. Never a percentage. Its attributes carry the reason, the finding, and any notes |
+| `binary_sensor.*_data_problem` | On when something needs attention — including when the identity provably fails but no single sensor can be blamed |
 | `sensor.*_expected_tomorrow` | Tomorrow's forecast — with a `state_class`, so it is actually recorded |
-| `sensor.*_data_completeness` | How much of the picture exists |
+| `sensor.*_data_completeness` | How much of the picture exists right now |
 | `sensor.*_corrections_active` | Diagnostic overrides in effect |
+| `sensor.*_live_residual` | Instantaneous imbalance, in watts. Only created when every channel reports a rate |
+
+**Download diagnostics** on the device page is the fastest way to understand a
+verdict. It carries per-channel coverage, both forecast archives, and every
+number that was measured and then not acted on — because "nothing could be
+established" is not a useful answer without them.
 
 ## Development
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests -q
-npm ci && npm run build
+python -m pytest tests -q       # 464 tests
+npm ci
+npm test                        # 86 card tests
+npm run build
 ```
 
 The analysis engine imports nothing from Home Assistant and is tested with
 plain pytest. That is enforced structurally rather than by convention — an AST
 check fails the build on any `homeassistant` import, on relative-parent
 imports, on currency language in user-facing copy, on `or 0` fallbacks, and on
-anything non-deterministic.
+anything non-deterministic. The currency check covers the cards and the
+translations too, not only the Python.
 
-The clean-house suite is a **gate, not a test**: thousands of healthy scenarios
-across topologies, noise levels and seasons, every one asserting silence. It
-must be green before any threshold anywhere is changed.
+The clean-house suite is a **gate, not a test**: 98 healthy scenarios across
+topologies, noise levels and seasons, every one asserting silence. It must be
+green before any threshold anywhere is changed.
 
 ## Brand assets
 
