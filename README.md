@@ -172,6 +172,24 @@ so it re-themes with no JavaScript and uses Home Assistant's own solar colour.
 Neither takes any configuration. Drop one on a dashboard and it finds its own
 data.
 
+### Laying them out for you
+
+**Settings → Dashboards → Add dashboard → Solar Sanity** builds one, already
+arranged. Nothing to configure and no YAML.
+
+For a view inside a dashboard you already have:
+
+```yaml
+views:
+  - strategy:
+      type: custom:solar-sanity
+```
+
+Either route emits the verdict first and the forecast under it — the forecast is
+what you look at when the verdict is boring. If you run more than one
+installation it emits one status card per house, each told which one it belongs
+to, rather than letting a card choose silently between them.
+
 ## Installation
 
 Via HACS as a custom repository (category: **Integration**), then restart and

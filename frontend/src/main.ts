@@ -8,6 +8,8 @@
 
 import { SolarSanityForecastCard } from "./forecast-card";
 import { SolarSanityCard } from "./status-card";
+// Imported for its registrations: two strategies and one dashboard entry.
+import "./strategy";
 import { VERSION } from "./types/hass";
 
 export { SolarSanityCard, SolarSanityForecastCard };
