@@ -51,6 +51,7 @@ SCREEN_FIELDS: dict[str, set[str]] = {
     Code.CUMULATIVE_IN_PERIODIC: {"name", "observed", "daily"},
     Code.SIGNED_NET_IN_DEDICATED: {"name"},
     Code.SIGNED_NET_BATTERY: {"name"},
+    Code.CHANNEL_NEVER_POSITIVE: {"name"},
     Code.SIMULTANEOUS_FLOW: {"name", "other", "count", "days"},
 }
 

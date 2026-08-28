@@ -39,6 +39,7 @@ class Code:
 
     # Stage B - inferred from the residual
     SIGN_INVERTED = "channel_sign_inverted"
+    CHANNEL_NEVER_POSITIVE = "channel_never_positive"
     DOUBLE_COUNTED = "double_counted_channel"
     SUBMETER_IN_PARENT = "submeter_included_in_parent"
     MISSING_STORAGE = "missing_storage_channel"
@@ -117,6 +118,16 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
         "Some inverters report battery power positive-on-charge and others "
         "positive-on-discharge. Check whether your integration offers a polarity "
         "option, or wrap the sensor in a template that negates it.",
+    ),
+    Code.CHANNEL_NEVER_POSITIVE: (
+        "{name} is reporting backwards",
+        "{name} has never once reported a positive figure. Every reading it has "
+        "made is negative, which for this measurement is not a direction it can "
+        "physically flow in — so the sensor is reporting the right magnitude "
+        "with the sign reversed.",
+        "Check whether the integration providing it offers a polarity option. "
+        "If not, wrap it in a template sensor that negates the value, or map "
+        "the opposite sensor if your inverter publishes one.",
     ),
     Code.DOUBLE_COUNTED: (
         "{name} is being counted twice",
