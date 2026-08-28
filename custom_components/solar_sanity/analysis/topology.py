@@ -287,10 +287,16 @@ def night_ledger(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) 
     add up at night" from a summary into an arithmetic anyone can check a line at
     a time.
 
-    Restricted to hours where every channel reported, so a channel that is
-    merely absent for part of the night cannot masquerade as one that is short.
-    ``night_ledger_hours`` says how many hours that was; if it is far below
-    ``night_hours``, the gap is coverage rather than physics.
+    ``night_ledger_hours`` is how many hours the totals cover, which is what
+    turns the gap into a rate — a shortfall of 35,100 Wh over 390 hours is 90 W
+    drawn continuously, and that is the number worth knowing.
+
+    It is *not* a coverage signal. An earlier version of this docstring said a
+    ledger count far below ``night_hours`` would mean coverage rather than
+    physics, and that cannot happen: ``build_days`` has already discarded any
+    bucket missing a balance channel, so by the time an hour reaches here every
+    channel has reported. The two counts are equal on every input, and advice to
+    compare them sent a reader looking for a signal that does not exist.
     """
     pv_keys = [spec.key for spec in specs if spec.role is Role.PV]
     if not pv_keys:
@@ -309,6 +315,12 @@ def night_ledger(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) 
                 continue
             amounts = {role: _role_total(bucket, keys_for[role]) for role in present}
             if any(amount is None for amount in amounts.values()):
+                # Unreachable as the engine calls this: `build_days` admits a
+                # bucket only when every balance channel reported, which is the
+                # same set iterated here. Kept because the totals below are only
+                # comparable across roles if they cover identical hours, and
+                # that is a contract with a caller rather than a property of
+                # this function. Loosening `bucket_is_valid` makes it live.
                 continue
             for role, amount in amounts.items():
                 totals[role] += amount  # type: ignore[operator]
@@ -327,18 +339,18 @@ def night_ledger(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) 
     def wh(value: float) -> float:
         return round(value, 3)
 
+    # `night_total_residual_wh` is the whole identity: summing the signed role
+    # totals gives the same figure reassociated, to the last bit on every input
+    # tried. This used to publish that sum a second time as
+    # `night_sources_minus_sinks_wh`, described as a check on the first — two
+    # names for one number, in a file whose reader is trying to work out which
+    # number to believe. One name.
     out: dict[str, float] = {
         "night_ledger_hours": float(hours),
         "night_total_residual_wh": wh(residual),
     }
     for role, amount in totals.items():
         out[f"night_total_{role.key}_wh"] = wh(amount)
-    # The identity itself, so the reader does not have to reassemble it from six
-    # numbers and the sign convention. It equals the residual total when every
-    # channel is telling the truth, and the size of the gap is the question.
-    out["night_sources_minus_sinks_wh"] = wh(
-        sum(role.sign * amount for role, amount in totals.items())
-    )
     return out
 
 
