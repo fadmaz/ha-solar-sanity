@@ -1095,7 +1095,22 @@ def _stale_corrections(request: AnalysisRequest, specs: tuple[ChannelSpec, ...])
     corrections = request.active_corrections
     if not corrections:
         return ()
-    if _would_be_ok(_days_for(request, specs, corrections)):
+
+    baseline = _days_for(request, specs, corrections)
+    if len(baseline) < MIN_ACTIONABLE_DAYS:
+        # This stage runs ahead of the day floor every other stage answers to,
+        # and that made it the most confident thing in the engine on the least
+        # evidence. `_would_be_ok` collapses to "one clean day" on a one-day
+        # window, so any coincidence that cancels the residual reads as proof
+        # the override is unwanted: a genuinely needed scale correction was
+        # called stale on a fifth of installations at one day, against a
+        # fiftieth at thirty.
+        #
+        # The cost is not a missed diagnosis. It is a warning card telling
+        # somebody to remove the one override keeping their generation channel
+        # honest, on a house this engine would call ok a week later.
+        return ()
+    if _would_be_ok(baseline):
         return ()
 
     stale: list[str] = []
