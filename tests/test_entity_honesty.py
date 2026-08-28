@@ -12,6 +12,7 @@ in CI and are absent when working on the pure engine locally.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -199,7 +200,11 @@ class TestOrphanedIssuesAreSweptUp:
 
         return SimpleNamespace(issues={k: _Issue(k, v) for k, v in issue_ids.items()})
 
-    async def _sweep(self, issues: dict[str, str], live: set[str]) -> list[str]:
+    def _sweep(self, issues: dict[str, str], live: set[str]) -> list[str]:
+        """Driven directly rather than through a plugin. The function never
+        awaits anything, so its coroutine-ness is incidental to what is being
+        tested, and depending on pytest-asyncio here would mean these tests only
+        run where it happens to be installed."""
         from custom_components.solar_sanity.repairs import async_sweep_orphans
 
         deleted: list[str] = []
@@ -213,16 +218,16 @@ class TestOrphanedIssuesAreSweptUp:
                 side_effect=lambda _hass, _domain, issue_id: deleted.append(issue_id),
             ),
         ):
-            await async_sweep_orphans(object(), live)
+            asyncio.run(async_sweep_orphans(object(), live))
         return sorted(deleted)
 
-    async def test_the_reference_installations_stranded_card_is_removed(self) -> None:
+    def test_the_reference_installations_stranded_card_is_removed(self) -> None:
         from custom_components.solar_sanity.const import DOMAIN
 
         gone = "01M0X6H534EZXNCW0X86RXE1D3"
         live = "01M115AWKC3N083Y1YANVMB7CZ"
 
-        deleted = await self._sweep(
+        deleted = self._sweep(
             {
                 f"signed_net_battery_slot_{gone}": DOMAIN,
                 f"signed_net_battery_slot_{live}": DOMAIN,
@@ -232,12 +237,12 @@ class TestOrphanedIssuesAreSweptUp:
 
         assert deleted == [f"signed_net_battery_slot_{gone}"]
 
-    async def test_a_live_entrys_cards_are_left_alone(self) -> None:
+    def test_a_live_entrys_cards_are_left_alone(self) -> None:
         from custom_components.solar_sanity.const import DOMAIN
 
         live = "01M115AWKC3N083Y1YANVMB7CZ"
 
-        deleted = await self._sweep(
+        deleted = self._sweep(
             {
                 f"signed_net_battery_slot_{live}": DOMAIN,
                 f"missing_export_channel_{live}": DOMAIN,
@@ -247,14 +252,14 @@ class TestOrphanedIssuesAreSweptUp:
 
         assert deleted == []
 
-    async def test_every_live_entry_counts_not_just_one(self) -> None:
+    def test_every_live_entry_counts_not_just_one(self) -> None:
         """Two installations, and sweeping for one must not take the other's."""
         from custom_components.solar_sanity.const import DOMAIN
 
         first = "01M115AWKC3N083Y1YANVMB7CZ"
         second = "01M113N4N74WEFYB26341HJ8W4"
 
-        deleted = await self._sweep(
+        deleted = self._sweep(
             {
                 f"signed_net_battery_slot_{first}": DOMAIN,
                 f"signed_net_battery_slot_{second}": DOMAIN,
@@ -264,20 +269,18 @@ class TestOrphanedIssuesAreSweptUp:
 
         assert deleted == []
 
-    async def test_another_integrations_cards_are_never_touched(self) -> None:
-        deleted = await self._sweep(
+    def test_another_integrations_cards_are_never_touched(self) -> None:
+        deleted = self._sweep(
             {"signed_net_battery_slot_01M0X6H534EZXNCW0X86RXE1D3": "other_domain"},
             {"01M115AWKC3N083Y1YANVMB7CZ"},
         )
 
         assert deleted == []
 
-    async def test_no_live_entries_sweeps_all_of_ours(self) -> None:
+    def test_no_live_entries_sweeps_all_of_ours(self) -> None:
         """The last installation removed, and its card outliving it."""
         from custom_components.solar_sanity.const import DOMAIN
 
-        deleted = await self._sweep(
-            {"signed_net_battery_slot_01M0X6H534EZXNCW0X86RXE1D3": DOMAIN}, set()
-        )
+        deleted = self._sweep({"signed_net_battery_slot_01M0X6H534EZXNCW0X86RXE1D3": DOMAIN}, set())
 
         assert deleted == ["signed_net_battery_slot_01M0X6H534EZXNCW0X86RXE1D3"]
