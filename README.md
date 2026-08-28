@@ -82,6 +82,18 @@ few days; the inverter's own idle draw is measured on hours with no generation
 and needs about two hundred of them. What makes any of this workable is that
 the noise floor (4–5%) and the fault floor (50%+) do not overlap.
 
+**And it says what it measured.** A healthy verdict used to be the word `ok` and
+nothing else, while the analysis behind it had found a continuous draw nothing
+in the house accounts for. If there is one you are told — *"About 35 W flows
+continuously that nothing measures"* — and the figures behind every verdict,
+including `ok`, are in the diagnostics download.
+
+The two conversion-loss notes are written and deliberately still silent. Their
+wording says a few per cent of loss is normal and there is nothing to fix, and
+the fit cannot yet tell that apart from a continuous draw you are paying for —
+so on the present evidence they would sometimes be reassurance about a real
+problem, and silence is the safer half of that trade.
+
 **Five honest answers, not two:** `ok`, `insufficient_data`, `not_checkable`,
 `investigating`, `fault_found`. Most systems are `insufficient_data` on day one
 and plenty stay `investigating`. That is a real answer, not a failure.
@@ -244,13 +256,21 @@ verdict. It carries per-channel coverage, both forecast archives, and every
 number that was measured and then not acted on — because "nothing could be
 established" is not a useful answer without them.
 
+When the numbers do not add up overnight it also carries a **night ledger**:
+every channel's total over one agreed set of hours, with the residual and the
+identity they should satisfy. The totals reconcile exactly, so a shortfall
+becomes a subtraction you can check a line at a time and the size of each line
+says which channel is carrying it. Hours where any channel was silent are left
+out — `night_ledger_hours` beside `night_hours` says whether that mattered — and
+a channel you have not configured gets no line rather than a zero.
+
 ## Development
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests -q       # 464 tests
+python -m pytest tests -q       # 887 tests
 npm ci
-npm test                        # 86 card tests
+npm test                        # 104 card tests
 npm run build
 ```
 
