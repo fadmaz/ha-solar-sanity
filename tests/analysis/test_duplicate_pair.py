@@ -870,3 +870,66 @@ class TestWeDoNotBlameASensorForOurOwnOverride:
 
         assert report.finding.code == Code.CHANNEL_NEVER_POSITIVE
         assert report.finding.channel_keys == ("pv",)
+
+
+class TestWhenTwoExplanationsFitItAsksRatherThanTells:
+    """The collision that survives both tests, and cannot be separated.
+
+    Two real battery banks beside a load CT on one of two live conductors line
+    up exactly. At night the battery carries the house, so what is missing is
+    half the load — and each bank contributes half the load. The residual *is*
+    one bank's output, hour for hour, to machine precision. The counterfactual
+    passes, the identity test passes, and the engine would tell somebody to
+    unmap a real battery.
+
+    It cannot be suppressed. A genuine duplicate of the load channel throws a
+    competing candidate of exactly the same shape, so refusing to speak whenever
+    a rival exists costs real findings and buys nothing. What the rival is good
+    for is knowing how much to claim.
+    """
+
+    @staticmethod
+    def _two_banks(share: float):
+        clean = house.build(days=DAYS, seed=0, kwp=9.0, battery_wh=15000.0)
+        series = clean.copy_with(
+            battery_charge=[v * 0.5 for v in clean.data["battery_charge"]],
+            bank_two_charge=[v * 0.5 for v in clean.data["battery_charge"]],
+            battery_discharge=[v * 0.5 for v in clean.data["battery_discharge"]],
+            bank_two_discharge=[v * 0.5 for v in clean.data["battery_discharge"]],
+            load=[v * share for v in clean.data["load"]],
+        )
+        return series, (
+            extra_spec("bank_two_charge", Role.BATTERY_CHARGE, "Battery 2 charging"),
+            extra_spec("bank_two_discharge", Role.BATTERY_DISCHARGE, "Battery 2 discharging"),
+        )
+
+    def test_it_is_a_question_and_not_an_instruction(self) -> None:
+        series, extra = self._two_banks(0.5)
+
+        report = _analyse(series, *extra)
+
+        assert report.finding is not None
+        assert report.finding.severity is Severity.QUESTION
+        assert report.finding.confidence is Confidence.PROBABLE
+
+    def test_an_unrivalled_pair_still_says_so_plainly(self) -> None:
+        """The downgrade has to cost the ordinary case nothing."""
+        clean = house.build(days=DAYS, seed=0)
+
+        report = _analyse(
+            clean.copy_with(pv_b=list(clean.data["pv"])),
+            extra_spec("pv_b", Role.PV, "Solar B"),
+        )
+
+        assert report.finding.severity is Severity.FAULT
+        assert report.finding.confidence is Confidence.HIGH
+
+    def test_the_collision_needs_the_clamp_to_read_exactly_half(self) -> None:
+        """Which is why it is a collision and not a general weakness."""
+        for share in (0.55, 0.6, 0.75, 1.0):
+            series, extra = self._two_banks(share)
+
+            report = _analyse(series, *extra)
+
+            if report.finding is not None:
+                assert report.finding.code != Code.DUPLICATE_CHANNEL, f"share={share}"

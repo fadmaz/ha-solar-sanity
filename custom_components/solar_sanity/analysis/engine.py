@@ -258,7 +258,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     # Suppression first: a user who has dismissed this has also declined to pay
     # for the counterfactuals behind it.
     if Code.DUPLICATE_CHANNEL not in request.suppressed_codes and (
-        pair := _duplicate_pair(request, specs, buckets, days)
+        pair := _duplicate_pair(request, specs, buckets, days, candidates)
     ):
         return AnalysisReport(
             status=Status.FAULT_FOUND,
@@ -771,6 +771,7 @@ def _duplicate_pair(
     specs: tuple[ChannelSpec, ...],
     buckets: tuple[Bucket, ...],
     days: tuple[DayResidual, ...],
+    candidates: list[Hypothesis],
 ) -> Finding | None:
     """Two channels that are one flow counted twice, named as a pair.
 
@@ -847,6 +848,26 @@ def _duplicate_pair(
         if mismatch is None or mismatch > DUPLICATE_MAX_MISMATCH:
             return None
 
+    # Is the pair the only thing that fits? When some channel outside it also
+    # snaps to a fault, two physical explanations are on the table.
+    #
+    # Not hypothetical. Two real battery banks beside a load CT on one of two
+    # live conductors collide exactly: at night the battery carries the house,
+    # so what is missing is half the load, and each bank contributes half the
+    # load. The residual *is* one bank's output, hour for hour, to machine
+    # precision. Both tests above pass and the engine would tell somebody to
+    # unmap a real battery — while the CT sits there reading half.
+    #
+    # There is no separating the two. A genuine duplicate of the load channel
+    # throws a competing candidate of exactly the same shape, so refusing to
+    # speak whenever one exists would cost real findings and buy nothing. What
+    # it is good for is knowing how much to claim: with a rival explanation in
+    # play this is a question rather than a conclusion, and the copy then says
+    # so instead of instructing somebody to unmap a sensor.
+    contested = any(
+        key not in set(interchangeable) for hyp in candidates for key in hyp.channel_keys
+    )
+
     first, second = interchangeable
     correlation = _tracking(buckets, first, second)
     if correlation is None:
@@ -901,6 +922,8 @@ def _duplicate_pair(
     # and readings we took — and asserting it at full confidence anyway is the
     # inconsistency the screen path was already fixed for.
     confidence = Confidence.HIGH
+    if contested:
+        confidence = confidence.downgrade()
     if any(spec.autodetected for spec in names if spec is not None):
         confidence = confidence.downgrade()
     if _rests_on_means(buckets, (first, second)):
