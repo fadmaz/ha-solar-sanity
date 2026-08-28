@@ -2,6 +2,38 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.8.0] - 2026-08-28
+
+### Added
+
+- **A forecast card.** It shows one thing: what a provider said a day ahead
+  about tomorrow, drawn from the archive that is written once per hour at real
+  lead time and never revised. Hand-rolled inline SVG, so it re-themes with no
+  JavaScript and the drawing is a string a test can read.
+
+  It needs no new server-side API. The archives are Home Assistant external
+  statistics, so `recorder/list_statistic_ids` and
+  `recorder/statistics_during_period` already reach them — both non-admin, both
+  stable, and the card reads only `state`.
+
+  Every degraded state is a sentence: no provider configured, a provider whose
+  record starts today, a recorder that will not answer. None of them is a red
+  box, and none of them claims an accuracy nothing has measured yet.
+- **Frontend tests.** There were none — the card's entire gate was that it
+  typechecked and fitted in 90 kB. Sixty-four now run in CI, including a
+  snapshot of the chart's `d` attribute, which is the drawing rather than the
+  markup around it. It caught an axis that stopped below the data on the first
+  run.
+
+### Not added
+
+- **A yield card**, deliberately. The guaranteed annual figure is a write-only
+  option nothing reads; the only honest normalisation is year-over-year and it
+  needs the year; and a headline built from the mean-derived generation data
+  would be the first unhedged number in the product taken from the one grade
+  the engine distrusts. Nothing is lost by waiting — long-term statistics are
+  never purged, so the history a real version needs is accumulating either way.
+
 ## [0.7.1] - 2026-08-28
 
 Groundwork for the forecast card, which turned up four defects that had nothing

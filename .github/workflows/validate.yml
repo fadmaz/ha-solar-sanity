@@ -90,5 +90,7 @@ jobs:
       - run: npm ci
       - name: Typecheck and build
         run: npm run build
+      - name: Card tests
+        run: npm test
       - name: Bundle size budget
         run: python scripts/check_size.py

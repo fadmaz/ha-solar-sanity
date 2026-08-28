@@ -14,7 +14,9 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "vitest/globals"]
   },
+  // Build configs are not typechecked here: they run in Node and would need
+  // @types/node for one import each, which is a dependency for nothing.
   "include": ["frontend/src"]
 }
