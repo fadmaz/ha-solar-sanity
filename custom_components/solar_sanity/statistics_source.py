@@ -226,13 +226,29 @@ def provider_label(product: str, title: str | None) -> str:
     return f"{product} — {title}"
 
 
+def _statistic_key(provider_key: str) -> str:
+    r"""A config entry id, in a form the recorder will accept.
+
+    The recorder validates external statistic ids against
+    ``[\da-z_]+:[\da-z_]+`` — lowercase only. Config entry ids created since
+    Home Assistant 2023.4 are ULIDs, which are uppercase, so passing one
+    through verbatim produced an id the recorder refuses. Capture then failed
+    on every write, and the only trace was a debug log nobody reads.
+
+    Lowercasing is safe as well as sufficient: a lowered ULID is still unique,
+    and on the older hex entry ids it changes nothing, so no archive already in
+    the field is orphaned by this.
+    """
+    return provider_key.lower()
+
+
 def forecast_statistic_id(provider_key: str) -> str:
     """External statistic id for one provider's *latest* forecast.
 
     External ids use a colon and have no entity behind them, which is exactly
     what we want: this is our data, not a sensor's history.
     """
-    return f"{FORECAST_STATISTIC_PREFIX}{provider_key}"
+    return f"{FORECAST_STATISTIC_PREFIX}{_statistic_key(provider_key)}"
 
 
 def dayahead_statistic_id(provider_key: str) -> str:
@@ -240,7 +256,7 @@ def dayahead_statistic_id(provider_key: str) -> str:
 
     Separate from the latest series on purpose. See FORECAST_DAYAHEAD_PREFIX.
     """
-    return f"{FORECAST_DAYAHEAD_PREFIX}{provider_key}"
+    return f"{FORECAST_DAYAHEAD_PREFIX}{_statistic_key(provider_key)}"
 
 
 def _metadata(statistic_id: str, name: str) -> Any:

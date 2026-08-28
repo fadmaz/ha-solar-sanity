@@ -26,7 +26,7 @@ from datetime import date, datetime, timedelta, tzinfo
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -621,6 +621,15 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             entry.entry_id
             for entry in self.hass.config_entries.async_entries(DOMAIN)
             if provider_entry_id in (entry.data.get(CONF_FORECAST_ENTRIES) or [])
+            # An entry that cannot run cannot write, and electing one hands the
+            # archive to nobody. `async_entries` includes disabled entries and
+            # ones that failed to set up, so without this a disabled
+            # installation whose id happens to sort first silences capture for
+            # every other one — permanently, and with nothing said.
+            and (
+                entry.entry_id == self.entry.entry_id
+                or (entry.disabled_by is None and entry.state is ConfigEntryState.LOADED)
+            )
         ]
         return bool(owners) and min(owners) == self.entry.entry_id
 

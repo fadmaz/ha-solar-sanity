@@ -111,7 +111,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
         try:
             await coordinator.async_capture_forecasts()
         except Exception:
-            _LOGGER.debug("forecast capture failed", exc_info=True)
+            # Warning, not debug. Forecast history is the one record that cannot
+            # be rebuilt afterwards, so a capture that quietly stops is the most
+            # expensive silent failure this integration has — and it stayed
+            # silent for a fortnight the first time it happened.
+            _LOGGER.warning("Forecast capture failed; history is not being kept", exc_info=True)
 
     entry.async_on_unload(async_track_time_interval(hass, _capture, FORECAST_CAPTURE_INTERVAL))
     await _capture(None)
