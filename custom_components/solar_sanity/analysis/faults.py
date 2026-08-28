@@ -39,6 +39,7 @@ class Code:
 
     # Stage B - inferred from the residual
     SIGN_INVERTED = "channel_sign_inverted"
+    CHANNEL_NEVER_POSITIVE = "channel_never_positive"
     DOUBLE_COUNTED = "double_counted_channel"
     SUBMETER_IN_PARENT = "submeter_included_in_parent"
     MISSING_STORAGE = "missing_storage_channel"
@@ -118,6 +119,16 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
         "positive-on-discharge. Check whether your integration offers a polarity "
         "option, or wrap the sensor in a template that negates it.",
     ),
+    Code.CHANNEL_NEVER_POSITIVE: (
+        "{name} is reporting backwards",
+        "{name} has never once reported a positive figure. Every reading it has "
+        "made is negative, which for this measurement is not a direction it can "
+        "physically flow in — so the sensor is reporting the right magnitude "
+        "with the sign reversed.",
+        "Check whether the integration providing it offers a polarity option. "
+        "If not, wrap it in a template sensor that negates the value, or map "
+        "the opposite sensor if your inverter publishes one.",
+    ),
     Code.DOUBLE_COUNTED: (
         "{name} is being counted twice",
         "The energy in {name} is already included in another sensor you have "
@@ -159,8 +170,10 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
         "measures net flow — positive one way, negative the other — rather than "
         "only one direction. Mapped as one-way, everything on the other side is "
         "being counted as a negative.",
-        "Map it to the net-grid slot instead, and leave the opposite slot empty. "
-        "Solar Sanity will split it correctly.",
+        "Map only one of the two. A single meter that swings both ways belongs "
+        "in the import slot with export left empty — Solar Sanity reads the "
+        "negatives as export. Mapping a second sensor alongside it counts the "
+        "same energy twice.",
     ),
     Code.SIGNED_NET_BATTERY: (
         "{name} measures both directions at once",

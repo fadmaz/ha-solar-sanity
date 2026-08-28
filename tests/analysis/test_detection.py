@@ -56,14 +56,35 @@ class TestStageA:
         assert report.finding.code == Code.CUMULATIVE_IN_PERIODIC
         assert report.finding.channel_keys == ("pv",)
 
-    def test_net_meter_in_a_one_way_slot(self) -> None:
-        """A signed net sensor mapped to import-only goes negative on sunny days."""
-        series = house.merge_to_net(house.build(days=14, seed=7))
+    def test_a_net_meter_counted_twice(self) -> None:
+        """A signed net sensor in the import slot while export is mapped too.
+
+        Every exported hour is then counted twice — once as a negative in the
+        net channel, once in the export channel that already measured it.
+        """
+        series = house.net_meter_beside_export(house.build(days=14, seed=7))
         report = _analyse(series)
 
         assert report.finding is not None
         assert report.finding.code == Code.SIGNED_NET_IN_DEDICATED
         assert "net meter" in report.finding.headline
+
+    def test_a_net_meter_on_its_own_is_not_a_fault(self) -> None:
+        """The configuration the setup screen asks for, and it must be silent.
+
+        Import carries +1 in the identity and export -1, so a single channel
+        reporting ``import - export`` contributes exactly what the two would
+        have contributed apart. The balance closes to floating-point noise. The
+        field description for the import slot tells the user to map it this way
+        in as many words, and this used to report a fault on them for doing so
+        — then point the fix at a "net-grid slot" that has never existed.
+        """
+        series = house.merge_to_net(house.build(days=14, seed=7))
+        report = _analyse(series)
+
+        assert report.finding is None, (
+            f"a correctly mapped net meter was blamed: {report.finding}" if report.finding else ""
+        )
 
     def test_frozen_sensor_is_named_and_blocks_everything_else(self) -> None:
         """A dead channel makes every other statistic meaningless."""
@@ -178,3 +199,76 @@ class TestOneFindingAtATime:
         assert report.finding is not None
         # deferred carries the rest so nothing is silently lost.
         assert isinstance(report.deferred, tuple)
+
+
+class TestAChannelThatOnlyEverPointsBackwards:
+    """The simplest fault there is, and it used to have no name.
+
+    A sensor wired or published backwards reads negative in every hour of its
+    life. Nothing in the engine said so. The grid and battery cases were caught
+    by the net-meter screen and told they "measure both directions at once" —
+    the wrong diagnosis, and one that carries no remedy. PV and load were not
+    caught at all: they sit outside the sign snap's bidirectional-only rule, so
+    a hundred-per-cent residual sat at "still investigating" indefinitely.
+
+    Battery charging is the case that needs a screen rather than an inference.
+    It runs a few hours a day, so more than three quarters of its hours are
+    zero, the upper-quartile cutoff its gamma estimate needs comes out at zero,
+    and no estimate is ever produced — for the commonest battery mis-mapping
+    there is.
+    """
+
+    CHANNELS = (
+        "pv",
+        "load",
+        "grid_import",
+        "grid_export",
+        "battery_charge",
+        "battery_discharge",
+    )
+
+    @pytest.mark.parametrize("channel", CHANNELS)
+    def test_it_is_named_and_offers_the_flip(self, channel: str) -> None:
+        report = _analyse(house.invert(house.build(days=21, seed=0), channel))
+
+        assert report.finding is not None, f"{channel}: an inverted channel went unnamed"
+        assert report.finding.code == Code.CHANNEL_NEVER_POSITIVE
+        assert report.finding.channel_keys == (channel,)
+        assert report.finding.offered_correction.kind == "sign_flip"
+
+    def test_a_net_meter_is_a_different_finding(self) -> None:
+        """It swings. That is the whole distinction, and it decides the copy."""
+        report = _analyse(house.net_meter_beside_export(house.build(days=21, seed=0)))
+
+        assert report.finding.code == Code.SIGNED_NET_IN_DEDICATED
+
+    def test_one_negative_hour_a_day_is_an_offset_not_an_inversion(self) -> None:
+        """A generation sensor that dips below zero overnight is not backwards."""
+        series = house.build(days=21, seed=0)
+        pv = list(series.data["pv"])
+        for hour in range(0, len(pv), 24):
+            pv[hour] = -40.0
+        report = _analyse(series.copy_with(pv=pv))
+
+        if report.finding is not None:
+            assert report.finding.code != Code.CHANNEL_NEVER_POSITIVE
+
+    def test_an_idle_channel_drifting_below_zero_is_left_alone(self) -> None:
+        """The false positive the size floor exists for.
+
+        An export slot on a house that never exports, reading thirty watt-hours
+        below zero once a day, is negative in every hour it reports — and it
+        accounts for 0.3% of the house against a real channel's 46% or more.
+        Telling that user their sensor is wired backwards would be the exact
+        failure this product cannot afford.
+        """
+        series = house.build(days=21, seed=0)
+        idle = [0.0] * series.hours
+        for hour in range(3, series.hours, 24):
+            idle[hour] = -30.0
+        # The export energy has to go somewhere or the identity breaks for an
+        # unrelated reason, so fold it into the house load.
+        load = [series.data["load"][i] + series.data["grid_export"][i] for i in range(series.hours)]
+        report = _analyse(series.copy_with(grid_export=idle, load=load))
+
+        assert report.finding is None, f"an idle sensor was blamed: {report.finding}"

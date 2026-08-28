@@ -402,3 +402,104 @@ class TestSampleFloorsAgree:
 
         source = inspect.getsource(engine._unattributed_reason)
         assert "MIN_HOURS_FOR_SNAP" in source
+
+
+class TestEveryOfferedCorrectionDoesSomething:
+    """A correction the user accepts must change a number.
+
+    ``screen.py`` offered ``reinterpret_as_net`` and ``_apply_corrections``
+    handled three kinds, none of them that one. Accepting it stored a
+    correction, counted it in ``corrections_active``, and left every bucket
+    exactly as it was — so the residual never moved and the same finding came
+    back the next night, with the user believing they had already fixed it.
+
+    That is the worst shape a defect can take in a product whose promise is
+    trustworthy numbers: a claim made in the interface that the code does not
+    keep. Nothing else in the suite could see it, because both halves were
+    individually correct.
+    """
+
+    @staticmethod
+    def _carriers() -> dict[str, int]:
+        """Dataclasses with a ``correction_kind`` field, and its position.
+
+        Derived rather than listed, because the snap table passes it
+        positionally and a hand-written index would rot the first time a field
+        is inserted before it.
+        """
+        found: dict[str, int] = {}
+        for _, tree in _parsed():
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                fields = [
+                    stmt.target.id
+                    for stmt in node.body
+                    if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+                ]
+                if "correction_kind" in fields:
+                    found[node.name] = fields.index("correction_kind")
+        return found
+
+    @classmethod
+    def _offered(cls) -> set[str]:
+        """Every correction kind any part of the engine can hand to a user."""
+        carriers = cls._carriers()
+        assert carriers, "no correction-carrying dataclass found — the walk has drifted"
+
+        kinds: set[str] = set()
+
+        def literals(node: ast.AST) -> None:
+            for const in ast.walk(node):
+                if isinstance(const, ast.Constant) and isinstance(const.value, str):
+                    kinds.add(const.value)
+
+        for _, tree in _parsed():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.keyword) and node.arg == "correction_kind":
+                    literals(node.value)
+                    continue
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                    continue
+                index = carriers.get(node.func.id)
+                if index is not None and len(node.args) > index:
+                    literals(node.args[index])
+        return kinds
+
+    @staticmethod
+    def _handled() -> set[str]:
+        """Every kind ``_apply_corrections`` compares against."""
+        source = (ANALYSIS_DIR / "engine.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        applier = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "_apply_corrections"
+        )
+        kinds: set[str] = set()
+        for node in ast.walk(applier):
+            if not isinstance(node, ast.Compare):
+                continue
+            left = node.left
+            if not (isinstance(left, ast.Attribute) and left.attr == "kind"):
+                continue
+            for comparator in node.comparators:
+                if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
+                    kinds.add(comparator.value)
+        return kinds
+
+    def test_the_offered_kinds_are_the_handled_kinds(self) -> None:
+        offered = self._offered()
+        handled = self._handled()
+
+        assert offered, "no correction kinds found — the AST walk has drifted"
+        assert handled, "no handled kinds found — _apply_corrections has been renamed"
+        assert offered <= handled, (
+            f"offered to users but applied nowhere: {sorted(offered - handled)}"
+        )
+
+    def test_nothing_is_applied_that_is_never_offered(self) -> None:
+        """The other direction: dead branches in the applier are dead code."""
+        assert self._handled() <= self._offered(), (
+            f"handled but unreachable: {sorted(self._handled() - self._offered())}"
+        )

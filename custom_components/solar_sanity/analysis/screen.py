@@ -290,6 +290,55 @@ _MAGNITUDE_ROLES: dict[Role, str] = {
     Role.BATTERY_DISCHARGE: Code.SIGNED_NET_BATTERY,
 }
 
+#: The slot on the other side of the same flow.
+_OPPOSITE_ROLE: dict[Role, Role] = {
+    Role.GRID_IMPORT: Role.GRID_EXPORT,
+    Role.GRID_EXPORT: Role.GRID_IMPORT,
+    Role.BATTERY_CHARGE: Role.BATTERY_DISCHARGE,
+    Role.BATTERY_DISCHARGE: Role.BATTERY_CHARGE,
+}
+
+#: Energy below which the opposite channel is not really carrying anything —
+#: an empty slot, or one whose sensor reports a flat zero.
+_OPPOSITE_MIN_WH = 100.0
+
+#: How much of the house a channel must account for before its sign is worth
+#: arguing about, as a share of the median in-balance channel.
+#:
+#: Relative rather than absolute, because a 3 kW flat and a 20 kW farm disagree
+#: about what a large number is. Measured across the synthetic house: real
+#: channels run from 46% to 235% of the median, while an idle export slot
+#: drifting thirty watt-hours below zero once a day comes to 0.30% — nine times
+#: below the smallest real channel, and sixteen times above the drift. Without
+#: it, that unused sensor was told it was wired backwards.
+_MATERIAL_SHARE = 0.05
+
+
+def _channel_total(buckets: tuple[Bucket, ...], key: str) -> float:
+    return sum(abs(v) for b in buckets if (v := b.wh.get(key)) is not None)
+
+
+def _is_material(buckets: tuple[Bucket, ...], specs: tuple[ChannelSpec, ...], key: str) -> bool:
+    """Whether this channel carries enough of the house to diagnose."""
+    totals = [_channel_total(buckets, spec.key) for spec in specs if spec.role.in_balance]
+    typical = median(totals)
+    if typical is None or typical <= 0:
+        return False
+    return _channel_total(buckets, key) >= typical * _MATERIAL_SHARE
+
+
+def _carries_energy(
+    buckets: tuple[Bucket, ...], specs: tuple[ChannelSpec, ...], role: Role
+) -> bool:
+    """Whether any channel in this role reports material energy in the window."""
+    for spec in specs:
+        if spec.role is not role:
+            continue
+        total = sum(abs(v) for b in buckets if (v := b.wh.get(spec.key)) is not None)
+        if total >= _OPPOSITE_MIN_WH:
+            return True
+    return False
+
 
 def screen_signed_net(
     buckets: tuple[Bucket, ...], specs: tuple[ChannelSpec, ...]
@@ -310,8 +359,13 @@ def screen_signed_net(
     ordered = sorted(buckets, key=lambda b: b.start_utc)
 
     for spec in specs:
+        # The net-meter question only applies to the four roles with an opposite
+        # slot; the backwards question applies to anything in the balance, PV
+        # and load included. Neither of those can physically flow in reverse,
+        # and an inverted one leaves a residual of a hundred per cent or more
+        # that nothing else in the engine will ever name.
         code = _MAGNITUDE_ROLES.get(spec.role)
-        if code is None:
+        if code is None and not spec.role.in_balance:
             continue
 
         values = _raw_series(tuple(ordered), spec.key)
@@ -320,6 +374,8 @@ def screen_signed_net(
 
         negatives = [v for v in values if v <= -NEGATIVE_MIN_WH]
         if not negatives:
+            continue
+        if not _is_material(tuple(ordered), specs, spec.key):
             continue
         if len(negatives) / len(values) < NEGATIVE_MIN_FRACTION:
             continue
@@ -332,18 +388,55 @@ def screen_signed_net(
         if len(days_with_negatives) < NEGATIVE_MIN_DAYS:
             continue
 
+        # Never positive at all is not a net meter — it is a sensor wired or
+        # published backwards, and that has a different name and a one-click
+        # fix. The inferential stage would reach the same verdict for most
+        # channels, but not for one that is idle in more than three quarters of
+        # hours: battery charging runs a few hours a day, so the upper-quartile
+        # cutoff its gamma estimate needs is zero and no estimate is ever
+        # produced. Without this the commonest battery mis-mapping there is
+        # would go unnamed for good.
+        if not any(v >= NEGATIVE_MIN_WH for v in values):
+            hits.append(
+                ScreenHit(
+                    code=Code.CHANNEL_NEVER_POSITIVE,
+                    channel_keys=(spec.key,),
+                    confidence=Confidence.CERTAIN,
+                    correction_kind="sign_flip",
+                    fields={"name": spec.friendly_name},
+                )
+            )
+            continue
+
+        # A signed sensor alone in its pair is not a fault. Import carries +1
+        # and export -1, so one channel reporting `import - export` contributes
+        # exactly what the two would have contributed separately: the identity
+        # closes to floating-point noise, and the setup screen tells the user to
+        # configure it this way in as many words. Firing here reported a fault
+        # on a house that had done exactly what it was asked, and pointed the
+        # fix at a slot that does not exist.
+        #
+        # What is a fault is the same energy arriving twice — a signed sensor in
+        # one slot while the other slot is also carrying. Then the negatives
+        # duplicate what the opposite channel already reports.
+        opposite = _OPPOSITE_ROLE.get(spec.role)
+        if code is None or opposite is None:
+            continue
+        if not _carries_energy(tuple(ordered), specs, opposite):
+            continue
+
         hits.append(
             ScreenHit(
                 code=code,
                 channel_keys=(spec.key,),
                 confidence=Confidence.CERTAIN,
-                # Only the grid has a net slot to be reinterpreted into. For a
-                # battery the fix is a remap, and offering an internal override
-                # that silently drops half the channel would be worse than
-                # saying nothing.
-                correction_kind=(
-                    "reinterpret_as_net" if code == Code.SIGNED_NET_IN_DEDICATED else None
-                ),
+                # No internal override. The fix is to unmap one of the two
+                # sensors, which is a configuration change we must not make on
+                # somebody's behalf — and the override previously offered here,
+                # "reinterpret_as_net", was implemented nowhere: accepting it
+                # recorded a correction, counted it in `corrections_active`, and
+                # changed not one number.
+                correction_kind=None,
                 fields={"name": spec.friendly_name},
             )
         )
