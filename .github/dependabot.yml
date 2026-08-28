@@ -1,0 +1,22 @@
+# The card ships as a bundle, so a devDependency never reaches a user — but it
+# does run in CI against this repository, and the first advisory here was a
+# critical remote-code-execution in the test DOM. Finding that by pushing a
+# release and reading the warning afterwards is not a process.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One pull request for the routine churn, so a real advisory is not
+      # buried under six dependency bumps nobody reads.
+      dev:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
