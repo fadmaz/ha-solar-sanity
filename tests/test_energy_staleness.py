@@ -28,14 +28,14 @@ import pytest
 
 pytest.importorskip("homeassistant", reason="Home Assistant not installed")
 
-from homeassistant.core import State  # noqa: E402
+from homeassistant.core import State
 
-from custom_components.solar_sanity.analysis.model import (  # noqa: E402
+from custom_components.solar_sanity.analysis.model import (
     ChannelSpec,
     Quality,
     Role,
 )
-from custom_components.solar_sanity.coordinator import SolarSanityCoordinator  # noqa: E402
+from custom_components.solar_sanity.coordinator import SolarSanityCoordinator
 
 SPEC = ChannelSpec(
     key="pv",
@@ -63,6 +63,7 @@ class _Stub:
     specs = (SPEC,)
     accumulate = SolarSanityCoordinator.accumulate
     _close_bucket = SolarSanityCoordinator._close_bucket
+    _counter_went_quiet = SolarSanityCoordinator._counter_went_quiet
     _settle_power = SolarSanityCoordinator._settle_power
     _integrate = SolarSanityCoordinator._integrate
 
@@ -177,9 +178,7 @@ class TestOrdinaryJitterIsStillCredited:
         assert hour.wh["pv"] is not None and hour.wh["pv"] > 0
 
     def test_an_uninterrupted_hour_is_untouched(self, monkeypatch) -> None:
-        readings = [
-            (when, 100.0 + index * 0.5) for index, when in enumerate(_every_five(NOON, 25))
-        ]
+        readings = [(when, 100.0 + index * 0.5) for index, when in enumerate(_every_five(NOON, 25))]
 
         stub = _run(monkeypatch, readings)
         hour = stub.bucket(NOON)
