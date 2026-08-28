@@ -583,3 +583,135 @@ class TestTheBandWhereNothingSpeaks:
             f"scale={scale} now names something — good news, and this test and "
             f"the comment in _duplicate_pair both need updating"
         )
+
+
+class TestTheCounterfactualIsNotEnoughOnItsOwn:
+    """The false positive an adversarial sweep found, at one house in sixty.
+
+    Dropping a channel and watching the balance close is a *magnitude* test. It
+    asks whether the house is out by about one of these, not whether the missing
+    energy *is* one of these — and two real strings both answer yes the moment
+    an unrelated fault happens to be roughly their size. The engine then told
+    somebody that half their real generation was a duplicate, and to unmap it.
+
+    Correlation does not help: two strings on one roof correlate at 1.00 by
+    construction. What separates them is whether the unexplained energy *is*
+    that channel, hour for hour — 0.000 to 0.056 for a duplicated sensor even
+    with ten per cent of independent error on both devices, and 0.459 to 0.543
+    for two real strings beside an unmetered draw.
+    """
+
+    @pytest.mark.parametrize("watts", [150.0, 300.0, 400.0, 600.0, 900.0])
+    @pytest.mark.parametrize("kwp", [3.0, 6.0, 9.0])
+    @pytest.mark.parametrize("seed", range(4))
+    def test_two_real_strings_beside_an_unmetered_draw(
+        self, seed: int, kwp: float, watts: float
+    ) -> None:
+        """seed=1, kwp=3.0, 300 W was the one that fired."""
+        series = house.add_standby(
+            house.two_aspects(
+                house.build(days=DAYS, seed=seed, kwp=kwp), "pv", "pv_west", tilt=0.0
+            ),
+            watts,
+        )
+
+        report = _analyse(series, extra_spec("pv_west", Role.PV, "Solar west"))
+
+        assert report.finding is None or report.finding.code != Code.DUPLICATE_CHANNEL, (
+            f"seed={seed} kwp={kwp} standby={watts}: half a real array was called a duplicate"
+        )
+
+    def test_enough_of_that_grid_actually_reaches_the_detector(self) -> None:
+        """Otherwise the sweep above is sixty assertions about an early return.
+
+        A small draw on a large array leaves the house clean, and a clean house
+        returns before attribution — so reachability is a property of the grid
+        rather than of each cell, and it is checked here once.
+        """
+        reached = 0
+        for seed in range(4):
+            for kwp in (3.0, 6.0, 9.0):
+                for watts in (150.0, 300.0, 400.0, 600.0, 900.0):
+                    series = house.add_standby(
+                        house.two_aspects(
+                            house.build(days=DAYS, seed=seed, kwp=kwp),
+                            "pv",
+                            "pv_west",
+                            tilt=0.0,
+                        ),
+                        watts,
+                    )
+                    _, ran = _counterfactuals(
+                        to_request(
+                            series,
+                            specs=(
+                                *specs_for(),
+                                extra_spec("pv_west", Role.PV, "Solar west"),
+                            ),
+                            declared=DECLARED,
+                        )
+                    )
+                    reached += ran > 0
+
+        assert reached >= 40, f"only {reached} of 60 reached the detector"
+
+    def test_the_counterfactual_alone_would_have_fired(self) -> None:
+        """Pins the mechanism, so nobody removes the identity test believing the
+        counterfactual already covered this."""
+        from analysis import engine
+
+        series = house.add_standby(
+            house.two_aspects(house.build(days=DAYS, seed=1, kwp=3.0), "pv", "pv_west", tilt=0.0),
+            300.0,
+        )
+        specs = (*specs_for(), extra_spec("pv_west", Role.PV, "Solar west"))
+        request = to_request(series, specs=specs, declared=DECLARED)
+        buckets = engine._apply_corrections(request.buckets, request.active_corrections)
+
+        closing = [
+            key for key in ("pv", "pv_west") if engine._closes_without(request, specs, buckets, key)
+        ]
+
+        assert closing == ["pv", "pv_west"], (
+            "both real strings still look interchangeable — the identity test is "
+            "the only thing standing between this house and a wrong answer"
+        )
+
+
+class TestAFigureWeCannotComputeIsNeverPrinted:
+    """``{correlation:.0%}`` of a NaN renders as ``nan%``.
+
+    Pearson returns NaN for non-finite input, and NaN slips through an ordinary
+    ``< threshold`` guard because every comparison against NaN is false. The
+    project already treats non-finite readings as a threat worth testing, so
+    this was reachable rather than theoretical.
+    """
+
+    def test_a_non_finite_reading_does_not_reach_the_copy(self) -> None:
+        from dataclasses import replace as _replace
+
+        clean = house.build(days=DAYS, seed=0)
+        series = clean.copy_with(pv_b=list(clean.data["pv"]))
+        request = to_request(
+            series,
+            specs=(*specs_for(), extra_spec("pv_b", Role.PV, "Solar B")),
+            declared=DECLARED,
+        )
+        buckets = list(request.buckets)
+        poisoned = buckets[60]
+        buckets[60] = _replace(poisoned, wh={**poisoned.wh, "pv_b": float("inf")})
+
+        report = analyse(_replace(request, buckets=tuple(buckets)))
+
+        if report.finding is not None:
+            assert "nan" not in report.finding.detail.lower()
+            assert "inf" not in report.finding.detail.lower()
+
+    def test_the_guard_is_written_so_that_nan_fails_it(self) -> None:
+        """A NaN must be rejected, not accepted by default."""
+        from analysis.engine import TRACKING_MIN_CORRELATION
+
+        nan = float("nan")
+
+        assert not nan < TRACKING_MIN_CORRELATION, "the naive guard lets NaN past"
+        assert not nan >= TRACKING_MIN_CORRELATION, "the guard used must reject it"

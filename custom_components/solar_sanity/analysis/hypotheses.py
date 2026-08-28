@@ -560,16 +560,23 @@ def passes_gates(hyp: Hypothesis, days_evaluated: int) -> bool:
     Holding both to the longer floor would delay the findings that are ready,
     and holding both to the shorter one would claim a floor the arithmetic
     cannot meet.
+
+    The float comparisons are written the way round that rejects a NaN rather
+    than waving it through. A single non-finite reading makes ``explained`` NaN,
+    and ``NaN < 0.8`` is false — so the gate passed, and the copy rendered
+    "accounts for nan% of the mismatch over 21 days" to a user. Every comparison
+    against a NaN is false, which means the safe form is always the one that has
+    to be satisfied to continue.
     """
-    if hyp.explained < MIN_EXPLAINED:
+    if not hyp.explained >= MIN_EXPLAINED:
         return False
-    if hyp.margin < hyp.required_margin:
+    if not hyp.margin >= hyp.required_margin:
         return False
     if hyp.days_supporting < MIN_DAYS_SUPPORTING:
         return False
     if days_evaluated < days_needed(hyp):
         return False
-    return not (hyp.gamma_cv is not None and hyp.gamma_cv > MAX_GAMMA_CV)
+    return hyp.gamma_cv is None or hyp.gamma_cv <= MAX_GAMMA_CV
 
 
 def days_needed(hyp: Hypothesis) -> int:

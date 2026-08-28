@@ -54,6 +54,22 @@ CLEAN_DAYS_FOR_OK = 6
 #: sensors track each other. Two channels that are asleep agree perfectly.
 TRACKING_MIN_WH = 25.0
 
+#: How far the unexplained energy may differ from a channel, as a share of that
+#: channel, before it stops being that channel.
+#:
+#: The counterfactual alone is a magnitude test: it asks whether the house is
+#: out by about one of these, not whether the missing energy *is* this one. Two
+#: real strings on a roof each answer yes the moment an unrelated fault happens
+#: to be roughly their size, and the engine then tells somebody to unmap half
+#: their generation. Found by an adversarial sweep at one house in sixty.
+#:
+#: Measured: a duplicated sensor sits at 0.000 with clean data and 0.056 with
+#: ten per cent of independent error on both devices, while two real strings
+#: beside an unmetered draw sit at 0.459 to 0.543. An order of magnitude apart,
+#: so this sits three times above the worst duplicate and half the best
+#: adversary.
+DUPLICATE_MAX_MISMATCH = 0.20
+
 #: How closely a pair must move together before we will say in so many words
 #: that they track each other.
 #:
@@ -231,7 +247,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     # Suppression first: a user who has dismissed this has also declined to pay
     # for the counterfactuals behind it.
     if Code.DUPLICATE_CHANNEL not in request.suppressed_codes and (
-        pair := _duplicate_pair(request, specs, buckets)
+        pair := _duplicate_pair(request, specs, buckets, days)
     ):
         return AnalysisReport(
             status=Status.FAULT_FOUND,
@@ -696,10 +712,48 @@ def _tracking(buckets: tuple[Bucket, ...], first: str, second: str) -> float | N
     return pearson(xs, ys)
 
 
+def _residual_mismatch(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...], key: str
+) -> float | None:
+    """How far the unexplained energy is from being exactly this channel.
+
+    Over the hours the channel is doing something, compare what is missing with
+    what the channel contributed: zero means the residual *is* this channel,
+    hour for hour, which is what a second sensor on the same flow produces.
+
+    Deliberately not the gamma estimate the snap table uses. Gamma needs a
+    channel busy in a quarter of its hours and battery charging and grid export
+    are not, so it cannot answer this question for half the roles a duplicate
+    can land in. This one only ever looks at the channel's own active hours, so
+    a channel that runs four hours a day is judged on those four.
+    """
+    spec = _spec_for(specs, key)
+    if spec is None:
+        return None
+
+    deviations: list[float] = []
+    magnitudes: list[float] = []
+    for day in days:
+        for bucket, dr in zip(day.buckets, day.dr, strict=True):
+            value = bucket.value(key)
+            if value is None or abs(value) < TRACKING_MIN_WH:
+                continue
+            contribution = spec.role.sign * value
+            deviations.append(abs(dr - contribution))
+            magnitudes.append(abs(contribution))
+
+    typical = median(magnitudes)
+    spread = median(deviations)
+    if typical is None or spread is None or typical <= 0:
+        return None
+    return spread / typical
+
+
 def _duplicate_pair(
     request: AnalysisRequest,
     specs: tuple[ChannelSpec, ...],
     buckets: tuple[Bucket, ...],
+    days: tuple[DayResidual, ...],
 ) -> Finding | None:
     """Two channels that are one flow counted twice, named as a pair.
 
@@ -712,14 +766,22 @@ def _duplicate_pair(
 
     What separates them is what happens if you take one away. Drop one of two
     real strings and half the generation goes missing; drop one of two sensors
-    watching the same string and the balance closes. So the question asked here
-    is the one that has an answer: would dropping this channel, on its own,
+    watching the same string and the balance closes. So the first question asked
+    here is the one that has an answer: would dropping this channel, on its own,
     settle the installation? When that is true of two channels, neither can be
-    singled out — they are interchangeable, and the pair is the finding.
+    singled out — they are interchangeable.
 
-    Being self-gating is the useful part. It fires only when the pair is the
-    entire story: if anything else were also wrong, removing one channel would
-    not leave a clean house, and this returns nothing.
+    That on its own is a magnitude test, and not enough. It asks whether the
+    house is out by about one of these, not whether the missing energy *is* one
+    of these — and two real strings both answer yes the moment an unrelated
+    fault happens to be roughly their size. So the second question is the
+    identity one: is the unexplained energy this channel, hour for hour? A
+    duplicated sensor answers to within a few per cent; two real strings beside
+    an unmetered draw are out by half.
+
+    Being self-gating is the useful part of the first test. It fires only when
+    the pair is the entire story: if anything else were also wrong, removing one
+    channel would not leave a clean house.
     """
     # Every channel in the balance, not only the ones a gamma estimate accused.
     # Gamma needs a channel busy in at least a quarter of its hours, and battery
@@ -757,13 +819,21 @@ def _duplicate_pair(
     if len(interchangeable) != 2:
         return None
 
+    # Interchangeable, but is either of them actually the missing energy? Two
+    # real strings pass the test above whenever something unrelated is about
+    # their size; neither passes this one.
+    for key in interchangeable:
+        mismatch = _residual_mismatch(days, specs, key)
+        if mismatch is None or mismatch > DUPLICATE_MAX_MISMATCH:
+            return None
+
     first, second = interchangeable
     correlation = _tracking(buckets, first, second)
     if correlation is None:
         # The copy quotes this figure, and there is no honest stand-in for a
         # number that could not be computed.
         return None
-    if correlation < TRACKING_MIN_CORRELATION:
+    if not correlation >= TRACKING_MIN_CORRELATION:
         # Interchangeable in the balance, but not moving together — so whatever
         # these two are, "the same energy measured twice" is not a description
         # of it, and that is the only sentence available here.
