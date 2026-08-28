@@ -57,6 +57,29 @@ def issue_ids_for_entry(hass: HomeAssistant, entry_id: str) -> set[str]:
     }
 
 
+async def async_sweep_orphans(hass: HomeAssistant, live_entry_ids: set[str]) -> None:
+    """Drop issues belonging to entries that are no longer configured.
+
+    ``async_remove_issues`` handles removal from now on, but it only runs at the
+    moment an entry goes, so anything orphaned before it shipped is stranded
+    forever: every other path here reconciles against *this* entry's id, and an
+    old issue does not carry it. The reference installation has one such card,
+    for an entry deleted half an hour before the removal hook existed, and
+    nothing would ever have cleared it.
+
+    Its Fix button leads to a flow that can only abort, so it is not merely
+    untidy — it is a repair the user cannot action and cannot dismiss for good.
+    """
+    stale = {
+        issue.issue_id
+        for issue in ir.async_get(hass).issues.values()
+        if issue.domain == DOMAIN
+        and not any(issue.issue_id.endswith(entry_id) for entry_id in live_entry_ids)
+    }
+    for issue_id in stale:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+
 async def async_remove_issues(hass: HomeAssistant, entry_id: str) -> None:
     """Drop every issue belonging to an entry that no longer exists.
 

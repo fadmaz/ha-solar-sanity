@@ -116,6 +116,11 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._buckets: list[Bucket] = []
         self._snapshots: list[LiveSnapshot] = []
         self._accumulator: dict[str, float] = {}
+        #: Whether any channel has ever produced a reading. Separates "nothing
+        #: has arrived yet" from "everything has stopped", which are the same
+        #: arithmetic and opposite facts.
+        self._has_ever_read = False
+
         #: Previous reading per energy channel, and when it was taken. The time
         #: matters as much as the value: a difference tells you energy flowed,
         #: never over how long.
@@ -842,6 +847,15 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
         This measures what its name says. It previously reported how many days
         of history existed, which is a different question with the same units.
+
+        ``None`` until something has been read at least once, and 0 only
+        afterwards. Home Assistant gives a custom integration no way to wait for
+        another one's entities, so at first refresh the inverter has usually not
+        published yet and every channel reads as absent. Reporting that as 0%
+        states that nothing works — which is indistinguishable, on the device
+        page, from the failure this sensor exists to report, at the moment a
+        user is most likely to be looking at it. "Unknown" is the honest answer
+        to a question nobody can answer yet.
         """
         specs = self.specs
         if not specs:
@@ -849,6 +863,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         readable = sum(
             1 for spec in specs if read_channel(self.hass.states.get(spec.entity_id))[0] is not None
         )
+        if readable:
+            self._has_ever_read = True
+        elif not self._has_ever_read:
+            return None
         return round(readable / len(specs) * 100)
 
     def coverage_snapshot(self) -> dict[str, Any]:

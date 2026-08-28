@@ -38,7 +38,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .coordinator import SolarSanityCoordinator, SolarSanityData
-from .repairs import async_remove_issues, async_sync_issues
+from .repairs import async_remove_issues, async_sweep_orphans, async_sync_issues
 from .statistics_source import (
     async_classify_statistics,
     async_hourly_series,
@@ -121,6 +121,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     await _capture(None)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Before this entry's own reconcile, and against every entry rather than
+    # just this one, so a card left by an installation that no longer exists
+    # goes even when the entry that replaced it is healthy.
+    await async_sweep_orphans(
+        hass, {other.entry_id for other in hass.config_entries.async_entries(DOMAIN)}
+    )
     await async_sync_issues(hass, entry, coordinator.report)
 
     entry.async_on_unload(
