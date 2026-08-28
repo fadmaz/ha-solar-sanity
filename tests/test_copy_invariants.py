@@ -132,7 +132,14 @@ class TestEveryFindingHasABody:
     ``/config/repairs``, on the promise that the explanation is waiting.
     """
 
-    ISSUE_KEYS = ("finding", "finding_question")
+    #: The keys a finding with no Fix button renders through. Home Assistant's
+    #: own schema makes `description` and `fix_flow` mutually exclusive, so
+    #: these are separate templates rather than one carrying both — hassfest
+    #: rejects the file outright otherwise.
+    ISSUE_KEYS = ("finding_unfixable", "finding_question_unfixable")
+
+    #: ...and the ones that do have a button, whose body lives in the flow.
+    FIXABLE_KEYS = ("finding", "finding_question")
 
     @staticmethod
     def _issues(path: pathlib.Path) -> dict:
@@ -204,3 +211,34 @@ class TestEveryFindingHasABody:
                 self._issues(COMPONENT / "strings.json")[key]["description"]
                 == self._issues(COMPONENT / "translations" / "en.json")[key]["description"]
             ), key
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            COMPONENT / "strings.json",
+            COMPONENT / "translations" / "en.json",
+        ],
+        ids=["strings", "en"],
+    )
+    def test_the_two_kinds_of_issue_stay_mutually_exclusive(self, path: pathlib.Path) -> None:
+        """hassfest rejects a key carrying both, and says so unhelpfully."""
+        issues = self._issues(path)
+
+        for key in self.FIXABLE_KEYS:
+            assert "description" not in issues[key], f"{key} would fail hassfest"
+        for key in self.ISSUE_KEYS:
+            assert "fix_flow" not in issues[key], f"{key} would fail hassfest"
+
+    def test_repairs_picks_a_key_that_exists(self) -> None:
+        """The four names in repairs.py have to be the four in the file."""
+        import json
+        import re
+
+        source = (COMPONENT / "repairs.py").read_text(encoding="utf-8")
+        stems = set(re.findall(r'"(finding(?:_question)?)"', source))
+        assert stems == {"finding", "finding_question"}, stems
+
+        issues = json.loads((COMPONENT / "strings.json").read_text(encoding="utf-8"))["issues"]
+        for stem in stems:
+            assert stem in issues
+            assert f"{stem}_unfixable" in issues

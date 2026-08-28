@@ -20,10 +20,24 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
-from .analysis.model import AnalysisReport, Severity
+from .analysis.model import AnalysisReport, Finding, Severity
 from .const import DOMAIN, EVENT_FINDING_CLEARED, EVENT_FINDING_RAISED, OPT_CORRECTIONS
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _translation_key(finding: Finding) -> str:
+    """Which of the four issue templates this finding renders through.
+
+    Home Assistant renders ``fix_flow`` for an issue with a Fix button and
+    ``description`` for one without, and its own schema refuses to let a single
+    key carry both. A finding that offers no correction — which is most of them,
+    because the honest answer is usually a configuration change rather than an
+    internal override — showed its headline and nothing else until it got a key
+    of its own.
+    """
+    stem = "finding_question" if finding.severity is Severity.QUESTION else "finding"
+    return stem if finding.offered_correction is not None else f"{stem}_unfixable"
 
 
 def issue_id_for(entry: ConfigEntry, code: str) -> str:
@@ -90,9 +104,12 @@ async def async_sync_issues(
             is_fixable=finding.offered_correction is not None,
             is_persistent=False,
             severity=ir.IssueSeverity.WARNING,
-            translation_key=(
-                "finding_question" if finding.severity is Severity.QUESTION else "finding"
-            ),
+            # Four keys, not two. Home Assistant renders `fix_flow` for an issue
+            # with a Fix button and `description` for one without, and its
+            # schema refuses to let a single key carry both — so a finding that
+            # offers no correction, which is most of them, showed its headline
+            # and nothing else until it got a key of its own.
+            translation_key=_translation_key(finding),
             translation_placeholders={
                 "headline": finding.headline,
                 "detail": finding.detail,
