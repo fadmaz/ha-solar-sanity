@@ -102,6 +102,7 @@
   "issues": {
     "finding": {
       "title": "{headline}",
+      "description": "{detail}\n\n**How to fix it properly**\n{source_fix}",
       "fix_flow": {
         "step": {
           "confirm": {
@@ -116,6 +117,7 @@
     },
     "finding_question": {
       "title": "{headline}",
+      "description": "{detail}\n\nThis one is a question rather than a conclusion — the pattern fits, but not well enough to assert it.\n\n**What to check**\n{source_fix}",
       "fix_flow": {
         "step": {
           "confirm": {

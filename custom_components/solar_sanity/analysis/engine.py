@@ -680,8 +680,13 @@ def _tracking(buckets: tuple[Bucket, ...], first: str, second: str) -> float | N
     xs: list[float] = []
     ys: list[float] = []
     for bucket in buckets:
-        a = bucket.wh.get(first)
-        b = bucket.wh.get(second)
+        # `value`, not `wh`, because this is a statistic and not a raw-stream
+        # screen. A single reset-suspect hour carrying a counter artefact is
+        # discarded everywhere else in the package; read raw it drags the
+        # correlation from 1.00 to -0.03, which is below the floor below, which
+        # silences a correct finding on a house that is out by a third.
+        a = bucket.value(first)
+        b = bucket.value(second)
         if a is None or b is None:
             continue
         if abs(a) < TRACKING_MIN_WH and abs(b) < TRACKING_MIN_WH:
@@ -726,11 +731,23 @@ def _duplicate_pair(
     if len(keys) < 2:
         return None
 
-    # Exactly two, or nothing. One means we know which channel to blame and the
-    # ordinary path names it. Three or more means no *pair* is the answer, and
-    # with three copies of one flow it is unreachable anyway — dropping any
-    # single one still leaves the house out by a third. Silence is right there:
-    # once the user removes one, two remain and this speaks.
+    # Exactly two, or nothing.
+    #
+    # One is not this finding: the pair is what makes it unnameable, and when a
+    # single channel is singled out there is something more specific to say. The
+    # ordinary path usually says it — but not always, and the gap is worth being
+    # honest about. Between roughly 0.90 and 0.95 of the original, a copy is
+    # near enough its partner that the two DOUBLE_COUNTED hypotheses score
+    # within 0.01 of each other, and the margin gate wants 0.15. The correct
+    # hypothesis is top of the list and rejected anyway, so the house stays at
+    # "investigating" with a 36% residual. Fixing that means letting the
+    # counterfactual break the tie the margin gate cannot, which is a change to
+    # the attribution path rather than to this one. Tracked separately.
+    #
+    # Three or more is unreachable rather than merely unhandled: with three
+    # copies of one flow, dropping any single one still leaves the house out by
+    # a third, so none of them closes it. Silence is right there too — once the
+    # user removes one, two remain and this speaks.
     interchangeable: list[str] = []
     for key in keys:
         if _closes_without(request, specs, buckets, key):

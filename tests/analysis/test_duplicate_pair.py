@@ -147,36 +147,127 @@ class TestAPairIsNamedRatherThanGuessedAt:
         assert "{correlation" not in report.finding.detail
 
 
-class TestTwoRealChannelsAreNeverAPair:
-    """The adversary, and the reason resemblance was not enough.
+def _counterfactuals(request) -> tuple[object, int]:
+    """Analyse, and count how many counterfactuals were actually run.
 
-    Every case here has two channels that a correlation-and-ratio test would
-    accept, and a balance that closes. Being silent on them is the whole product.
+    Every assertion about the detector *declining* has to be paired with this.
+    The first version of the adversarial tests below asserted silence on houses
+    that balance — and a house that balances returns at ``_would_be_ok`` long
+    before the detector is reached, so they ran zero counterfactuals and proved
+    nothing about it. Replacing the whole detector with the naive
+    correlation-and-ratio test this design exists to avoid still passed 88 of
+    those 89 tests.
     """
+    from analysis import engine
+
+    calls = 0
+    original = engine._closes_without
+
+    def counting(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    engine._closes_without = counting
+    try:
+        return engine.analyse(request), calls
+    finally:
+        engine._closes_without = original
+
+
+class TestTwoRealChannelsAreNeverAPair:
+    """The adversary, put in front of the detector rather than beside it.
+
+    Two real strings of equal size correlate at 1.0000 with a ratio of exactly
+    one — the same numbers a duplicated sensor gives. Asserting silence is only
+    worth something if the detector actually looked, so each of these puts the
+    house genuinely out by some *other* means and then checks that the pair is
+    still not blamed for it.
+    """
+
+    @staticmethod
+    def _out_of_balance(series: house.Series) -> house.Series:
+        """Something is wrong, and it is not the pair.
+
+        Unmetered standby, because no Stage-A screen catches it — a screen hit
+        would return before attribution and put the detector out of reach again.
+        """
+        return house.add_standby(series, 400.0)
 
     @pytest.mark.parametrize("tilt", [0.0, 0.2, 0.4, 0.6, 0.8])
     @pytest.mark.parametrize("seed", range(3))
     def test_two_aspects_of_one_array(self, tilt: float, seed: int) -> None:
         """``tilt=0.0`` is the hard one: two halves with byte-identical curves,
-        correlating at 1.0000 with a ratio of exactly one — the same numbers a
-        duplicated sensor produces."""
-        series = house.two_aspects(house.build(days=DAYS, seed=seed), "pv", "pv_west", tilt=tilt)
+        correlating at 1.0000 with a ratio of exactly one."""
+        series = self._out_of_balance(
+            house.two_aspects(house.build(days=DAYS, seed=seed), "pv", "pv_west", tilt=tilt)
+        )
 
-        report = _analyse(series, extra_spec("pv_west", Role.PV, "Solar west"))
+        report, ran = _counterfactuals(
+            to_request(
+                series,
+                specs=(*specs_for(), extra_spec("pv_west", Role.PV, "Solar west")),
+                declared=DECLARED,
+            )
+        )
 
-        assert report.finding is None, (
-            f"tilt={tilt} seed={seed}: two real arrays were called a duplicate — {report.finding}"
+        assert ran > 0, "the detector was never reached — this proves nothing"
+        assert report.finding is None or report.finding.code != Code.DUPLICATE_CHANNEL, (
+            f"tilt={tilt} seed={seed}: two real arrays were called a duplicate"
         )
 
     @pytest.mark.parametrize("share", [0.5, 0.6, 0.75, 0.9])
     def test_two_strings_of_different_sizes_on_one_aspect(self, share: float) -> None:
         clean = house.build(days=DAYS, seed=1)
         pv = clean.data["pv"]
-        series = clean.copy_with(pv=[v * share for v in pv], pv_b=[v * (1.0 - share) for v in pv])
+        series = self._out_of_balance(
+            clean.copy_with(pv=[v * share for v in pv], pv_b=[v * (1.0 - share) for v in pv])
+        )
 
-        report = _analyse(series, extra_spec("pv_b", Role.PV, "Solar B"))
+        report, ran = _counterfactuals(
+            to_request(
+                series,
+                specs=(*specs_for(), extra_spec("pv_b", Role.PV, "Solar B")),
+                declared=DECLARED,
+            )
+        )
 
-        assert report.finding is None, f"share={share}: {report.finding}"
+        assert ran > 0, "the detector was never reached — this proves nothing"
+        assert report.finding is None or report.finding.code != Code.DUPLICATE_CHANNEL
+
+    @pytest.mark.parametrize("tilt", [0.0, 0.4])
+    def test_neither_real_string_closes_the_house_on_its_own(self, tilt: float) -> None:
+        """The discriminator itself, asserted directly rather than through a
+        verdict that several other gates also influence."""
+        from analysis import engine
+
+        series = self._out_of_balance(
+            house.two_aspects(house.build(days=DAYS, seed=0), "pv", "pv_west", tilt=tilt)
+        )
+        specs = (*specs_for(), extra_spec("pv_west", Role.PV, "Solar west"))
+        request = to_request(series, specs=specs, declared=DECLARED)
+        buckets = engine._apply_corrections(request.buckets, request.active_corrections)
+
+        for key in ("pv", "pv_west"):
+            assert not engine._closes_without(request, specs, buckets, key), (
+                f"dropping the real array {key} was thought to settle the house"
+            )
+
+    def test_a_balanced_house_never_gets_that_far_anyway(self) -> None:
+        """Belt and braces, and the reason the cost is acceptable: on a house
+        that adds up, none of the above is even asked."""
+        series = house.two_aspects(house.build(days=DAYS, seed=0), "pv", "pv_west")
+
+        report, ran = _counterfactuals(
+            to_request(
+                series,
+                specs=(*specs_for(), extra_spec("pv_west", Role.PV, "Solar west")),
+                declared=DECLARED,
+            )
+        )
+
+        assert report.status is Status.OK
+        assert ran == 0
 
     def test_the_house_still_balances_in_every_adversarial_fixture(self) -> None:
         """Otherwise the silence above would prove nothing — a fixture that does
@@ -433,3 +524,62 @@ class TestNoOtherFaultIsMistakenForAPair:
 
         if report.finding is not None:
             assert report.finding.code != Code.DUPLICATE_CHANNEL, f"seed={seed}"
+
+
+class TestTheBandWhereNothingSpeaks:
+    """A known gap, pinned so it cannot widen unnoticed.
+
+    A copy that disagrees with its partner by 5 to 10 per cent is close enough that both
+    DOUBLE_COUNTED hypotheses score within 0.01 of each other, and the margin
+    gate wants 0.15. The correct hypothesis — the copy, correctly identified —
+    is top of the list and rejected anyway.
+
+    Only one channel closes the house here, so this is not the pair finding: the
+    engine knows which one to blame and still says nothing. Fixing it means
+    letting the counterfactual break the tie the margin gate cannot, in the
+    attribution path rather than this one.
+
+    The test asserts today's behaviour rather than the behaviour we want, which
+    is unusual and deliberate: it fails the moment either edge of the band
+    moves, in either direction.
+    """
+
+    @staticmethod
+    def _closing(scale: float) -> tuple[list[str], object]:
+        from analysis import engine
+
+        clean = house.build(days=DAYS, seed=0)
+        series = clean.copy_with(pv_b=[v * scale for v in clean.data["pv"]])
+        specs = (*specs_for(), extra_spec("pv_b", Role.PV, "Solar B"))
+        request = to_request(series, specs=specs, declared=DECLARED)
+        buckets = engine._apply_corrections(request.buckets, request.active_corrections)
+        closing = [
+            key for key in ("pv", "pv_b") if engine._closes_without(request, specs, buckets, key)
+        ]
+        return closing, engine.analyse(request)
+
+    @pytest.mark.parametrize("scale", [1.00, 0.98, 0.96])
+    def test_a_close_copy_is_still_a_pair(self, scale: float) -> None:
+        closing, report = self._closing(scale)
+
+        assert closing == ["pv", "pv_b"]
+        assert report.finding.code == Code.DUPLICATE_CHANNEL
+
+    @pytest.mark.parametrize("scale", [0.88, 0.85, 0.80])
+    def test_a_distant_copy_is_named_on_its_own(self, scale: float) -> None:
+        closing, report = self._closing(scale)
+
+        assert closing == ["pv_b"]
+        assert report.finding.code == Code.DOUBLE_COUNTED
+
+    @pytest.mark.parametrize("scale", [0.94, 0.92, 0.90])
+    def test_and_in_between_nothing_is_said(self, scale: float) -> None:
+        """The gap. One channel is singled out by the counterfactual and the
+        margin gate rejects the hypothesis that says so."""
+        closing, report = self._closing(scale)
+
+        assert closing == ["pv_b"], "the counterfactual knows which one it is"
+        assert report.finding is None, (
+            f"scale={scale} now names something — good news, and this test and "
+            f"the comment in _duplicate_pair both need updating"
+        )
