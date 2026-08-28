@@ -55,7 +55,7 @@ jobs:
           zip solar_sanity.zip -r ./ -x '*.pyc' -x '__pycache__/*'
           unzip -l solar_sanity.zip | tail -5
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
           files: |
