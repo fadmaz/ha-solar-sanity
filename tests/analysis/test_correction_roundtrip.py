@@ -165,3 +165,81 @@ class TestAnUnknownCorrectionCannotBeSilent:
 
         assert after.finding is not None, "an inert correction appeared to fix the house"
         assert after.finding.code == analyse(request).finding.code
+
+
+class TestACorrectionThatOutlivesItsFault:
+    """The failure mode the plan named and nothing implemented.
+
+    A correction is an override on our own copy of a channel, and the user is
+    told it is applied "so I can keep checking" — never that anything is fixed.
+    So the sensor usually does get fixed eventually: the integration ships a
+    polarity option, or a template gets rewritten. At that moment the override
+    stops compensating for a fault and becomes one.
+
+    Before this, the engine's answer to that was not a missed diagnosis but a
+    wrong instruction. It reported "Battery charging is reporting backwards"
+    about a sensor that was now correct, advised wrapping it in a template that
+    negates it, and offered a *second* sign flip on top of the one already
+    applied. `Code.CORRECTION_NOW_HARMFUL` had finished copy and was emitted by
+    nothing at all.
+    """
+
+    FLIP = Correction(channel_key="battery_charge", kind="sign_flip")
+
+    @staticmethod
+    def _with(series: house.Series, corrections: tuple[Correction, ...]):
+        request = to_request(series, declared=DECLARED)
+        return analyse(replace(request, active_corrections=corrections))
+
+    def test_while_the_sensor_is_still_broken_it_earns_its_keep(self) -> None:
+        broken = house.invert(house.build(days=DAYS, seed=0), "battery_charge")
+
+        report = self._with(broken, (self.FLIP,))
+
+        assert report.status is Status.OK
+        assert report.stale_corrections == ()
+
+    def test_once_the_sensor_is_fixed_the_correction_is_named(self) -> None:
+        report = self._with(house.build(days=DAYS, seed=0), (self.FLIP,))
+
+        assert report.stale_corrections == ("battery_charge",)
+        assert report.finding.code == Code.CORRECTION_NOW_HARMFUL
+        assert "Battery charging" in report.finding.headline
+
+    def test_it_does_not_offer_to_apply_yet_another_one(self) -> None:
+        """How this went wrong in the first place. The remedy is to remove."""
+        report = self._with(house.build(days=DAYS, seed=0), (self.FLIP,))
+
+        assert report.finding.offered_correction is None
+        assert "Remove" in report.finding.source_fix
+
+    def test_it_is_asked_before_anything_else_is_blamed(self) -> None:
+        """Every other stage reads buckets the correction has already altered.
+
+        The screens run first and return first, so a check placed after them
+        never ran at all — the engine reported the screen's verdict on data its
+        own override had corrupted.
+        """
+        report = self._with(house.build(days=DAYS, seed=0), (self.FLIP,))
+
+        assert report.finding.code != Code.CHANNEL_NEVER_POSITIVE
+
+    def test_an_unrelated_fault_is_not_blamed_on_the_correction(self) -> None:
+        """The guard. Removing it must actually be what makes things right.
+
+        Here the flip is doing its job and something else is genuinely wrong, so
+        dropping it would not make this house ok — and the real fault has to
+        survive to be reported.
+        """
+        broken = house.invert(house.build(days=DAYS, seed=0), "battery_charge")
+        also_stuck = house.freeze(broken, "load", from_hour=200)
+
+        report = self._with(also_stuck, (self.FLIP,))
+
+        assert report.stale_corrections == ()
+        assert report.finding.code == Code.STUCK
+
+    def test_no_corrections_means_nothing_to_say(self) -> None:
+        report = self._with(house.build(days=DAYS, seed=0), ())
+
+        assert report.stale_corrections == ()

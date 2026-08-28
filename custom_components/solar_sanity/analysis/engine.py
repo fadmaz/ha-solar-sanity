@@ -63,6 +63,23 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     hypotheses.register_specs(specs)
     buckets = _apply_corrections(request.buckets, request.active_corrections)
 
+    # --- Stage 0: is one of our own overrides the problem? --------------------
+    # Ahead of everything, because every stage below reads buckets this has
+    # already altered — the screens most of all, and they return first.
+    #
+    # Left out, the failure is not a missed diagnosis but a wrong instruction. A
+    # user whose battery sensor reads backwards accepts the flip offered here;
+    # months later their integration ships a polarity option and they fix it
+    # properly. The override now inverts a correct sensor, and this engine told
+    # them "Battery charging is reporting backwards", advised them to wrap it in
+    # a template that negates it, and offered a second flip on top of the first.
+    if stale := _stale_corrections(request, specs):
+        return AnalysisReport(
+            status=Status.FAULT_FOUND,
+            finding=_harmful_correction(stale[0], specs),
+            stale_corrections=stale,
+        )
+
     # --- Stage A: categorical facts, before anything statistical -------------
     hits = [
         hit
@@ -134,13 +151,12 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         )
 
     recent = days[-7:]
-    if sum(1 for d in recent if d.band == "clean") >= min(CLEAN_DAYS_FOR_OK, len(recent)):
+    if _would_be_ok(days):
         return AnalysisReport(
             status=Status.OK,
             topology=estimate,
             loss_model=loss,
             residual=summary,
-            stale_corrections=_stale_corrections(days, request.active_corrections),
         )
 
     # Before the bands get a say — for storage only, and for a reason. See
@@ -226,7 +242,6 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         topology=estimate,
         loss_model=loss,
         residual=summary,
-        stale_corrections=_stale_corrections(days, request.active_corrections),
     )
 
 
@@ -557,17 +572,84 @@ def _apply_corrections(
     return tuple(out)
 
 
-def _stale_corrections(
-    days: tuple[DayResidual, ...], corrections: tuple[Correction, ...]
-) -> tuple[str, ...]:
-    """Corrections that now make things worse — usually because the user fixed
-    the sensor at source and forgot to remove the override."""
-    if not corrections or not days:
+def _harmful_correction(channel_key: str, specs: tuple[ChannelSpec, ...]) -> Finding:
+    """Ask for an override to be taken off, naming the channel it sits on."""
+    spec = _spec_for(specs, channel_key)
+    name = spec.friendly_name if spec is not None else channel_key
+    headline, detail, fix = faults.render(Code.CORRECTION_NOW_HARMFUL, name=name)
+    return Finding(
+        code=Code.CORRECTION_NOW_HARMFUL,
+        severity=Severity.FAULT,
+        confidence=Confidence.HIGH,
+        channel_keys=(channel_key,),
+        headline=headline,
+        detail=detail,
+        source_fix=fix,
+        # Emphatically none. The remedy is to remove an override, and offering
+        # to apply another one here is how this went wrong in the first place.
+        offered_correction=None,
+    )
+
+
+def _would_be_ok(days: tuple[DayResidual, ...]) -> bool:
+    """The verdict test, in one place so nothing can disagree with it."""
+    recent = days[-7:]
+    if not recent:
+        return False
+    return sum(1 for d in recent if d.band == "clean") >= min(CLEAN_DAYS_FOR_OK, len(recent))
+
+
+def _days_for(
+    request: AnalysisRequest,
+    specs: tuple[ChannelSpec, ...],
+    corrections: tuple[Correction, ...],
+) -> tuple[DayResidual, ...]:
+    """What this installation would look like under exactly these corrections.
+
+    The loss model is refitted rather than reused, because it is *derived* from
+    the buckets: asking what the numbers would look like without an override
+    means asking with the loss those buckets imply, not with one fitted against
+    the override still in place.
+    """
+    buckets = _apply_corrections(request.buckets, corrections)
+    provisional = build_days(
+        buckets, specs, request.loss_model or LossModel(), request.utc_offset_hours
+    )
+    loss = topology.fit_loss_model(provisional, specs, request.loss_model)
+    return build_days(buckets, specs, loss, request.utc_offset_hours)
+
+
+def _stale_corrections(request: AnalysisRequest, specs: tuple[ChannelSpec, ...]) -> tuple[str, ...]:
+    """Corrections that now make things worse than they would be without them.
+
+    A correction is an override on our own copy of a channel, and the user is
+    told it is applied "so I can keep checking" — never that anything is fixed.
+    So the underlying sensor usually does get fixed eventually: the integration
+    ships a polarity option, or a template gets rewritten. At that moment our
+    override stops compensating for a fault and becomes one, inverting a sensor
+    that is now correct. Nothing else would ever notice. The residual simply
+    goes wrong again and stays wrong, and the user has our own past advice on
+    file saying they already dealt with it.
+
+    The test is the verdict itself rather than a threshold invented for the
+    occasion: a correction is stale when dropping it would make this
+    installation ``ok`` and keeping it would not.
+
+    Each trial refits the loss model, since that is what the counterfactual
+    actually means — see ``_days_for``.
+    """
+    corrections = request.active_corrections
+    if not corrections:
         return ()
-    # A correction is suspect once the residual is clean without needing it;
-    # the full re-test runs in the coordinator where the uncorrected buckets are
-    # still available.
-    return ()
+    if _would_be_ok(_days_for(request, specs, corrections)):
+        return ()
+
+    stale: list[str] = []
+    for correction in corrections:
+        others = tuple(c for c in corrections if c is not correction)
+        if _would_be_ok(_days_for(request, specs, others)):
+            stale.append(correction.channel_key)
+    return tuple(stale)
 
 
 def _summarise(days: tuple[DayResidual, ...]) -> ResidualSummary:
