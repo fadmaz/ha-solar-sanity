@@ -56,6 +56,7 @@ from .analysis.model import (
 from .analysis.residual import MIN_VALID_BUCKETS_PER_DAY
 from .const import (
     ANALYSIS_INTERVAL,
+    COMPLETENESS_GRACE,
     CONF_CHANNELS,
     CONF_ENTITY_ID,
     CONF_FORECAST_ENTRIES,
@@ -120,6 +121,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         #: has arrived yet" from "everything has stopped", which are the same
         #: arithmetic and opposite facts.
         self._has_ever_read = False
+        #: When this coordinator was built, which is when the grace below
+        #: starts. Not persisted: a reload genuinely does begin a new wait,
+        #: because a reload is also when entities are missing.
+        self._started_at = dt_util.utcnow()
 
         #: Previous reading per energy channel, and when it was taken. The time
         #: matters as much as the value: a difference tells you energy flowed,
@@ -594,19 +599,6 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         if len(self._buckets) > MAX_BUCKETS:
             del self._buckets[: len(self._buckets) - MAX_BUCKETS]
 
-        if any(value is not None for bucket in self._buckets for value in bucket.wh.values()):
-            # History is proof a channel has read. Without this, the flag is
-            # rebuilt False on every reload, so a restart *during* an outage
-            # turned a correct 0% back into "Unknown" — and restarting is the
-            # obvious thing to do when a sensor stops, so the information was
-            # withdrawn precisely because the user acted on it.
-            #
-            # Not a wall-clock expiry instead: a string inverter unreachable
-            # after dark, or an integration publishing late, would then park a
-            # healthy house at 0%, which is the failure the flag exists for.
-            # A genuinely new install has no history and still says "Unknown".
-            self._has_ever_read = True
-
     # -- forecast capture ---------------------------------------------------
 
     async def async_capture_forecasts(self) -> int:
@@ -916,7 +908,18 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         )
         if readable:
             self._has_ever_read = True
-        elif not self._has_ever_read:
+        elif not self._has_ever_read and dt_util.utcnow() - self._started_at < COMPLETENESS_GRACE:
+            # Nothing read, and not long enough since setup to conclude
+            # anything from that. Seeding this from backfilled history was
+            # tried and was worse: the backfill completes *before* the first
+            # refresh, so the flag was already true while the inverter had yet
+            # to publish, and every restart reported 0% — the exact reading
+            # this exists to prevent, delivered to every installation rather
+            # than a rare one.
+            #
+            # Waiting on the clock answers both cases. A genuine outage is
+            # reported once the grace expires, and after any successful read it
+            # is reported the moment it happens.
             return None
         return round(readable / len(specs) * 100)
 

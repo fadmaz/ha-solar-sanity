@@ -16,7 +16,7 @@ the arithmetic that ships. Home Assistant must be importable, so they run in CI.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -53,35 +53,42 @@ class _States:
 
 
 class _Stub:
-    """Only what `channel_completeness` touches, borrowing the real property —
-    plus `ingest_backfill`, because history is where the flag gets its memory."""
+    """Only what `channel_completeness` touches, borrowing the real property."""
 
     channel_completeness = SolarSanityCoordinator.channel_completeness
-    ingest_backfill = SolarSanityCoordinator.ingest_backfill
 
     def __init__(self, values: dict[str, str | None]) -> None:
         self.specs = SPECS
         self.hass = type("_Hass", (), {"states": _States(values)})()
         self._has_ever_read = False
-        self._buckets: list = []
+        self._started_at = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
 
     def publish(self, values: dict[str, str | None]) -> None:
         self.hass.states = _States(values)
 
-    def _local_day(self, when: datetime):
-        return when.date(), False
+    def restart(self) -> _Stub:
+        """A reload: a new object, the flag back at False, the wait restarted.
 
-    def restart(self, history) -> _Stub:
-        """What a reload actually does: a new object with the flag back at
-        False and no buckets, then a fresh backfill from long-term statistics.
-
-        Modelled properly rather than by copying buckets across, because the
-        difference is the whole fix — the recovery has to come from the
-        backfill, which is the only durable thing a restart still has.
+        There is nothing to carry across. Seeding the flag from backfilled
+        history was tried and shipped, and it was worse — the backfill finishes
+        before the first refresh, so the flag was true while the inverter had
+        yet to publish, and every restart read 0%.
         """
-        fresh = _Stub(self.hass.states._values)
-        fresh.ingest_backfill(history)
-        return fresh
+        return _Stub(self.hass.states._values)
+
+
+@pytest.fixture(autouse=True)
+def _clock(monkeypatch):
+    """`channel_completeness` reads the clock now, so pin it and move it."""
+    holder = {"now": datetime(2026, 8, 29, 12, 0, tzinfo=UTC)}
+    monkeypatch.setattr(
+        "custom_components.solar_sanity.coordinator.dt_util.utcnow", lambda: holder["now"]
+    )
+    return holder
+
+
+def _wait(clock, minutes: float) -> None:
+    clock["now"] += timedelta(minutes=minutes)
 
 
 NOTHING: dict[str, str | None] = {"sensor.pv": None, "sensor.load": None}
@@ -89,61 +96,64 @@ BOTH = {"sensor.pv": "0", "sensor.load": "1168"}
 HALF: dict[str, str | None] = {"sensor.pv": "0", "sensor.load": None}
 
 
-def _history(hours: int = 3) -> dict[str, list[tuple[datetime, float, bool]]]:
-    """Long-term statistics for both channels, as setup would have fetched."""
-    start = datetime(2026, 8, 1, 0, tzinfo=UTC)
-    return {
-        entity: [(start.replace(hour=h), 100.0 + h, False) for h in range(hours)]
-        for entity in ("sensor.pv", "sensor.load")
-    }
+class TestTheFirstAnswerWaits:
+    """Nothing read yet is not the same fact as nothing working.
 
+    Home Assistant gives an integration no way to wait for another one's
+    entities, so at the first refresh the inverter has usually not published and
+    every channel reads as absent. Reporting that as 0% states that nothing
+    works, at the moment a user is most likely to be looking at the device page.
 
-class TestARestartDuringAnOutage:
-    """The information must not be withdrawn because the user acted on it.
+    But withholding it forever is no better: a sensor that breaks while the user
+    restarts would then never be reported at all — and restarting is the obvious
+    response to a sensor stopping, so the answer would be withheld precisely
+    because they acted.
 
-    A healthy install reads 100% for weeks. The inverter integration breaks,
-    every channel goes unreadable, and the sensor correctly reports 0% — the one
-    entity doing its job. The obvious response is to restart Home Assistant, and
-    a core update would do it unprompted. That rebuilds the coordinator with
-    `_has_ever_read = False`, and a correct 0% became "Unknown" for the rest of
-    the outage.
+    So it waits on the clock, and only for the first answer.
     """
 
-    def test_a_restart_mid_outage_still_reports_zero(self) -> None:
+    def test_nothing_read_yet_is_unknown(self, _clock) -> None:
+        assert _Stub(NOTHING).channel_completeness is None
+
+    def test_it_stays_unknown_through_the_grace(self, _clock) -> None:
+        stub = _Stub(NOTHING)
+        for _ in range(4):
+            _wait(_clock, 1)
+            assert stub.channel_completeness is None
+
+    def test_past_the_grace_nothing_readable_is_reported_as_zero(self, _clock) -> None:
+        """The outage the sensor exists for. Withholding this forever was the
+        cost of the previous arrangement."""
+        stub = _Stub(NOTHING)
+        _wait(_clock, 6)
+
+        assert stub.channel_completeness == 0
+
+    def test_a_restart_mid_outage_reports_zero_once_it_has_waited(self, _clock) -> None:
         stub = _Stub(BOTH)
-        stub.ingest_backfill(_history())
         assert stub.channel_completeness == 100
 
         stub.publish(NOTHING)
         assert stub.channel_completeness == 0
 
-        after = stub.restart(_history())
+        after = stub.restart()
+        assert after.channel_completeness is None, "a fresh run should wait before judging"
 
-        assert after.channel_completeness == 0, "a restart withdrew a correct 0%"
+        _wait(_clock, 6)
+        assert after.channel_completeness == 0
 
-    def test_history_alone_is_enough_without_a_live_read(self) -> None:
-        """The restarted coordinator never sees a good reading — the outage is
-        still going. History is the only evidence it has, and it is enough."""
+    def test_a_reading_during_the_grace_ends_the_wait_immediately(self, _clock) -> None:
+        """Once anything has been read, an outage is reported the moment it
+        happens — the wait is only ever for the first answer."""
         stub = _Stub(NOTHING)
-        stub.ingest_backfill(_history())
+        assert stub.channel_completeness is None
 
+        _wait(_clock, 1)
+        stub.publish(BOTH)
+        assert stub.channel_completeness == 100
+
+        stub.publish(NOTHING)
         assert stub.channel_completeness == 0
-
-    def test_a_new_install_with_no_history_still_says_unknown(self) -> None:
-        """The control. This is the case the flag was added for, and seeding it
-        from history must not weaken it."""
-        stub = _Stub(NOTHING)
-        stub.ingest_backfill({})
-
-        assert stub.channel_completeness is None
-
-    def test_history_that_is_entirely_holes_proves_nothing(self) -> None:
-        """Buckets exist but no channel ever reported in them, which is what a
-        backfill over a dead sensor looks like."""
-        stub = _Stub(NOTHING)
-        stub.ingest_backfill({"sensor.pv": [], "sensor.load": []})
-
-        assert stub.channel_completeness is None
 
 
 class TestBeforeAnythingHasArrived:

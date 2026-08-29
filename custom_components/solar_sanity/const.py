@@ -47,6 +47,22 @@ DIGEST_RETENTION_DAYS: Final = 400
 #: The live tripwire. Only ever raises simultaneous-flow and stuck/stale.
 LIVE_INTERVAL: Final = timedelta(seconds=30)
 
+#: How long after setup completeness withholds judgement when it has read
+#: nothing at all.
+#:
+#: Home Assistant gives an integration no way to wait for another one's
+#: entities, so at the first refresh the inverter has usually not published yet
+#: and every channel reads as absent. Reporting that as 0% states that nothing
+#: works, at the moment a user is most likely to be looking. But withholding it
+#: forever is no better: a sensor that breaks while the user restarts would then
+#: never be reported at all.
+#:
+#: Five minutes is long enough for anything polling or push-based to have
+#: spoken, and short enough that a genuine outage is not hidden for long. It
+#: only ever delays the *first* answer — once a live reading has arrived, an
+#: outage is reported the moment it happens.
+COMPLETENESS_GRACE: Final = timedelta(minutes=5)
+
 #: Our own hourly integrator closes a bucket on the hour.
 BUCKET_INTERVAL: Final = timedelta(minutes=5)
 
