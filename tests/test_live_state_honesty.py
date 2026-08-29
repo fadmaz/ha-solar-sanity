@@ -71,20 +71,17 @@ class _Stub:
     def _local_day(self, when: datetime):
         return when.date(), False
 
-    def restart(self) -> _Stub:
-        """A fresh coordinator over the same history, which is what a reload is.
+    def restart(self, history) -> _Stub:
+        """What a reload actually does: a new object with the flag back at
+        False and no buckets, then a fresh backfill from long-term statistics.
 
-        Deliberately not a method that clears the flag — the point is that a
-        restart really does build a new object with `_has_ever_read = False`,
-        and the recovery has to come from somewhere durable.
+        Modelled properly rather than by copying buckets across, because the
+        difference is the whole fix — the recovery has to come from the
+        backfill, which is the only durable thing a restart still has.
         """
-        fresh = _Stub(self._values_now)
-        fresh._buckets = list(self._buckets)
+        fresh = _Stub(self.hass.states._values)
+        fresh.ingest_backfill(history)
         return fresh
-
-    @property
-    def _values_now(self) -> dict[str, str | None]:
-        return self.hass.states._values
 
 
 NOTHING: dict[str, str | None] = {"sensor.pv": None, "sensor.load": None}
@@ -120,7 +117,7 @@ class TestARestartDuringAnOutage:
         stub.publish(NOTHING)
         assert stub.channel_completeness == 0
 
-        after = stub.restart()
+        after = stub.restart(_history())
 
         assert after.channel_completeness == 0, "a restart withdrew a correct 0%"
 
