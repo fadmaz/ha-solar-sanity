@@ -56,6 +56,25 @@ class TestItSaysWhatItMeasured:
         assert note is not None, f"{watts:.0f} W was fitted and never mentioned"
         assert f"{watts:.0f} W" in note
 
+    @pytest.mark.parametrize("watts", [15.0, 35.0, 45.0])
+    def test_it_reports_the_draw_without_claiming_the_cause(self, watts: float) -> None:
+        """The fit cannot tell an inverter idling from a circuit outside the
+        clamp — they are the same signal on night residual, and this file's own
+        fixture models the "standby" draw as `load = [v - watts]`, which is an
+        unmetered circuit.
+
+        So the note may say where a figure like this usually comes from and may
+        not call it normal or say there is nothing to fix. A real 90 W circuit
+        is 790 kWh a year, and this was the only place the product would have
+        told somebody in writing to ignore it.
+        """
+        note = _standby_note(_report(house.add_standby(house.build(days=DAYS, seed=0), watts)))
+
+        assert note is not None
+        assert "nothing to fix" not in note.lower()
+        assert "normal for this equipment" not in note.lower()
+        assert "worth finding" in note.lower()
+
     def test_the_figure_is_the_one_that_was_fitted(self) -> None:
         """Not recomputed for the sentence — the same number the residual was
         corrected by, or the note would describe a different installation."""

@@ -122,9 +122,9 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
     Code.CHANNEL_NEVER_POSITIVE: (
         "{name} is reporting backwards",
         "{name} has never once reported a positive figure. Every reading it has "
-        "made is negative, which for this measurement is not a direction it can "
-        "physically flow in — so the sensor is reporting the right magnitude "
-        "with the sign reversed.",
+        "made is zero or negative, and negative is not a direction this "
+        "measurement can physically flow in — so the sensor is reporting the "
+        "right magnitude with the sign reversed.",
         "Check whether the integration providing it offers a polarity option. "
         "If not, wrap it in a template sensor that negates the value, or map "
         "the opposite sensor if your inverter publishes one.",
@@ -274,8 +274,9 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
     ),
     Code.UNMETERED_STANDBY: (
         "About {watts:.0f} W flows continuously that nothing measures",
-        "That is the scale of an inverter's own power supply, and it is steady "
-        "day and night. Normal for this equipment, and now part of the model.",
+        "That is the scale an inverter's own power supply sits at, and it is "
+        "steady day and night. It is accounted for in the model — but if you "
+        "know of nothing in the house that would draw it, it is worth finding.",
         "",
     ),
     Code.CORRECTION_NOW_HARMFUL: (
