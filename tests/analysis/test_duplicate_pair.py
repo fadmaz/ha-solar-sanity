@@ -657,7 +657,9 @@ class TestTheRescueIsNarrow:
         request, specs, settled = self._fixture()
 
         assert list(settled) == ["pv_b"]
-        assert engine._rescued_by_the_counterfactual(_top_hypothesis(request, specs), settled, DAYS)
+        assert engine._rescued_by_the_counterfactual(
+            _top_hypothesis(request, specs), None, settled, DAYS
+        )
 
     def test_it_only_rescues_a_double_counting_claim(self) -> None:
         from analysis import engine
@@ -665,7 +667,7 @@ class TestTheRescueIsNarrow:
         request, specs, settled = self._fixture()
         wrong = replace(_top_hypothesis(request, specs), code=Code.PARTIAL_COVERAGE)
 
-        assert not engine._rescued_by_the_counterfactual(wrong, settled, DAYS)
+        assert not engine._rescued_by_the_counterfactual(wrong, None, settled, DAYS)
 
     def test_it_will_not_rescue_a_hypothesis_failing_anything_else(self) -> None:
         """Explaining almost none of the mismatch is not something a
@@ -675,7 +677,7 @@ class TestTheRescueIsNarrow:
         request, specs, settled = self._fixture()
         weak = replace(_top_hypothesis(request, specs), explained=0.1)
 
-        assert not engine._rescued_by_the_counterfactual(weak, settled, DAYS)
+        assert not engine._rescued_by_the_counterfactual(weak, None, settled, DAYS)
 
     def test_it_will_not_rescue_a_claim_about_a_different_channel(self) -> None:
         from analysis import engine
@@ -683,7 +685,7 @@ class TestTheRescueIsNarrow:
         request, specs, settled = self._fixture()
         elsewhere = replace(_top_hypothesis(request, specs), channel_keys=("pv",))
 
-        assert not engine._rescued_by_the_counterfactual(elsewhere, settled, DAYS)
+        assert not engine._rescued_by_the_counterfactual(elsewhere, None, settled, DAYS)
 
     def test_it_will_not_rescue_when_two_channels_close(self) -> None:
         """That is the pair finding's territory, and naming one of the two would
@@ -699,7 +701,7 @@ class TestTheRescueIsNarrow:
 
         assert len(settled) == 2
         assert not engine._rescued_by_the_counterfactual(
-            _top_hypothesis(request, specs), settled, DAYS
+            _top_hypothesis(request, specs), None, settled, DAYS
         )
 
 

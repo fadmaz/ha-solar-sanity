@@ -126,6 +126,73 @@ class TestMissingExport:
         )
 
 
+class TestTheCounterfactualMayNotOverruleAnUnmeasuredPath:
+    """A rented roof, where the array serves almost none of the metered load.
+
+    Generation goes to the grid, the load comes back from the grid, and the
+    export meter is not mapped. Nothing is broken — the wiring is right and the
+    configuration is incomplete, which is exactly what MISSING_EXPORT says.
+
+    "Generation is counted twice" and "energy leaves by a path nothing measures"
+    explain that residual equally well, and the first won by about 0.011 of
+    explained fraction. Its remedy is to delete the generation channel. Follow
+    it and the engine says OK, having talked the user into throwing away the one
+    sensor that was telling the truth, while MISSING_EXPORT was passing every
+    gate on its own.
+
+    The counterfactual could only ever test one of the two: MISSING_EXPORT names
+    no channel, so it can never appear among the channels that close the house.
+    A test only one side can sit is not evidence about which side is right.
+    """
+
+    @staticmethod
+    def _rented_roof(self_use: float, days: int = 30, seed: int = 0):
+        clean = house.build(days=days, seed=seed)
+        pv = list(clean.data["pv"])
+        load = list(clean.data["load"])
+        used = [min(p * self_use, drawn) for p, drawn in zip(pv, load, strict=True)]
+        series = clean.copy_with(
+            pv=pv,
+            grid_export=[p - u for p, u in zip(pv, used, strict=True)],
+            grid_import=[drawn - u for drawn, u in zip(load, used, strict=True)],
+            battery_charge=[0.0] * clean.hours,
+            battery_discharge=[0.0] * clean.hours,
+            load=load,
+        )
+        specs = tuple(s for s in specs_for() if s.role is not Role.GRID_EXPORT)
+        return to_request(
+            series,
+            specs=specs,
+            declared=DeclaredTopology(
+                has_battery=Answer.NO,
+                grid_is_single_net_sensor=Answer.NO,
+                load_covers_whole_house=Answer.YES,
+            ),
+        )
+
+    @pytest.mark.parametrize("self_use", [0.0, 0.005, 0.01])
+    def test_it_never_offers_to_delete_the_generation_channel(self, self_use: float) -> None:
+        """The destructive outcome, pinned. This returned drop_channel on pv."""
+        report = analyse(self._rented_roof(self_use))
+
+        offered = report.finding.offered_correction if report.finding else None
+        assert offered is None or offered.channel_key != "pv", (
+            f"offered to delete the user's generation channel at {self_use:.1%} self-use"
+        )
+
+    @pytest.mark.parametrize("self_use", [0.0, 0.005, 0.01])
+    def test_it_does_not_call_a_correctly_wired_roof_double_counted(self, self_use: float) -> None:
+        report = analyse(self._rented_roof(self_use))
+
+        assert report.finding is None or report.finding.code != Code.DOUBLE_COUNTED
+
+    @pytest.mark.parametrize("seed", range(3))
+    def test_it_holds_across_seeds(self, seed: int) -> None:
+        report = analyse(self._rented_roof(0.0, seed=seed))
+
+        assert report.finding is None or report.finding.code != Code.DOUBLE_COUNTED
+
+
 class TestUnattributedIsStillAProblem:
     """ "We cannot say why" is not "there is nothing wrong"."""
 
