@@ -174,6 +174,79 @@ class TestTheHoursAreHonest:
         assert ledger["night_total_pv_wh"] == pytest.approx(0.0, abs=1.0)
 
 
+class TestItReachesTheHousesThatNeedItMost:
+    """The ledger and the night fit answer different questions, and the fit's
+    preconditions were gating both.
+
+    `_night_samples` wants a discharge channel and two hundred night hours. So a
+    house with no battery got nothing at all, and every house got nothing for
+    its first sixteen days — which is exactly the window where somebody is
+    looking at "still looking" and wanting to know why. The ledger needs neither
+    of those things to total up what each channel reported.
+    """
+
+    @staticmethod
+    def _raw(series, specs, declared):
+        request = to_request(series, specs=specs, declared=declared)
+        provisional = build_days(request.buckets, specs, LossModel(), request.utc_offset_hours)
+        loss = fit_loss_model(provisional, specs, None)
+        days = build_days(request.buckets, specs, loss, request.utc_offset_hours)
+        return night_fit_raw(days, specs)
+
+    @staticmethod
+    def _no_battery(days: int, seed: int = 0):
+        clean = house.build(days=days, seed=seed)
+        series = clean.copy_with(
+            battery_charge=[0.0] * clean.hours,
+            battery_discharge=[0.0] * clean.hours,
+            load=[
+                consumed + out - into
+                for consumed, out, into in zip(
+                    clean.data["load"],
+                    clean.data["battery_discharge"],
+                    clean.data["battery_charge"],
+                    strict=True,
+                )
+            ],
+        )
+        specs = tuple(
+            s for s in specs_for() if s.role not in (Role.BATTERY_CHARGE, Role.BATTERY_DISCHARGE)
+        )
+        return series, specs
+
+    def test_a_house_with_no_battery_still_gets_a_ledger(self) -> None:
+        series, specs = self._no_battery(30)
+
+        raw = self._raw(
+            series,
+            specs,
+            DeclaredTopology(
+                has_battery=Answer.NO,
+                grid_is_single_net_sensor=Answer.NO,
+                load_covers_whole_house=Answer.YES,
+            ),
+        )
+
+        assert raw["night_ledger_hours"] > 0
+        # The fit genuinely cannot run here, and does not pretend to.
+        assert "night_hours" not in raw
+
+    @pytest.mark.parametrize("days", [7, 10, 14])
+    def test_it_is_there_before_the_fit_can_speak(self, days: int) -> None:
+        raw = self._raw(house.build(days=days, seed=0), specs_for(), DECLARED)
+
+        assert raw["night_ledger_hours"] > 0
+        assert "night_hours" not in raw
+        assert "night_total_load_wh" in raw
+
+    def test_the_fit_still_arrives_once_it_has_enough(self) -> None:
+        """So moving the ledger out did not move the fit out with it."""
+        raw = self._raw(house.build(days=21, seed=0), specs_for(), DECLARED)
+
+        assert "night_hours" in raw
+        assert raw["night_ledger_hours"] == raw["night_hours"]
+
+
 class TestItIsStillPure:
     @pytest.mark.parametrize("seed", range(3))
     def test_the_same_input_gives_the_same_ledger(self, seed: int) -> None:

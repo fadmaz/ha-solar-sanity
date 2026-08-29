@@ -423,11 +423,20 @@ def night_fit_raw(
     and both report the same empty tuple, and they are completely different
     problems.
     """
+    # The ledger first, and outside the gate below. It answers a different
+    # question from the fit — not "what did the night slope measure" but "what
+    # did each channel actually total" — and it needs far less to answer it.
+    # `_night_samples` wants a discharge channel and two hundred night hours, so
+    # a house with no battery got nothing at all, and every install got nothing
+    # for its first fortnight. That fortnight is precisely when somebody is
+    # looking at "still looking" and wanting to know why.
+    out: dict[str, float] = dict(night_ledger(days, specs))
+
     samples = _night_samples(days, specs)
     if samples is None:
-        return {}
+        return out
     xs, ys, loads = samples
-    out: dict[str, float] = {"night_hours": float(len(xs))}
+    out["night_hours"] = float(len(xs))
 
     slope = theil_sen_slope(xs, ys)
     if slope is not None:
@@ -445,7 +454,6 @@ def night_fit_raw(
     residual = median(ys)
     if residual is not None:
         out["median_night_residual_wh"] = residual
-    out.update(night_ledger(days, specs))
     return out
 
 

@@ -594,6 +594,19 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         if len(self._buckets) > MAX_BUCKETS:
             del self._buckets[: len(self._buckets) - MAX_BUCKETS]
 
+        if any(value is not None for bucket in self._buckets for value in bucket.wh.values()):
+            # History is proof a channel has read. Without this, the flag is
+            # rebuilt False on every reload, so a restart *during* an outage
+            # turned a correct 0% back into "Unknown" — and restarting is the
+            # obvious thing to do when a sensor stops, so the information was
+            # withdrawn precisely because the user acted on it.
+            #
+            # Not a wall-clock expiry instead: a string inverter unreachable
+            # after dark, or an integration publishing late, would then park a
+            # healthy house at 0%, which is the failure the flag exists for.
+            # A genuinely new install has no history and still says "Unknown".
+            self._has_ever_read = True
+
     # -- forecast capture ---------------------------------------------------
 
     async def async_capture_forecasts(self) -> int:
