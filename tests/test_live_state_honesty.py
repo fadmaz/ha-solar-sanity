@@ -16,6 +16,8 @@ the arithmetic that ships. Home Assistant must be importable, so they run in CI.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 pytest.importorskip("homeassistant", reason="Home Assistant not installed")
@@ -51,22 +53,100 @@ class _States:
 
 
 class _Stub:
-    """Only what `channel_completeness` touches, borrowing the real property."""
+    """Only what `channel_completeness` touches, borrowing the real property —
+    plus `ingest_backfill`, because history is where the flag gets its memory."""
 
     channel_completeness = SolarSanityCoordinator.channel_completeness
+    ingest_backfill = SolarSanityCoordinator.ingest_backfill
 
     def __init__(self, values: dict[str, str | None]) -> None:
         self.specs = SPECS
         self.hass = type("_Hass", (), {"states": _States(values)})()
         self._has_ever_read = False
+        self._buckets: list = []
 
     def publish(self, values: dict[str, str | None]) -> None:
         self.hass.states = _States(values)
+
+    def _local_day(self, when: datetime):
+        return when.date(), False
+
+    def restart(self) -> _Stub:
+        """A fresh coordinator over the same history, which is what a reload is.
+
+        Deliberately not a method that clears the flag — the point is that a
+        restart really does build a new object with `_has_ever_read = False`,
+        and the recovery has to come from somewhere durable.
+        """
+        fresh = _Stub(self._values_now)
+        fresh._buckets = list(self._buckets)
+        return fresh
+
+    @property
+    def _values_now(self) -> dict[str, str | None]:
+        return self.hass.states._values
 
 
 NOTHING: dict[str, str | None] = {"sensor.pv": None, "sensor.load": None}
 BOTH = {"sensor.pv": "0", "sensor.load": "1168"}
 HALF: dict[str, str | None] = {"sensor.pv": "0", "sensor.load": None}
+
+
+def _history(hours: int = 3) -> dict[str, list[tuple[datetime, float, bool]]]:
+    """Long-term statistics for both channels, as setup would have fetched."""
+    start = datetime(2026, 8, 1, 0, tzinfo=UTC)
+    return {
+        entity: [(start.replace(hour=h), 100.0 + h, False) for h in range(hours)]
+        for entity in ("sensor.pv", "sensor.load")
+    }
+
+
+class TestARestartDuringAnOutage:
+    """The information must not be withdrawn because the user acted on it.
+
+    A healthy install reads 100% for weeks. The inverter integration breaks,
+    every channel goes unreadable, and the sensor correctly reports 0% — the one
+    entity doing its job. The obvious response is to restart Home Assistant, and
+    a core update would do it unprompted. That rebuilds the coordinator with
+    `_has_ever_read = False`, and a correct 0% became "Unknown" for the rest of
+    the outage.
+    """
+
+    def test_a_restart_mid_outage_still_reports_zero(self) -> None:
+        stub = _Stub(BOTH)
+        stub.ingest_backfill(_history())
+        assert stub.channel_completeness == 100
+
+        stub.publish(NOTHING)
+        assert stub.channel_completeness == 0
+
+        after = stub.restart()
+
+        assert after.channel_completeness == 0, "a restart withdrew a correct 0%"
+
+    def test_history_alone_is_enough_without_a_live_read(self) -> None:
+        """The restarted coordinator never sees a good reading — the outage is
+        still going. History is the only evidence it has, and it is enough."""
+        stub = _Stub(NOTHING)
+        stub.ingest_backfill(_history())
+
+        assert stub.channel_completeness == 0
+
+    def test_a_new_install_with_no_history_still_says_unknown(self) -> None:
+        """The control. This is the case the flag was added for, and seeding it
+        from history must not weaken it."""
+        stub = _Stub(NOTHING)
+        stub.ingest_backfill({})
+
+        assert stub.channel_completeness is None
+
+    def test_history_that_is_entirely_holes_proves_nothing(self) -> None:
+        """Buckets exist but no channel ever reported in them, which is what a
+        backfill over a dead sensor looks like."""
+        stub = _Stub(NOTHING)
+        stub.ingest_backfill({"sensor.pv": [], "sensor.load": []})
+
+        assert stub.channel_completeness is None
 
 
 class TestBeforeAnythingHasArrived:
