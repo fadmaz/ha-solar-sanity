@@ -257,6 +257,56 @@ describe("staying honest over time", () => {
     expect(card.shadowRoot?.textContent ?? "").not.toContain("Cannot read the record");
   });
 
+  it("keeps refusing while the failure is still fresh", async () => {
+    // A genuinely disabled recorder must not be asked again at the rate `hass`
+    // is reassigned, which is dozens of times a minute.
+    const { card, calls, make } = build();
+    card.hass = make("RUNNING", true);
+    await settle(card);
+    const asked = calls.length;
+
+    for (let i = 0; i < 20; i += 1) {
+      card.hass = make("RUNNING");
+      await settle(card);
+    }
+
+    expect(calls.length).toBe(asked);
+    expect(card.shadowRoot?.textContent ?? "").toContain("Cannot read the record");
+  });
+
+  it("retries a transient failure without waiting for a restart", async () => {
+    // The release written for the restart case could never fire on its own:
+    // `_load` is only reachable past the RUNNING gate, so every failure is
+    // recorded during RUNNING and the phase comparison is always "RUNNING"
+    // against "RUNNING". A websocket blip — a laptop waking, wifi roaming, the
+    // recorder reloading — therefore stuck until local midnight, on an
+    // installation whose recorder was fine seconds later.
+    vi.useFakeTimers();
+    try {
+      const { card, calls, make } = build();
+      card.hass = make("RUNNING", true);
+      await card.updateComplete;
+      await vi.advanceTimersByTimeAsync(1);
+      await card.updateComplete;
+      expect(card.shadowRoot?.textContent ?? "").toContain("Cannot read the record");
+      const asked = calls.filter((c) => c === "recorder/list_statistic_ids").length;
+
+      // Past the retry window, with Home Assistant never leaving RUNNING.
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+      card.hass = make("RUNNING");
+      await card.updateComplete;
+      await vi.advanceTimersByTimeAsync(1);
+      await card.updateComplete;
+
+      expect(
+        calls.filter((c) => c === "recorder/list_statistic_ids").length,
+      ).toBeGreaterThan(asked);
+      expect(card.shadowRoot?.textContent ?? "").not.toContain("Cannot read the record");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("asks once however many times hass is reassigned", async () => {
     // Home Assistant hands every card a new `hass` on every state change, and
     // there are dozens a minute. Each used to start its own pair of recorder
