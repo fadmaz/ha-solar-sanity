@@ -2,6 +2,40 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.12.2] - 2026-08-29
+
+The last two findings from the review that produced 0.12.1. Both concern what
+the diagnostics download tells you; neither changes a verdict.
+
+### Fixed
+
+- **The night ledger reaches the installations that need it most.** It sat
+  behind the night fit's preconditions rather than its own, and those are much
+  stricter — a battery discharge channel, and two hundred night hours. So a
+  house with no battery got no ledger at all, and every house got none for its
+  first sixteen days. That fortnight is exactly when an installation reads
+  "still looking" and its owner wants to know why, and the ledger is the thing
+  that answers. Measured: fourteen days gave 182 usable hours and nothing,
+  sixteen gave 208 and everything. It now runs first, and the fit adds to it
+  when it can.
+
+- **Data completeness no longer forgets what it knew when you restart.** It
+  reads unknown until something has been read once, which is right at setup and
+  wrong afterwards — the flag behind it was rebuilt on every reload. So a sensor
+  would break, the figure would correctly drop to 0%, you would restart Home
+  Assistant because that is the obvious thing to do, and the answer would go
+  back to unknown for the rest of the outage. Information withdrawn precisely
+  because you acted on it. It now remembers through the history it reloads.
+
+  Deliberately not a time limit instead: a string inverter unreachable after
+  dark, or an integration that publishes late, would then park a healthy house
+  at 0% — which is the failure this behaviour was added to prevent. A genuinely
+  new installation still has no history and still says unknown.
+
+### Internal
+
+- 874 tests here and 1021 with Home Assistant present, from 869 and 1015.
+
 ## [0.12.1] - 2026-08-29
 
 An adversarial review of everything 0.11.0 and 0.12.0 shipped. Fourteen findings
