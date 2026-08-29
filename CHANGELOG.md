@@ -2,6 +2,24 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.12.3] - 2026-08-29
+
+### Fixed
+
+- **Data completeness no longer reads 0% on every restart.** 0.12.2 taught it to
+  remember through reloaded history, so that a sensor breaking while you
+  restarted would still be reported. That history is loaded *before* the first
+  reading is taken — so it remembered before there was anything to remember,
+  and every restart on every installation showed 0% while the inverter was
+  still coming up. Precisely the reading the behaviour exists to prevent,
+  delivered to everybody rather than to the rare case it was meant for.
+
+  It now waits on the clock instead, and only for the first answer: nothing read
+  and under five minutes since startup is unknown; after that, nothing readable
+  is 0%, because anything that was going to publish has published. Once
+  something has been read the wait is over for good and an outage shows the
+  moment it happens.
+
 ## [0.12.2] - 2026-08-29
 
 The last two findings from the review that produced 0.12.1. Both concern what
