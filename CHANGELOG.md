@@ -2,6 +2,87 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.12.1] - 2026-08-29
+
+An adversarial review of everything 0.11.0 and 0.12.0 shipped. Fourteen findings
+raised, each one put to a verifier told to refute it by default; four were
+refuted outright. Two of what survived were regressions introduced by those same
+two releases, so this is worth taking before the last one.
+
+### Fixed
+
+- **A sensor dropout no longer deletes energy from the day.** The staleness
+  guard added in 0.11.0 runs when a reading *arrives*, and no reading arrives
+  while a sensor is away — so only the hour it came back in was ever
+  distrusted. The hour it went quiet in kept a partial total, was stamped as
+  good, and counted as a full hour. Dropping a whole hour is balanced: sources
+  and sinks go together and the arithmetic still closes. A partial generation
+  total beside a complete load and grid is not, and it has exactly the shape of
+  a fault. Every hour a gap touches is now distrusted.
+
+- **You will not be told to delete your own generation sensor.** On a roof that
+  exports nearly everything with no export meter configured, the tie-break added
+  in 0.12.0 reported "Solar production is being counted twice" and offered to
+  remove the generation channel. Following that made the verdict `ok` by
+  disposing of the sensor that was telling the truth. The right answer — that
+  energy leaves by a path nothing measures — was passing every check and lost by
+  a hundredth. It could not win: it names no channel, and the tie-break was a
+  test only the other side was able to sit.
+
+- **A correction is no longer called stale on a day or two of data.** The check
+  that asks whether one of our own adjustments has outlived its fault ran ahead
+  of the five-day floor every other stage answers to. On a one-day window any
+  coincidence that cancelled the residual read as proof the adjustment was
+  unwanted — a fifth of the time, measured, with the adjustment genuinely
+  needed in every case. What that cost was a warning telling somebody to remove
+  the one override keeping their generation channel honest.
+
+- **The forecast card stops giving up for the day.** The release added in 0.11.0
+  compared the current lifecycle phase against the phase the failure happened
+  in, and a load can only ever run in one phase — so it always compared RUNNING
+  against RUNNING and released nothing. A websocket blip, over in seconds, left
+  the card reading "Cannot read the record" until local midnight. It now expires
+  after five minutes. A load in flight across midnight also published the wrong
+  day's figures permanently, and now checks the day it was started for.
+
+### Changed
+
+- **Two sentences that claimed more than the evidence supports.** A continuous
+  unmetered draw was described as "Normal for this equipment" with nothing to
+  fix — but an inverter idling and a circuit outside the clamp are the same
+  signal to this fit, and a real 90 W circuit is 790 kWh a year. It now reports
+  the figure, says where one like it usually comes from, and suggests finding it
+  if you know of nothing that would draw it.
+
+  A backwards sensor was described as one where "every reading it has made is
+  negative", about channels that are mostly *exactly zero* — battery charging is
+  flat zero in 79% of hours on a system it fires for. That is the one finding
+  called certain, and anyone checking it against history had good reason to stop
+  believing the rest. It now says zero or negative.
+
+- **The night ledger published one number twice.** `night_sources_minus_sinks_wh`
+  was the signed sum of the role totals, described as a check on the residual
+  beside it. It is the same sum reassociated — the difference is exactly zero on
+  every input. One name now. `night_ledger_hours` was also documented as a
+  coverage signal, and it cannot be one: incomplete hours are discarded long
+  before the ledger sees them, so it always equals `night_hours`. It stays,
+  because it is what turns a shortfall into a rate.
+
+- **Data completeness reads unknown before it knows anything**, rather than 0%.
+
+### Internal
+
+- The eight open dependency updates, taken as one batch. Vite 8 replaces Rollup
+  with Rolldown, which needed two config migrations — and inverts the advice
+  every card repository still carries: `codeSplitting: false` is the real option
+  now and `inlineDynamicImports` is deprecated. The card came out smaller and
+  faster: 41.2 kB raw and 12.9 kB gzipped, from 44.6 and 14.2.
+- A smoke test on the built bundle. Every card test until now exercised the
+  TypeScript and none of them touched the file you actually load, which is
+  exactly the gap a change of minifier walks through.
+- A card fixture that named a date literally and expired at midnight.
+- 869 Python tests and 112 card tests, from 817 and 104.
+
 ## [0.12.0] - 2026-08-29
 
 Found in a real installation's own diagnostics rather than in synthetic data.
