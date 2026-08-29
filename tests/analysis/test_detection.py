@@ -236,6 +236,24 @@ class TestAChannelThatOnlyEverPointsBackwards:
         assert report.finding.channel_keys == (channel,)
         assert report.finding.offered_correction.kind == "sign_flip"
 
+    @pytest.mark.parametrize("channel", ["battery_charge", "grid_export", "pv"])
+    def test_the_sentence_matches_what_the_history_shows(self, channel: str) -> None:
+        """This is the one finding the engine calls CERTAIN, so a reader who
+        checks it must find it true.
+
+        The screen fires when nothing reaches +25 Wh, which a channel idle most
+        of the day satisfies while sitting at exactly 0.0 — battery charging is
+        flat zero in 78.6% of hours on this very fixture. Saying "every reading
+        it has made is negative" invited the reader to open history, see twenty
+        flat-zero hours a day, and stop believing the rest. The verdict and the
+        remedy were always right; only the sentence was not.
+        """
+        report = _analyse(house.invert(house.build(days=21, seed=0), channel))
+        detail = report.finding.detail
+
+        assert "zero or negative" in detail
+        assert "Every reading it has made is negative" not in detail
+
     def test_a_net_meter_is_a_different_finding(self) -> None:
         """It swings. That is the whole distinction, and it decides the copy."""
         report = _analyse(house.net_meter_beside_export(house.build(days=21, seed=0)))

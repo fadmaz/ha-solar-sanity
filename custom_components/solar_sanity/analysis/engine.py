@@ -504,10 +504,21 @@ def _loss_notes(loss: LossModel) -> tuple[str, ...]:
     thing this product could say, so the DC notes wait for a fit that can
     separate the terms.
 
-    Standby carries none of that risk. Measured against known draws it comes
-    back exact wherever it is fitted at all, and across five different faults it
-    was never once fitted on a house with something genuinely wrong — its
-    failure is silence, not a false reassurance.
+    Standby is safe against *sensor* faults in a way the DC terms are not:
+    measured against known draws it comes back exact wherever it is fitted at
+    all, and across six of them — halved load, halved generation, inverted
+    discharge, frozen load, mis-scaled generation, import reported in kilowatts
+    — it was never once fitted on a house with something genuinely wrong. Its
+    failure there is silence rather than a false reassurance.
+
+    It is *not* safe against the cause. An inverter idling and a circuit outside
+    the clamp are the same signal to a fit on night residual, and the test
+    fixture says so plainly: `house.add_standby` models the draw as
+    `load = [v - watts]`, which is an unmetered circuit. So the copy reports the
+    figure and says where it usually comes from, and stops short of calling it
+    normal or saying there is nothing to fix — a real 90 W circuit is 790 kWh a
+    year, and this is the only place the product would have told somebody in
+    writing to ignore it.
     """
     if not loss.established("standby") or loss.standby_w <= 0.0:
         return ()
