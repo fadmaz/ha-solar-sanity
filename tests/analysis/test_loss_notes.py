@@ -237,40 +237,74 @@ class TestTheTermsAreNowSeparable:
         assert fitted.battery_dc_gamma == 0.0
 
 
-class TestTheDcNotesStaySilent:
-    """Pinning a decision, so it is not quietly reversed as an oversight.
+class TestTheDcNotesAreSpokenNow:
+    """The decision that used to be pinned the other way, and why it moved.
 
-    `pv_measured_dc` and `battery_measured_dc` have finished copy telling the
-    reader that a few per cent of loss is normal conversion and there is nothing
-    to fix.
-
+    `pv_measured_dc` and `battery_measured_dc` had finished copy and no producer.
     They stayed unraised because the loss model's three terms were not
-    identifiable from one another: fitted one at a time, an unmetered draw was
-    read as DC conversion at a *larger* figure than a genuinely DC-measured
-    battery produced, so no threshold could separate them.
+    identifiable from one another: fitted one at a time, an unmetered draw read
+    as DC conversion at a *larger* figure than a genuinely DC-measured battery
+    produced, so no threshold could separate them, and the copy's "normal
+    conversion loss, nothing to fix" would have been said about a draw somebody
+    was paying for.
 
-    The joint fit ends that — see `TestTheTermsAreNowSeparable` below, which
-    replaced the two measurements that used to live here. Emitting the notes is
-    now a product decision rather than an impossibility, and it is not taken
-    here. The remaining tests keep them silent until somebody decides.
+    The joint fit and the battery's two-direction check ended that — see
+    `TestTheTermsAreNowSeparable`. What remained was a product decision, and it
+    has been taken: **absorb, and say so.**
+
+    The argument that settled it is that the quiet option was never the cautious
+    one. A generation coefficient inside the window was already being subtracted
+    without a word, so a sensor reading a tenth high produced "no problem found"
+    and the assumption behind that answer was shown to nobody. A note costs a
+    correctly configured house one sentence; its absence costs a
+    mis-configured one the only chance it had of being told.
     """
 
     @pytest.mark.parametrize("seed", range(3))
-    def test_neither_dc_note_is_ever_spoken(self, seed: int) -> None:
-        for corrupt in (
-            house.measure_pv_dc,
-            house.measure_battery_dc,
-            lambda c: house.add_standby(c, 80.0),
-        ):
-            report = _report(corrupt(house.build(days=DAYS, seed=seed)))
-            joined = " ".join(report.notes)
+    def test_each_term_is_named_when_it_is_taken(self, seed: int) -> None:
+        clean = house.build(days=DAYS, seed=seed)
 
-            assert "conversion loss" not in joined
-            assert "DC side" not in joined
+        assert "before the inverter" in " ".join(_report(house.measure_pv_dc(clean)).notes)
+        assert "DC side" in " ".join(_report(house.measure_battery_dc(clean)).notes)
+        assert "continuously" in " ".join(_report(house.add_standby(clean, 80.0)).notes)
 
-    def test_their_copy_is_still_written_and_still_renders(self) -> None:
-        """So the day the fit can separate the terms, the sentences are ready."""
+    @pytest.mark.parametrize("seed", range(3))
+    def test_a_house_with_no_loss_is_told_nothing(self, seed: int) -> None:
+        """The note is about something that was done. On a house where nothing
+        was subtracted there is nothing to disclose, and a reassurance nobody
+        needed is still a sentence somebody has to read."""
+        assert _report(house.build(days=DAYS, seed=seed)).notes == ()
+
+    @pytest.mark.parametrize("seed", range(3))
+    def test_the_figure_in_the_note_is_the_figure_that_was_subtracted(self, seed: int) -> None:
+        """A disclosure that does not match what was done is worse than none.
+
+        Both readings of it appear, because a sensor a share of whose output
+        never arrives is a sensor reading that much high, and the data cannot
+        say which description is the true one.
+        """
+        report = _report(house.measure_pv_dc(house.build(days=DAYS, seed=seed), 0.90))
+        note = " ".join(report.notes)
+
+        assert report.loss_model.pv_dc_gamma == pytest.approx(0.10, abs=0.005)
+        assert "10%" in note, note
+        assert "11%" in note, note
+
+    def test_a_loss_too_large_to_be_conversion_is_neither_taken_nor_excused(self) -> None:
+        """The bound is a judgement about inverters, not a discrimination.
+
+        Nothing in the data separates a sensor before the inverter from one
+        reading high by the same factor — they are the same series. So beyond
+        what conversion can plausibly account for, the engine stops assuming and
+        goes back to saying it cannot explain the difference.
+        """
+        report = _report(house.measure_pv_dc(house.build(days=DAYS, seed=0), 0.80))
+
+        assert report.loss_model.pv_dc_gamma == 0.0
+        assert report.notes == ()
+
+    def test_their_copy_still_renders(self) -> None:
         from analysis import faults
 
-        assert faults.render(Code.PV_MEASURED_DC, loss=4.0, name="Solar")[0]
-        assert faults.render(Code.BATTERY_MEASURED_DC)[0]
+        assert faults.render(Code.PV_MEASURED_DC, loss=4.0, over=4.2, name="Solar")[0]
+        assert faults.render(Code.BATTERY_MEASURED_DC, loss=5.0)[0]

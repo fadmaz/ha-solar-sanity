@@ -39,6 +39,27 @@ MIN_DAYS_FOR_COUPLING = 14
 #: Generation at or below this counts as night, for fitting purposes.
 NIGHT_MAX_PV_WH = 50.0
 
+#: The largest share of generation that may be taken as conversion loss.
+#:
+#: A sensor before the inverter and a sensor reading high by the same factor are
+#: not merely hard to tell apart — they are *the same series*. Dividing by an
+#: efficiency and multiplying by its reciprocal produce identical numbers, so no
+#: statistic of the data can favour one story. The engine already absorbed this
+#: silently up to a tenth and reported "no problem found"; what it could not do
+#: was say so.
+#:
+#: The bound is therefore not a discrimination — there is none to be had — but a
+#: judgement about how much loss an inverter can plausibly account for. 0.15 is
+#: a conversion efficiency of 0.85, below every inverter currently sold and with
+#: room for the cabling and tracking losses a DC-side sensor also sees. Beyond
+#: it, "your sensor reads before the inverter" stops being a credible reading of
+#: the same number, and the engine goes back to saying it cannot explain the
+#: difference — which it cannot.
+#:
+#: Whatever is taken here is said out loud. See `_loss_notes`: absorbing this
+#: quietly is how a sensor reading a fifth high becomes "no problem found".
+DC_PV_MAX_GAMMA = 0.15
+
 #: How far the charge side may sit from the figure its discharge partner
 #: implies, before the pair is not describing one battery.
 #:
@@ -371,20 +392,21 @@ def fit_loss_model(
         # unaffected: 0.0400 and 0.1000 both ways, to four decimals.
         joint = joint_loss_fit(days, specs, with_battery=False) or joint
 
-    def accepted(term: str) -> float:
-        # The window is unchanged and still does the same job: a coefficient
-        # above it is a fault's territory, and absorbing it here would hide
-        # exactly what we are looking for. What changed is that the number
-        # offered to it is no longer contaminated by the other terms.
+    def accepted(term: str, ceiling: float) -> float:
+        # The floor is unchanged and still does the same job: below it there is
+        # no term worth having. The ceiling is per-term, because the two terms
+        # are guarded by different things — the battery pair by whether it
+        # describes one efficiency, generation by nothing at all, since a sensor
+        # before the inverter and a sensor reading high are the same series.
         value = joint.get(term)
         if value is None:
             return 0.0
-        if not DC_MEASUREMENT_WINDOW[0] <= value <= DC_MEASUREMENT_WINDOW[1]:
+        if not DC_MEASUREMENT_WINDOW[0] <= value <= ceiling:
             return 0.0
         established.append(term)
         return value
 
-    pv_dc = accepted("pv_dc")
+    pv_dc = accepted("pv_dc", DC_PV_MAX_GAMMA)
 
     night_gamma, standby = _fit_night_terms(days, specs)
 
