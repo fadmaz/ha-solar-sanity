@@ -2,6 +2,31 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.15.0] - 2026-08-30
+
+### Added
+
+- **The night ledger separates the hours we measured from the hours we were
+  told.** An hourly average of a sensor that only reports when it changes
+  over-weights the busy part of that hour, so a power sensor read that way sits
+  high while an energy counter beside it stays exact. The result is a night that
+  does not add up with nothing whatever wrong — and in a single total it looks
+  exactly like a sensor that genuinely under-reports.
+
+  Solar Sanity's own hourly integration weights every reading by how long it
+  stood, which makes it the control that was missing. If the shortfall sits in
+  the hours taken from Home Assistant's statistics while the hours we integrated
+  ourselves add up, the arithmetic is at fault rather than the house.
+
+  A genuinely mis-measured channel still shows in both halves, so this cannot be
+  read as excusing a house that really is wrong.
+
+  Appears once both kinds of hour exist. A new installation is entirely
+  backfilled, and a split with one empty half is the whole night under a second
+  name.
+
+Diagnostics only. No verdict changes.
+
 ## [0.14.0] - 2026-08-30
 
 ### Added
