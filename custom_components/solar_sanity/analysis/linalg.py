@@ -143,3 +143,65 @@ def safe_ratio(numerator: float, denominator: float) -> float | None:
     if abs(denominator) < 1e-9:
         return None
     return numerator / denominator
+
+
+def least_squares(
+    columns: Sequence[Sequence[float]], target: Sequence[float]
+) -> list[float] | None:
+    """Coefficients minimising the squared error of ``Σ cᵢ·columnᵢ`` against ``target``.
+
+    Exists because estimating one coefficient at a time is biased whenever the
+    columns overlap, and on a DC-coupled hybrid they always do: generation and
+    battery throughput rise together, so a median-of-ratios attributed to one
+    term carries a share of the other. Measured against a known 96%-efficient
+    inverter, that bias reads the generation term 62% high — enough to push a
+    healthy installation's loss outside the window that would have absorbed it,
+    at which point nothing is subtracted at all.
+
+    Solved through the normal equations, which are adequate here and only here:
+    three columns, and each is first scaled to unit root-mean-square so their
+    wildly different magnitudes (watt-hours against a column of ones) cannot
+    wreck the conditioning. Returns ``None`` rather than guessing when a column
+    is empty or the system is singular — two identical columns have no unique
+    answer, and inventing one would put a fault's energy into a loss term.
+    """
+    if not columns or not target:
+        return None
+    width = len(columns)
+    rows = len(target)
+    if any(len(column) != rows for column in columns) or rows <= width:
+        return None
+
+    scales: list[float] = []
+    for column in columns:
+        rms = (sum(v * v for v in column) / rows) ** 0.5
+        if rms <= 1e-12:
+            return None
+        scales.append(rms)
+
+    # A is the scaled design matrix; solve AᵀA x = Aᵀb.
+    normal = [
+        [
+            sum(columns[i][r] * columns[j][r] for r in range(rows)) / (scales[i] * scales[j])
+            for j in range(width)
+        ]
+        + [sum(columns[i][r] * target[r] for r in range(rows)) / scales[i]]
+        for i in range(width)
+    ]
+
+    for pivot in range(width):
+        best = max(range(pivot, width), key=lambda r: abs(normal[r][pivot]))
+        if abs(normal[best][pivot]) < 1e-9:
+            return None
+        normal[pivot], normal[best] = normal[best], normal[pivot]
+        head = normal[pivot]
+        for row in normal[pivot + 1 :]:
+            factor = row[pivot] / head[pivot]
+            for col in range(pivot, width + 1):
+                row[col] -= factor * head[col]
+
+    solved = [0.0] * width
+    for i in reversed(range(width)):
+        total = normal[i][width] - sum(normal[i][j] * solved[j] for j in range(i + 1, width))
+        solved[i] = total / normal[i][i]
+    return [value / scale for value, scale in zip(solved, scales, strict=True)]

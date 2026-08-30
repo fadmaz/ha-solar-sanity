@@ -78,7 +78,22 @@ DUPLICATED_ROLES = [
 
 
 def _analyse(series: house.Series, *extra):
-    return analyse(to_request(series, specs=specs_for() + tuple(extra), declared=DECLARED))
+    return analyse(_request(series, *extra))
+
+
+def _request(series: house.Series, *extra):
+    return to_request(series, specs=specs_for() + tuple(extra), declared=DECLARED)
+
+
+def _days(request):
+    """The days the engine would attribute over, loss model and all."""
+    from analysis.model import LossModel
+    from analysis.residual import build_days
+    from analysis.topology import fit_loss_model
+
+    provisional = build_days(request.buckets, request.specs, LossModel(), request.utc_offset_hours)
+    loss = fit_loss_model(provisional, request.specs, None)
+    return build_days(request.buckets, request.specs, loss, request.utc_offset_hours)
 
 
 def _duplicated(source: str, role: Role, *, seed: int = 0, scale: float = 1.0):
@@ -999,20 +1014,25 @@ class TestWeDoNotBlameASensorForOurOwnOverride:
         assert report.finding.channel_keys == ("pv",)
 
 
-class TestWhenTwoExplanationsFitItAsksRatherThanTells:
+class TestWhenTwoExplanationsFitItSaysNothing:
     """The collision that survives both tests, and cannot be separated.
 
     Two real battery banks beside a load CT on one of two live conductors line
     up exactly. At night the battery carries the house, so what is missing is
     half the load — and each bank contributes half the load. The residual *is*
     one bank's output, hour for hour, to machine precision. The counterfactual
-    passes, the identity test passes, and the engine would tell somebody to
-    unmap a real battery.
+    passes and the identity test passes.
 
-    It cannot be suppressed. A genuine duplicate of the load channel throws a
-    competing candidate of exactly the same shape, so refusing to speak whenever
-    a rival exists costs real findings and buys nothing. What the rival is good
-    for is knowing how much to claim.
+    This used to be reported as a duplicate pair, softened to a question. It was
+    still an accusation against two real batteries, and the softening was damage
+    limitation rather than a fix. The joint loss fit removed it — not by
+    detecting the collision, but by no longer fitting a spurious 4.7% generation
+    loss that broke the tie in the wrong direction.
+
+    What the house actually has is a half-reading load CT, and that hypothesis
+    explains the residual perfectly. It is rejected for being 0.0105 short of
+    the margin gate, which is the dead zone in miniature and not this file's
+    problem to fix.
     """
 
     @staticmethod
@@ -1030,14 +1050,45 @@ class TestWhenTwoExplanationsFitItAsksRatherThanTells:
             extra_spec("bank_two_discharge", Role.BATTERY_DISCHARGE, "Battery 2 discharging"),
         )
 
-    def test_it_is_a_question_and_not_an_instruction(self) -> None:
+    def test_two_real_banks_are_never_called_a_duplicate(self) -> None:
         series, extra = self._two_banks(0.5)
 
         report = _analyse(series, *extra)
 
-        assert report.finding is not None
-        assert report.finding.severity is Severity.QUESTION
-        assert report.finding.confidence is Confidence.PROBABLE
+        assert report.finding is None or report.finding.code != Code.DUPLICATE_CHANNEL
+
+    def test_it_says_nothing_rather_than_naming_the_wrong_thing(self) -> None:
+        """Silence is the right answer while the only nameable candidate is an
+        accusation against equipment that is working."""
+        series, extra = self._two_banks(0.5)
+
+        report = _analyse(series, *extra)
+
+        assert report.finding is None
+        assert report.identity_fails is True
+
+    def test_the_true_fault_is_ranked_first_and_only_the_margin_stops_it(self) -> None:
+        """Pinning what the engine is one step away from saying.
+
+        The load CT reads half; the hypothesis naming it explains the residual
+        completely. It loses on margin alone, to a rival it beats. When the
+        margin gate is revisited, this is the test that should start failing —
+        and it should fail by naming `partial_ct_coverage` on `load`.
+        """
+        from analysis import hypotheses
+
+        series, extra = self._two_banks(0.5)
+        request = _request(series, *extra)
+        days = _days(request)
+        hypotheses.register_specs(request.specs)
+        scored = hypotheses.score(days, hypotheses.generate(days, request.specs, False))
+
+        best = scored[0]
+        assert best.code == Code.PARTIAL_COVERAGE
+        assert best.channel_keys == ("load",)
+        assert best.explained > 0.99
+        assert hypotheses.gate_failures(best, len(days)) == {hypotheses.GATE_MARGIN}
+        assert best.margin > 0.13
 
     def test_an_unrivalled_pair_still_says_so_plainly(self) -> None:
         """The downgrade has to cost the ordinary case nothing."""
