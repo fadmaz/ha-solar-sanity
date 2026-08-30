@@ -7,6 +7,7 @@ do not know whether their PV sensor reads before or after the inverter.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -305,28 +306,14 @@ def night_ledger(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) 
     roles = [role for role in Role if role.in_balance]
     keys_for = {role: [spec.key for spec in specs if spec.role is role] for role in roles}
     present = [role for role in roles if keys_for[role]]
+    shape = _Shape(
+        pv_keys=pv_keys,
+        present=present,
+        keys_for=keys_for,
+        grid_keys=[key for role in _GRID_ROLES for key in keys_for.get(role, [])],
+    )
 
-    totals = dict.fromkeys(present, 0.0)
-    residual = 0.0
-    hours = 0
-    for day in days:
-        for bucket, raw in zip(day.buckets, day.r, strict=True):
-            if not _is_night(bucket, pv_keys):
-                continue
-            amounts = {role: _role_total(bucket, keys_for[role]) for role in present}
-            if any(amount is None for amount in amounts.values()):
-                # Unreachable as the engine calls this: `build_days` admits a
-                # bucket only when every balance channel reported, which is the
-                # same set iterated here. Kept because the totals below are only
-                # comparable across roles if they cover identical hours, and
-                # that is a contract with a caller rather than a property of
-                # this function. Loosening `bucket_is_valid` makes it live.
-                continue
-            for role, amount in amounts.items():
-                totals[role] += amount  # type: ignore[operator]
-            residual += raw
-            hours += 1
-
+    totals, residual, hours = _accumulate(days, shape, _ANY_HOUR)
     if not hours:
         return {}
 
@@ -351,6 +338,121 @@ def night_ledger(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) 
     }
     for role, amount in totals.items():
         out[f"night_total_{role.key}_wh"] = wh(amount)
+
+    out.update(_split_by_the_grid(days, shape, wh))
+    return out
+
+
+#: Roles that mean the grid was involved in an hour.
+_GRID_ROLES = (Role.GRID_IMPORT, Role.GRID_EXPORT)
+
+#: Below this in an hour, a grid channel has done nothing worth calling
+#: involvement. Twenty-five watt-hours is the same "this is nothing" scale the
+#: screens use, and far under any meter's own resolution over an hour.
+GRID_QUIET_WH = 25.0
+
+
+def _ANY_HOUR(_bucket: Bucket) -> bool:  # noqa: N802
+    return True
+
+
+@dataclass(frozen=True, slots=True)
+class _Shape:
+    """Which keys carry which role, worked out once and passed around.
+
+    Exists so the three ledgers are demonstrably reading the same channels: a
+    split whose halves counted different columns would still add up and still
+    be wrong.
+    """
+
+    pv_keys: list[str]
+    present: list[Role]
+    keys_for: dict[Role, list[str]]
+    grid_keys: list[str]
+
+
+def _accumulate(
+    days: tuple[DayResidual, ...],
+    shape: _Shape,
+    admit: Callable[[Bucket], bool],
+) -> tuple[dict[Role, float], float, int]:
+    """Role totals, residual and hour count over the night hours ``admit`` takes.
+
+    One path for the whole night and for each half of the split, so the halves
+    cannot drift from the total they are supposed to add up to.
+    """
+    totals = dict.fromkeys(shape.present, 0.0)
+    residual = 0.0
+    hours = 0
+    for day in days:
+        for bucket, raw in zip(day.buckets, day.r, strict=True):
+            if not _is_night(bucket, shape.pv_keys) or not admit(bucket):
+                continue
+            amounts = {role: _role_total(bucket, shape.keys_for[role]) for role in shape.present}
+            if any(amount is None for amount in amounts.values()):
+                # Unreachable as the engine calls this: `build_days` admits a
+                # bucket only when every balance channel reported, which is the
+                # same set iterated here. Kept because the totals are only
+                # comparable across roles if they cover identical hours, and
+                # that is a contract with a caller rather than a property of
+                # this function. Loosening `bucket_is_valid` makes it live.
+                continue
+            for role, amount in amounts.items():
+                totals[role] += amount  # type: ignore[operator]
+            residual += raw
+            hours += 1
+    return totals, residual, hours
+
+
+def _split_by_the_grid(
+    days: tuple[DayResidual, ...],
+    shape: _Shape,
+    wh: Callable[[float], float],
+) -> dict[str, float]:
+    """The same ledger again, for the hours the grid was in and the ones it was not.
+
+    A whole-night total says how much is missing. It cannot say *when*, and the
+    difference is the diagnosis. On the reference installation the night was
+    short by 298 W on average — but in the hours the battery ran the house
+    alone, generation, import and charging all exactly zero, the arithmetic
+    closed to within 6% of discharge, which is what a DC-measured battery
+    feeding an AC load should look like. The deficit lives entirely in the hours
+    the grid was involved, and that points at one channel rather than at three.
+
+    Finding that took diffing two diagnostics downloads by hand across a
+    two-hour window. Nobody should have to.
+
+    Emitted only when both halves have hours in them. With a grid that never
+    rests, or one that never stirs, one half is the whole night and the other is
+    empty — and republishing the same totals under a second name is how a reader
+    comes to believe two numbers agreed when only one was ever computed.
+    """
+    if not shape.grid_keys:
+        return {}
+
+    def quiet(bucket: Bucket) -> bool:
+        for key in shape.grid_keys:
+            value = bucket.value(key)
+            if value is None or abs(value) >= GRID_QUIET_WH:
+                return False
+        return True
+
+    def active(bucket: Bucket) -> bool:
+        return not quiet(bucket)
+
+    out: dict[str, float] = {}
+    halves = {
+        "night_grid_quiet": _accumulate(days, shape, quiet),
+        "night_grid_active": _accumulate(days, shape, active),
+    }
+    if not all(hours for _, _, hours in halves.values()):
+        return {}
+
+    for prefix, (totals, residual, hours) in halves.items():
+        out[f"{prefix}_hours"] = float(hours)
+        out[f"{prefix}_residual_wh"] = wh(residual)
+        for role, amount in totals.items():
+            out[f"{prefix}_{role.key}_wh"] = wh(amount)
     return out
 
 

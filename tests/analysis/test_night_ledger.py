@@ -44,6 +44,15 @@ def _ledger(series, specs=None) -> dict[str, float]:
     return night_ledger(days, specs)
 
 
+def _raw(series) -> dict[str, float]:
+    """The measurements the engine would publish for this house."""
+    specs = specs_for()
+    request = to_request(series, specs=specs, declared=DECLARED)
+    provisional = build_days(request.buckets, specs, LossModel(), request.utc_offset_hours)
+    loss = fit_loss_model(provisional, specs, None)
+    return night_fit_raw(build_days(request.buckets, specs, loss, request.utc_offset_hours), specs)
+
+
 class TestItReconciles:
     """The property the whole thing rests on."""
 
@@ -245,6 +254,94 @@ class TestItReachesTheHousesThatNeedItMost:
 
         assert "night_hours" in raw
         assert raw["night_ledger_hours"] == raw["night_hours"]
+
+
+class TestTheSplitSaysWhenTheGapHappens:
+    """A whole-night total says how much is missing. It cannot say when.
+
+    On the reference installation the night was short by 298 W on average. In
+    the hours the battery ran the house alone — generation, import and charging
+    all exactly zero — the arithmetic closed to within 6% of discharge, which is
+    what a DC-measured battery feeding an AC load should look like. The deficit
+    was entirely in the hours the grid was involved, and that points at one
+    channel instead of three.
+
+    Finding that took diffing two diagnostics downloads by hand across a
+    two-hour window, which is not a thing the product should require.
+    """
+
+    @staticmethod
+    def _split(series):
+        raw = _raw(series)
+        quiet, active = raw.get("night_grid_quiet_hours"), raw.get("night_grid_active_hours")
+        if not quiet or not active:
+            return None
+        return (
+            raw["night_grid_quiet_residual_wh"] / quiet,
+            raw["night_grid_active_residual_wh"] / active,
+        )
+
+    def test_a_clean_house_is_quiet_in_both_halves(self) -> None:
+        quiet, active = self._split(house.build(days=DAYS, seed=0))
+
+        assert abs(quiet) < 15.0
+        assert abs(active) < 15.0
+
+    def test_an_under_reading_grid_meter_shows_only_in_grid_hours(self) -> None:
+        """The signature the reference installation matches."""
+        quiet, active = self._split(house.scale(house.build(days=DAYS, seed=0), "grid_import", 0.6))
+
+        assert abs(quiet) < 15.0, "the grid was not involved in these hours"
+        assert active < -100.0
+
+    def test_an_under_reading_battery_shows_where_the_battery_works_hardest(self) -> None:
+        """A different shape, and the reason the split is worth having: this is
+        what the reference installation would look like if discharge were the
+        culprit, and it does not."""
+        quiet, active = self._split(
+            house.scale(house.build(days=DAYS, seed=0), "battery_discharge", 0.8)
+        )
+
+        assert quiet < -100.0
+        assert quiet < active
+
+    def test_an_over_reading_load_shows_in_both_halves(self) -> None:
+        """Consumption is drawn in every hour, so it cannot hide in half of them."""
+        quiet, active = self._split(house.scale(house.build(days=DAYS, seed=0), "load", 1.3))
+
+        assert quiet < -100.0
+        assert active < -100.0
+
+    def test_the_halves_add_up_to_the_whole(self) -> None:
+        """They are computed by the same path over disjoint hours, so anything
+        else would mean the split is counting different columns."""
+        raw = _raw(house.scale(house.build(days=DAYS, seed=0), "grid_import", 0.6))
+
+        assert (
+            raw["night_grid_quiet_hours"] + raw["night_grid_active_hours"]
+            == raw["night_ledger_hours"]
+        )
+        assert raw["night_grid_quiet_residual_wh"] + raw[
+            "night_grid_active_residual_wh"
+        ] == pytest.approx(raw["night_total_residual_wh"], abs=0.01)
+        for role in ("load", "grid_import", "battery_discharge", "battery_charge", "pv"):
+            halves = raw[f"night_grid_quiet_{role}_wh"] + raw[f"night_grid_active_{role}_wh"]
+            assert halves == pytest.approx(raw[f"night_total_{role}_wh"], abs=0.01), role
+
+    def test_a_grid_that_never_rests_gets_no_split(self) -> None:
+        """One half would be the whole night and the other empty, and
+        republishing the same totals under a second name is how a reader comes
+        to believe two numbers agreed when only one was computed."""
+        clean = house.build(days=DAYS, seed=0)
+        always = clean.copy_with(
+            grid_import=[v + 500.0 for v in clean.data["grid_import"]],
+            load=[v + 500.0 for v in clean.data["load"]],
+        )
+        raw = _raw(always)
+
+        assert "night_grid_quiet_hours" not in raw
+        assert "night_grid_active_hours" not in raw
+        assert raw["night_ledger_hours"] > 0
 
 
 class TestItIsStillPure:
