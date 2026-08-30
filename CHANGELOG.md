@@ -2,6 +2,32 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.16.0] - 2026-08-30
+
+### Added
+
+- **A verdict can now be replayed from a diagnostics download.** The analysis is
+  a pure function of its hourly buckets, and until now none of them left the
+  process — so every question about a live installation had to be settled by
+  asking its owner to run something and wait a day. Three diagnoses of one house
+  were made confidently and retracted that way.
+
+  Diagnostics now carry the window itself: every hour, every channel, with where
+  the number came from and how much it can be trusted. Anyone holding the file
+  can run the engine over it and get the same answer, offline, as many times as
+  they like.
+
+  Values are written unrounded, unlike every figure shown to a person. Rounding
+  them to milliwatt-hours was enough to move a replayed residual from 5e-16 to
+  3e-06 — harmless in itself, and exactly the drift that stops a replay being
+  evidence. Verified across eight different faults: the replayed report is
+  identical in verdict, finding, residual, every measurement, loss model and
+  notes.
+
+  The download grows by about 89 kB for a month of six channels.
+
+Nothing reads the new block yet. No behaviour changes.
+
 ## [0.15.0] - 2026-08-30
 
 ### Added
