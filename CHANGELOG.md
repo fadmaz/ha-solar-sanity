@@ -52,6 +52,35 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ### Fixed
 
+- **When the model absorbs a loss, it now says so.** The three terms the loss
+  model fits — a generation sensor reading before the inverter, a battery
+  metered on its DC side, a continuous unmetered draw — were being subtracted
+  from your numbers before anything was checked. Only the last of them was ever
+  mentioned. So a generation sensor reading a tenth above the rest of the system
+  was quietly accounted for, the verdict came back "no problem found", and the
+  assumption behind that answer was shown to nobody.
+
+  That was never the cautious option. It is the one where a wrong assumption
+  never surfaces. Each term now appears as a note saying what was taken and
+  what it was taken to mean.
+
+  The generation note gives the figure both ways round, because a sensor a
+  twentieth of whose reading never arrives is a sensor reading a nineteenth
+  high, and **nothing in the data can tell those apart** — dividing by an
+  efficiency and multiplying by its reciprocal produce the same series. So the
+  note says what has been assumed and what to check if the assumption is wrong.
+
+- **A generation sensor up to 15% above the rest of the system is now
+  accounted for**, rather than leaving the house with no verdict at all. The old
+  ceiling was a tenth, which cut through the middle of the range real inverters
+  occupy: an installation whose generation is metered before a 88%-efficient
+  conversion chain had nothing subtracted and reported "still looking"
+  indefinitely.
+
+  Beyond 15% — a conversion efficiency of 0.85, below anything currently sold —
+  the engine goes back to saying it cannot explain the difference, because at
+  that point it cannot.
+
 - **An inverter that idles at more than about 45 W is no longer left
   unexplained.** The continuous draw an inverter's own power supply makes is
   meant to be absorbed anywhere between 10 W and 120 W. It was also capped at a

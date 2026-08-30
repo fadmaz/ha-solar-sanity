@@ -29,6 +29,7 @@ from .model import (
     LossModel,
     Quality,
     ResidualSummary,
+    Role,
     Severity,
     Status,
     TopologyEstimate,
@@ -259,7 +260,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             # on every run and this path threw all of it away, so the one
             # verdict most people ever see carried nothing but the word OK — no
             # sentence saying what was measured, and no figures to check it by.
-            notes=_loss_notes(loss),
+            notes=_loss_notes(loss, specs),
             measurements=_measurements(days, specs),
             topology=estimate,
             loss_model=loss,
@@ -475,7 +476,9 @@ def _restricted_report(
         return None
 
     summary = _summarise(days)
-    notes = _unverifiable_notes(days, full_days) + _draw_note(days, specs) + _loss_notes(loss)
+    notes = (
+        _unverifiable_notes(days, full_days) + _draw_note(days, specs) + _loss_notes(loss, specs)
+    )
     # The signal floor keeps its own seven-day window rather than following the
     # verdict window to fourteen. MIN_SIGNAL_WH is an absolute quantity of
     # watt-hours, so doubling the days it is measured over would halve it in
@@ -553,19 +556,46 @@ def _measurements(
     return out
 
 
-def _loss_notes(loss: LossModel) -> tuple[str, ...]:
+def _generation_name(specs: tuple[ChannelSpec, ...]) -> str:
+    """What to call the generation channel in a sentence about it.
+
+    Plural when there are two arrays, because the coefficient was fitted against
+    both together and belongs to neither alone — naming one of them would put a
+    figure on a sensor that was never measured on its own.
+
+    Deliberately not the channel's friendly name. Diagnostics do not carry those,
+    so a note built from one would not survive a replay — and the whole point of
+    the replay is that the file reproduces the verdict, notes included. The count
+    is carried, and the count is all this needs.
+    """
+    arrays = sum(1 for spec in specs if spec.role is Role.PV)
+    return "Your generation sensors together" if arrays > 1 else "Your generation sensor"
+
+
+def _loss_notes(loss: LossModel, specs: tuple[ChannelSpec, ...]) -> tuple[str, ...]:
     """What the fitted loss model established, said out loud rather than only
     subtracted.
 
-    Standby, and deliberately only standby. Copy exists for the two DC terms as
-    well, and they stay silent, because the three terms are not identifiable
-    from one another: a continuous unmetered draw of 80 W on a system whose
-    sensors both read AC fits `pv_dc_gamma` at 0.045 and `battery_dc_gamma` at
-    0.061 — the second of those larger than a genuinely DC-measured battery fits
-    at, on an installation that reports OK. Telling somebody that a draw they
-    are paying for is "normal conversion loss, nothing to fix" is the worst
-    thing this product could say, so the DC notes wait for a fit that can
-    separate the terms.
+    All three terms, now. The two DC ones were silent for a real reason: the
+    terms were not identifiable from one another, and a continuous unmetered
+    draw of 80 W on a system whose sensors both read AC fitted `pv_dc_gamma` at
+    0.045 and `battery_dc_gamma` at 0.061 — the second larger than a genuinely
+    DC-measured battery fits at, on an installation reporting OK. Telling
+    somebody that a draw they are paying for is "normal conversion loss, nothing
+    to fix" is the worst thing this product could say.
+
+    That reason is gone. The terms are fitted jointly, the battery's two
+    directions are checked against each other, and a draw lands in the flat term
+    and nowhere else: across four seeds an 80 W draw gives
+    `fitted_terms == ("standby",)` with both DC coefficients at exactly nought.
+
+    The silence had a cost of its own, and it was easy to miss because it looked
+    like nothing. A generation coefficient inside the window was already being
+    subtracted without a word — so a sensor reading a tenth high was absorbed,
+    the house reported "no problem found", and the one number that would have
+    told its owner what had been assumed was never shown. Absorbing quietly is
+    not the cautious option. It is the one where a wrong assumption never
+    surfaces.
 
     Standby is safe against *sensor* faults in a way the DC terms are not:
     measured against known draws it comes back exact wherever it is fitted at
@@ -583,10 +613,32 @@ def _loss_notes(loss: LossModel) -> tuple[str, ...]:
     year, and this is the only place the product would have told somebody in
     writing to ignore it.
     """
-    if not loss.established("standby") or loss.standby_w <= 0.0:
-        return ()
-    headline, detail, _ = faults.render(Code.UNMETERED_STANDBY, watts=loss.standby_w)
-    return (f"{headline}. {detail}",)
+    notes: list[str] = []
+
+    if loss.established("pv_dc") and loss.pv_dc_gamma > 0.0:
+        # Both directions of the same figure. A sensor a twentieth of whose
+        # reading never arrives is a sensor reading a nineteenth high, and which
+        # of those is the useful sentence depends on which story is true — which
+        # the data cannot settle, because the two produce identical numbers.
+        headline, detail, _ = faults.render(
+            Code.PV_MEASURED_DC,
+            name=_generation_name(specs),
+            loss=loss.pv_dc_gamma * 100.0,
+            over=loss.pv_dc_gamma / (1.0 - loss.pv_dc_gamma) * 100.0,
+        )
+        notes.append(f"{headline}. {detail}")
+
+    if loss.established("battery_dc") and loss.battery_dc_gamma > 0.0:
+        headline, detail, _ = faults.render(
+            Code.BATTERY_MEASURED_DC, loss=loss.battery_dc_gamma * 100.0
+        )
+        notes.append(f"{headline}. {detail}")
+
+    if loss.established("standby") and loss.standby_w > 0.0:
+        headline, detail, _ = faults.render(Code.UNMETERED_STANDBY, watts=loss.standby_w)
+        notes.append(f"{headline}. {detail}")
+
+    return tuple(notes)
 
 
 def _draw_note(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) -> tuple[str, ...]:

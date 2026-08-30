@@ -74,6 +74,11 @@ SAMPLES: dict[str, object] = {
     "percent": 4.0,
     "correlation": 0.97,
     "loss": 3.9,
+    # The same loss said the other way round: a reading a share of which never
+    # arrives is a reading that much too high. Both appear in one sentence
+    # because which of them is the useful one depends on where the sensor is,
+    # and the data cannot say.
+    "over": 4.1,
 }
 
 

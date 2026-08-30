@@ -258,18 +258,22 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
         "Check the integration that provides it.",
     ),
     Code.PV_MEASURED_DC: (
-        "Your generation sensor reads before the inverter",
-        "About {loss:.0f}% of what {name} reports never reaches your house. "
-        "That is normal conversion loss, and it means the sensor measures the "
-        "panels directly rather than the inverter's output. Accounted for; "
-        "nothing to fix.",
+        "{name} reads about {over:.0f}% above the rest of the system",
+        "About {loss:.0f}% of what it reports never reaches anything else, in "
+        "every hour it generates. That is what a sensor placed before the "
+        "inverter looks like — it sees the panels, and the conversion loss "
+        "happens after it — so it has been accounted for and nothing else is "
+        "being blamed for it. If yours is on the inverter's output instead, "
+        "then it is reading high by that much, and that is worth checking.",
         "",
     ),
     Code.BATTERY_MEASURED_DC: (
         "Your battery sensors read on the DC side",
-        "Charging and discharging both lose a few percent against the rest of "
-        "the system. That is what round-trip efficiency looks like when it is "
-        "measured before conversion. Accounted for; nothing to fix.",
+        "Charging and discharging each lose about {loss:.0f}% against the rest "
+        "of the system, in the proportion one battery's efficiency requires. "
+        "That is what round-trip loss looks like measured before conversion, "
+        "and a single mis-reading sensor does not produce it. Accounted for; "
+        "nothing to fix.",
         "",
     ),
     Code.UNMETERED_STANDBY: (
