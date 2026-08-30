@@ -187,6 +187,84 @@ class TestMissingExport:
         )
 
 
+class TestAConversionLossIsNotAnExportPath:
+    """The false accusation this discriminator was rewritten to stop.
+
+    A self-consumption house — surplus into the battery, nothing ever leaving,
+    no export sensor because there is nothing to measure — with its generation
+    metered before the inverter. The conversion loss sits above what
+    ``DC_MEASUREMENT_WINDOW`` will absorb, so nothing is subtracted, and what is
+    left is large, daily, one-signed and concentrated in the sunny hours.
+
+    Which is what unmeasured export looks like. The engine said so, with
+    ``Confidence.HIGH``, to a house measured to export exactly 0.0 Wh in a
+    month: *"You appear to be exporting, but nothing measures it."*
+
+    The hours that tell the two apart are the lit ones with no surplus. Nothing
+    can leave in them, so export claims nothing; a loss proportional to
+    generation is present in proportion to generation. Night is silent under
+    both and is most of the deficit bucket, which is why averaging over all of
+    it hid the difference.
+    """
+
+    @staticmethod
+    def _report(series, seed_specs=NO_EXPORT):
+        return analyse(to_request(series, specs=specs_for(seed_specs), declared=DECLARED))
+
+    @pytest.mark.parametrize("efficiency", [0.90, 0.85, 0.80, 0.75])
+    @pytest.mark.parametrize("seed", range(6))
+    def test_a_house_that_never_exports_is_never_told_that_it_does(
+        self, efficiency: float, seed: int
+    ) -> None:
+        series = house.measure_pv_dc(_self_consumed(house.build(days=30, seed=seed)), efficiency)
+
+        report = self._report(series)
+
+        assert report.finding is None, (
+            f"eff={efficiency} seed={seed}: {report.finding.code} on a house that "
+            f"exports nothing — {report.finding.headline}"
+        )
+
+    @pytest.mark.parametrize("efficiency", [1.0, 0.96, 0.90, 0.85, 0.80])
+    @pytest.mark.parametrize("seed", range(6))
+    def test_a_house_that_does_export_is_still_told_so(self, efficiency: float, seed: int) -> None:
+        """The half that matters more, and the harder half.
+
+        Both stories are true at once here: the export really is unmapped *and*
+        the inverter really is metered on its DC side. A veto that could not
+        tell the difference would take a correct, actionable finding away from
+        every hybrid installation that happens to be missing an export sensor.
+        """
+        series = house.drop(house.build(days=30, seed=seed), "grid_export")
+        if efficiency < 1.0:
+            series = house.measure_pv_dc(series, efficiency)
+
+        report = self._report(series)
+
+        assert report.finding is not None, f"eff={efficiency} seed={seed}: went unnamed"
+        assert report.finding.code == Code.MISSING_EXPORT
+
+    def test_the_rate_is_what_separates_them_not_the_loudness(self) -> None:
+        """A rented roof is loud in exactly those hours too, and must not be silenced.
+
+        Its whole output leaves unmeasured, so the residual is generation-shaped
+        there as well — at a coefficient of 1.00 against 0.15 to 0.25 for a
+        conversion loss. Requiring only loudness would have silenced it, and
+        silence hands the verdict to "generation is counted twice", whose remedy
+        is to delete the one sensor telling the truth.
+        """
+        from analysis import hypotheses
+
+        low, _high = hypotheses.DC_MEASUREMENT_WINDOW
+
+        assert low <= 0.25 <= hypotheses.MAX_GENERATION_LOSS_COEFFICIENT, (
+            "an inverter at 75% must still be recognised as a conversion loss"
+        )
+        assert hypotheses.MAX_GENERATION_LOSS_COEFFICIENT < 0.99, (
+            "a roof exporting its entire output must not be mistaken for one"
+        )
+
+
 class TestTheCounterfactualMayNotOverruleAnUnmeasuredPath:
     """A rented roof, where the array serves almost none of the metered load.
 

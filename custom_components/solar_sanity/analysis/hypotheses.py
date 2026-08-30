@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .faults import SNAP_TABLE, Code, Snap
+from .faults import DC_MEASUREMENT_WINDOW, SNAP_TABLE, Code, Snap
 from .linalg import (
     coefficient_of_variation,
     iqr,
@@ -24,6 +24,7 @@ from .linalg import (
 )
 from .model import ChannelSpec, Confidence, Role
 from .residual import DayResidual, virtual_soc
+from .topology import NIGHT_MAX_PV_WH
 
 #: A channel needs this many large-magnitude hours before its gamma means much.
 #: The unit is *upper-quartile* hours, not hours — ``estimate_gamma`` divides by
@@ -52,6 +53,49 @@ EXPORT_MIN_SURPLUS_SHARE = 0.85
 EXPORT_MAX_DEFICIT_RATIO = 0.25
 #: Below this many surplus hours there is nothing to conclude from.
 EXPORT_MIN_SURPLUS_HOURS = 40
+
+#: ...and how quiet the *lit* deficit hours must be, which is a sharper question
+#: than the one above and the reason this constant exists.
+#:
+#: The deficit bucket is mostly night, and night is silent under every
+#: explanation, so averaging over all of it dilutes the one comparison that
+#: discriminates. An hour with the sun up and consumption still ahead of
+#: generation is the hour that separates the two stories: nothing can be
+#: exported in it, so unmeasured export claims *exactly zero* there — while a
+#: loss proportional to generation is present in every generating hour, because
+#: that is what proportional to generation means.
+#:
+#: Measured. A house that genuinely exports unmeasured sits at 0.0000 to 0.0033,
+#: and that upper end is with a DC-metered inverter at 0.80 stacked on top of
+#: the real export — both stories true at once, which is the case this must not
+#: suppress. A house that never exports a single watt-hour, carrying only a DC
+#: metering loss the window refused to absorb, sits at 0.0338 to 0.2170. Ten
+#: times apart at their closest, and this sits between them.
+EXPORT_MAX_LIT_DEFICIT_RATIO = 0.01
+
+#: Below this many lit deficit hours the discrimination above cannot be made at
+#: all, and an accusation is withheld rather than made without it.
+EXPORT_MIN_LIT_DEFICIT_HOURS = 20
+
+#: The largest share of generation a *metering* loss can account for.
+#:
+#: Being loud in the lit deficit hours is not on its own a reason to stay quiet,
+#: because two very different things are loud there. A generation sensor reading
+#: high by a conversion loss contributes a small fraction of generation — a
+#: quarter at the very worst, since an inverter below 75% efficient is not a
+#: product anybody sells. A roof whose entire output is exported unmeasured
+#: contributes *all* of it. Measured: 0.15 to 0.25 for DC metering at 0.85 down
+#: to 0.75, against 0.99 to 1.00 for a rented roof serving none of its own load.
+#:
+#: So the veto asks for both — loud in hours export cannot reach, *and*
+#: proportional at a rate only a metering loss could produce. 0.35 sits far
+#: above any real inverter and far below a roof that exports everything.
+#:
+#: This band is deliberately much wider than `DC_MEASUREMENT_WINDOW`, which
+#: decides whether to *subtract* the loss. Subtracting changes the user's
+#: numbers and needs confidence; declining to accuse them needs only doubt, and
+#: it is the accusation that does the damage if it is wrong.
+MAX_GENERATION_LOSS_COEFFICIENT = 0.35
 
 #: Fraction of the residual a hypothesis must account for.
 MIN_EXPLAINED = 0.80
@@ -353,23 +397,49 @@ def _missing_export_hypothesis(
     is exactly what an ordinary fault looks like from the outside. The one thing
     that separates them is *when*: export cannot happen while consumption
     exceeds generation, and a miscounted channel does not care what time it is.
+
+    That is true, and it was not being asked carefully enough. A miscounted
+    channel does not care what time it is, but a *generation-proportional* loss
+    does — it is largest exactly when generation is largest, which is exactly
+    when there is a surplus. So a DC-metered inverter whose loss the window
+    declined to absorb produced a residual with the same daily shape as
+    unmeasured export, and this said HIGH confidence about a house measured to
+    export precisely zero watt-hours in a month.
+
+    The hours that tell them apart are the lit ones with no surplus: the sun is
+    up, consumption is still ahead of generation, and nothing can leave. Export
+    claims nothing there by construction. A loss proportional to generation is
+    present there in proportion to generation, because that is what it is.
+    Night is silent under both stories, and night is most of the deficit bucket,
+    which is why averaging over the whole of it hid the difference.
     """
     if any(spec.role is Role.GRID_EXPORT for spec in specs):
         return None
 
     surplus_sq = 0.0
     deficit_sq = 0.0
+    lit_deficit_sq = 0.0
+    lit_cross = 0.0
+    lit_generation_sq = 0.0
     surplus_hours = 0
     deficit_hours = 0
+    lit_deficit_hours = 0
 
+    pv_key = _role_key(Role.PV)
     for day in days:
-        for surplus, value in zip(surplus_mask(day), day.dr, strict=True):
+        for bucket, surplus, value in zip(day.buckets, surplus_mask(day), day.dr, strict=True):
             if surplus:
                 surplus_hours += 1
                 surplus_sq += value * value
-            else:
-                deficit_hours += 1
-                deficit_sq += value * value
+                continue
+            deficit_hours += 1
+            deficit_sq += value * value
+            generation = bucket.value(pv_key) if pv_key is not None else None
+            if generation is not None and generation > NIGHT_MAX_PV_WH:
+                lit_deficit_hours += 1
+                lit_deficit_sq += value * value
+                lit_cross += value * generation
+                lit_generation_sq += generation * generation
 
     if surplus_hours < EXPORT_MIN_SURPLUS_HOURS or deficit_hours < EXPORT_MIN_SURPLUS_HOURS:
         return None
@@ -386,6 +456,23 @@ def _missing_export_hypothesis(
     per_deficit = deficit_sq / deficit_hours
     if per_surplus <= 0 or per_deficit / per_surplus > EXPORT_MAX_DEFICIT_RATIO:
         return None
+
+    # The lit hours with no surplus, where export claims nothing and a
+    # generation-proportional loss claims a great deal. Without enough of them
+    # the two stories cannot be told apart, and this says nothing rather than
+    # saying something confident it has no way to check.
+    if lit_deficit_hours < EXPORT_MIN_LIT_DEFICIT_HOURS:
+        return None
+
+    if lit_deficit_sq / lit_deficit_hours / per_surplus > EXPORT_MAX_LIT_DEFICIT_RATIO:
+        # Loud where export cannot reach. That alone is not grounds for silence:
+        # a rented roof exporting its whole output is loud there too, and
+        # telling its owner nothing leaves the field to "generation is counted
+        # twice", whose remedy is to delete the one sensor that was telling the
+        # truth. What separates them is the rate.
+        loss = lit_cross / lit_generation_sq if lit_generation_sq > 0 else 0.0
+        if DC_MEASUREMENT_WINDOW[0] <= loss <= MAX_GENERATION_LOSS_COEFFICIENT:
+            return None
 
     # Energy going out unmeasured makes the residual run positive. The other
     # sign is a different problem entirely and must not borrow this copy.

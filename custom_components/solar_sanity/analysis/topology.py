@@ -347,20 +347,30 @@ def _fit_night_terms(
     throughput: the slope is the conversion loss, the intercept is whatever
     is drawn regardless. Theil-Sen for both, so a handful of odd hours cannot
     drag either one.
+
+    A house with no battery is the degenerate case of that same line rather than
+    a house this cannot speak about: there is no throughput to vary with, so
+    there is no slope, and the intercept is the whole of it. Requiring a
+    discharge channel before looking meant a batteryless installation could
+    never have its inverter's own draw absorbed — which a fortnight of December
+    weather and ordinary meter noise is enough to turn into a permanent "still
+    looking". Found by the clean corpus, at eight scenarios in three thousand.
     """
     samples = _night_samples(days, specs)
     if samples is None:
         return None, 0.0
     xs, ys, loads = samples
 
-    slope = theil_sen_slope(xs, ys)
-    if slope is None:
+    line = _night_line(xs, ys)
+    if line is None:
         return None, 0.0
-    intercept = theil_sen_intercept(xs, ys, slope)
-    if intercept is None:
-        return None, 0.0
+    slope, intercept = line
 
-    gamma = slope if DC_MEASUREMENT_WINDOW[0] <= slope <= DC_MEASUREMENT_WINDOW[1] else None
+    gamma = (
+        slope
+        if slope is not None and DC_MEASUREMENT_WINDOW[0] <= slope <= DC_MEASUREMENT_WINDOW[1]
+        else None
+    )
     return gamma, _plausible_standby(intercept, loads)
 
 
@@ -685,7 +695,7 @@ def _night_samples(
     # the order the two were mapped in.
     pv_keys = [s.key for s in specs if s.role is Role.PV]
     discharge_keys = [s.key for s in specs if s.role is Role.BATTERY_DISCHARGE]
-    if not pv_keys or not discharge_keys:
+    if not pv_keys:
         return None
 
     load_keys = [s.key for s in specs if s.role is Role.LOAD]
@@ -697,7 +707,13 @@ def _night_samples(
         for bucket, raw in zip(day.buckets, day.r, strict=True):
             if not _is_night(bucket, pv_keys):
                 continue
-            flow = _role_total(bucket, discharge_keys)
+            # No battery is not no data. A house without one still has night
+            # hours, and they still measure a continuous draw — there is simply
+            # no throughput for it to vary with, so every x is zero and the line
+            # degenerates to its own intercept. `_night_line` handles that; what
+            # must not happen is refusing to look, which is what returning
+            # `None` here did to every batteryless installation.
+            flow = 0.0 if not discharge_keys else _role_total(bucket, discharge_keys)
             if flow is None:
                 continue
             xs.append(flow)
@@ -708,6 +724,31 @@ def _night_samples(
     if len(xs) < MIN_STANDBY_SAMPLES:
         return None
     return xs, ys, loads
+
+
+def _night_line(xs: list[float], ys: list[float]) -> tuple[float | None, float] | None:
+    """Slope and intercept of the night residual against battery throughput.
+
+    Returns ``(slope, intercept)``; the slope is ``None`` when there is none to
+    find. That is not a failure — on a house with no battery every ``x`` is
+    zero, and a line through points that all share an abscissa is exactly its
+    own intercept. The conversion loss genuinely cannot be measured there
+    because there is no conversion happening, while the continuous draw can be,
+    and refusing both because one is absent is how a 25 W inverter supply went
+    unabsorbed on every batteryless installation.
+
+    Theil-Sen for the slope, the median for the degenerate intercept, so a
+    handful of odd hours cannot drag either.
+    """
+    if not xs or all(x == 0.0 for x in xs):
+        flat = median(ys)
+        return None if flat is None else (None, flat)
+
+    slope = theil_sen_slope(xs, ys)
+    if slope is None:
+        return None
+    intercept = theil_sen_intercept(xs, ys, slope)
+    return None if intercept is None else (slope, intercept)
 
 
 def _plausible_standby(intercept: float, night_loads: list[float]) -> float:
@@ -754,12 +795,14 @@ def night_fit_raw(
     xs, ys, loads = samples
     out["night_hours"] = float(len(xs))
 
-    slope = theil_sen_slope(xs, ys)
-    if slope is not None:
-        out["night_slope"] = slope
-        intercept = theil_sen_intercept(xs, ys, slope)
-        if intercept is not None:
-            out["night_intercept_w"] = intercept
+    line = _night_line(xs, ys)
+    if line is not None:
+        slope, intercept = line
+        # Absent rather than zero when there is no battery to find a slope
+        # against. Nought is a measurement, and this is the absence of one.
+        if slope is not None:
+            out["night_slope"] = slope
+        out["night_intercept_w"] = intercept
 
     typical = median(loads)
     if typical is not None:
@@ -789,11 +832,11 @@ def unmetered_draw_w(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ..
         return None
     xs, ys, _loads = samples
 
-    slope = theil_sen_slope(xs, ys)
-    if slope is None:
+    line = _night_line(xs, ys)
+    if line is None:
         return None
-    intercept = theil_sen_intercept(xs, ys, slope)
-    if intercept is None or intercept <= STANDBY_PLAUSIBLE_W[1]:
+    _slope, intercept = line
+    if intercept <= STANDBY_PLAUSIBLE_W[1]:
         return None
     return intercept
 

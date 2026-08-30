@@ -14,21 +14,33 @@ from __future__ import annotations
 
 import pytest
 from analysis.engine import analyse
-from analysis.model import Status
+from analysis.model import Role, Status
 
 from tests.synth import house
-from tests.synth.adapt import to_request
+from tests.synth.adapt import extra_spec, specs_for, to_request
 
 #: Statuses that count as "said nothing alarming".
 QUIET = {Status.OK, Status.INSUFFICIENT_DATA, Status.INVESTIGATING, Status.NOT_CHECKABLE}
 
 
 def _assert_quiet(report, label: str) -> None:
+    """Silence, and the absence of an accusation made by other means.
+
+    ``identity_fails`` is a separate channel from the finding: it is what the
+    card renders as a data-health problem, and it can be set on a report whose
+    ``finding`` is ``None``. A gate that only looked at the finding could
+    therefore watch a healthy house be marked as failing its own arithmetic and
+    call that silence. Every change to the loss model and the verdict window
+    pushes healthy houses along exactly that axis, so it is checked here.
+    """
     assert report.finding is None, (
         f"{label}: expected silence on a healthy system, got "
         f"{report.finding.code} — {report.finding.headline}"
     )
     assert report.status in QUIET, f"{label}: unexpected status {report.status}"
+    assert report.identity_fails is False, (
+        f"{label}: healthy house marked as failing its own identity, status {report.status}"
+    )
 
 
 @pytest.mark.parametrize("seed", range(25))
@@ -98,14 +110,24 @@ def test_all_losses_combined_is_not_a_fault(seed: int) -> None:
 
 
 @pytest.mark.parametrize("seed", range(6))
-def test_split_array_is_not_a_duplicate(seed: int) -> None:
+def test_two_real_arrays_are_not_a_duplicate(seed: int) -> None:
     """Two arrays on different aspects correlate, but are genuinely separate.
 
     Adversarial: this looks superficially like the duplicate-channel signature.
+
+    This used to call ``house.split_arrays``, which replaced the generation
+    curve with a smoothed copy of itself and adjusted nothing else — leaving up
+    to 1,121 Wh an hour unaccounted for, and never creating the second channel
+    it claimed to. So six scenarios asserted silence about a house that cannot
+    exist, using a detector that had nothing to pair. ``two_aspects`` splits the
+    array into two halves that sum to the original hour for hour, and both are
+    mapped, which is the thing the test says it is testing.
     """
-    series = house.split_arrays(house.build(days=30, seed=seed), lag_hours=2)
-    report = analyse(to_request(series))
-    _assert_quiet(report, f"split array seed={seed}")
+    series = house.two_aspects(house.build(days=30, seed=seed), "pv", "pv_west", tilt=0.4)
+    report = analyse(
+        to_request(series, specs=(*specs_for(), extra_spec("pv_west", Role.PV, "Solar west")))
+    )
+    _assert_quiet(report, f"two arrays seed={seed}")
 
 
 @pytest.mark.parametrize("seed", range(6))
