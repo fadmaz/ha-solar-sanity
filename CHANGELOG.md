@@ -2,6 +2,60 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Changed
+
+- **One verdict window, twice as long, counting every day that is not clean.**
+  Two things decided whether you got an answer: whether six of the last seven
+  days were clean, and whether five of them were outright actionable. A day that
+  was merely unsettled counted toward neither. A house could therefore sit for a
+  fortnight visibly failing to add up and satisfy no rule at all — and the
+  engine would say "the numbers move around but not consistently enough to name"
+  without ever having generated a single explanation to reject. It would go on
+  saying it indefinitely.
+
+  The window is now fourteen days and the second test counts every day that is
+  not clean. Measured over 108 healthy installations across three topologies,
+  twelve seeds and three noise levels: nothing is blamed for a fault it does not
+  have.
+
+  Two houses that were being told the wrong thing are now told the right one:
+
+  - **A house with no export meter is told so.** Its energy leaves unmeasured,
+    the balance misses by a fifth, and the old rule reported "no problem found"
+    with the whole discrepancy demoted to a footnote. It now says: you appear to
+    be exporting, but nothing measures it — map a grid export sensor.
+  - **A duplicated channel is named** even when the typical day stays inside the
+    clean band. The detector could always find it; nothing ever asked.
+
+  Your first verdict now takes two weeks rather than one. In exchange it stops
+  changing when nothing about your house has.
+
+  The same test decides whether removing a channel would settle the house, so it
+  tightened there too, and a false positive went with it: on a grid of sixty
+  two-array houses beside an unmetered draw, the case that used to call half of
+  somebody's real generation a duplicate no longer arises anywhere.
+
+- **The loss terms are fitted together rather than one at a time.** Generation
+  and battery throughput rise and fall together and a continuous draw sits in
+  both, so estimating each alone gives it a share of the others. Against a known
+  96%-efficient inverter the generation term read 62% high. At 94% it read high
+  enough to fall outside the window that would have accepted it, so *no* loss was
+  subtracted at all and a healthy hybrid showed a 7% residual and reported "still
+  looking" forever.
+
+  On a real DC-coupled installation this took the reported difference from 16.4%
+  to 3.8%, and the verdict from "still looking" to no problem found. Nothing was
+  fitted that was not there: the correction it had been applying was for a loss
+  the house does not have.
+
+- **The consumption sensor you told us about is now read.** Setup asks whether
+  it covers the whole house; the answer was stored and never consulted. Answering
+  no now opens the boundary, because whatever that sensor misses lands in the
+  residual looking like a fault — so the engine was calling these houses fully
+  measured on their owner's own word that they are not.
+
 ## [0.16.0] - 2026-08-30
 
 ### Added

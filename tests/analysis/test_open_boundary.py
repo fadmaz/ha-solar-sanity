@@ -71,6 +71,67 @@ class TestClosure:
         assert check_closure(specs_for(), DECLARED).state is Closure.CLOSED
 
 
+class TestThePartialLoadSensorTheOwnerToldUsAbout:
+    """``load_covers_whole_house`` was asked at setup, stored, and never read.
+
+    A load sensor on part of the house leaves the rest of the consumption
+    outside every channel there is. The identity cannot close, and the energy it
+    misses arrives in the residual looking like a fault — so the engine was
+    reporting these houses as fully measured on their owner's own word that they
+    are not, and then hunting for a cause of the gap that word explains.
+    """
+
+    @staticmethod
+    def _declared(covers: Answer, net: Answer = Answer.NO) -> DeclaredTopology:
+        return DeclaredTopology(
+            has_battery=Answer.YES,
+            grid_is_single_net_sensor=net,
+            load_covers_whole_house=covers,
+        )
+
+    def test_a_partial_load_sensor_opens_an_otherwise_closed_house(self) -> None:
+        result = check_closure(specs_for(), self._declared(Answer.NO))
+
+        assert result.state is Closure.OPEN
+        assert "whole house" in result.reason
+
+    @pytest.mark.parametrize("covers", [Answer.YES, Answer.UNKNOWN])
+    def test_anything_but_a_flat_no_leaves_the_verdict_alone(self, covers: Answer) -> None:
+        """``UNKNOWN`` is the stored default, so treating it as a partial sensor
+        would open the boundary on every installation that skipped the question."""
+        assert check_closure(specs_for(), self._declared(covers)).state is Closure.CLOSED
+
+    def test_it_does_not_take_the_night_hours_away_from_a_house_with_no_export(
+        self,
+    ) -> None:
+        """The ordering property, and the whole reason this branch is last.
+
+        ``check_closure`` returns on first match. Answering ahead of the export
+        branch would report the boundary open — correctly — but with
+        ``unmeasured_export`` unset, and that flag is the sole thing that earns
+        a house the restricted night-hours verdict. Every no-export house would
+        have silently lost the only real answer available to it, as a result of
+        the engine being told *more* about the installation.
+        """
+        result = check_closure(specs_for(NO_EXPORT), self._declared(Answer.NO))
+
+        assert result.state is Closure.OPEN
+        assert result.unmeasured_export is True
+
+    def test_the_house_still_gets_a_verdict_rather_than_a_shrug(self) -> None:
+        """Opening the boundary must not cost the owner their analysis."""
+        report = analyse(
+            to_request(
+                house.build(days=30, seed=0),
+                specs=specs_for(),
+                declared=self._declared(Answer.NO),
+            )
+        )
+
+        assert report.status is not Status.INSUFFICIENT_DATA
+        assert report.residual.valid_days > 0
+
+
 class TestMissingExport:
     """The finding whose copy has always existed and could never be reached."""
 
@@ -342,14 +403,35 @@ class TestVerifiableHoursOnly:
         return analyse(to_request(series, specs=specs_for(seed_specs), declared=DECLARED))
 
     @pytest.mark.parametrize("seed", [1, 3])
-    def test_a_healthy_house_gets_a_verdict_instead_of_a_wait(self, seed: int) -> None:
+    def test_the_missing_export_meter_is_named_rather_than_called_healthy(self, seed: int) -> None:
+        """These two seeds used to report ``OK`` on a house a fifth out.
+
+        The full-day residual is 20.60% and 20.77%. The restricted pass checked
+        the night hours, found them clean, and returned ``OK`` with the whole
+        daytime discrepancy demoted to a note — so the headline verdict on a
+        house missing an entire channel was "no problem found", and the reason
+        it never got further was a verdict window narrow enough that six
+        agreeable days out of seven ended the analysis.
+
+        The house is healthy. The *mapping* is not, and that is a thing its
+        owner can fix, so it is now said in the finding rather than the
+        footnote.
+        """
         report = self._report(house.build(days=30, seed=seed))
 
-        assert report.status is Status.OK
-        assert report.notes, "an OK covering only half the hours must say so"
+        assert report.status is Status.FAULT_FOUND
+        assert report.finding is not None
+        assert report.finding.code == Code.MISSING_EXPORT
 
     def test_the_note_says_what_was_not_checked(self) -> None:
-        report = self._report(house.build(days=30, seed=1))
+        """Read on a house that still takes the restricted path.
+
+        A healthy no-export house now has its export named outright, so the
+        restricted pass is reached by the houses it was written for: the ones
+        where attribution over the full day comes back with nothing it can
+        stand behind, and the verifiable hours are all that is left.
+        """
+        report = self._report(house.halve(house.build(days=30, seed=1), "load"))
         joined = " ".join(report.notes)
 
         assert "no generation" in joined
@@ -357,7 +439,7 @@ class TestVerifiableHoursOnly:
 
     def test_the_note_quantifies_the_unexplained_surplus(self) -> None:
         """A number the user can check against their own meter or bill."""
-        report = self._report(house.build(days=30, seed=1))
+        report = self._report(house.halve(house.build(days=30, seed=1), "load"))
 
         assert any("kWh a day is unaccounted for" in note for note in report.notes)
 
