@@ -18,8 +18,10 @@ two names and described the second as verifying the first.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
-from analysis.model import Answer, DeclaredTopology, LossModel, Role
+from analysis.model import Answer, BucketSource, DeclaredTopology, LossModel, Role
 from analysis.residual import build_days
 from analysis.topology import fit_loss_model, night_fit_raw, night_ledger
 
@@ -421,6 +423,110 @@ class TestItTellsBlindApartFromMisScaled:
         diagnostics file cannot tell which they are looking at unless the key is
         always there."""
         assert "night_hours_with_no_supply" in _raw(house.build(days=DAYS, seed=0))
+
+
+class TestItSeparatesWhatWeMeasuredFromWhatWeWereTold:
+    """The control the ledger did not have.
+
+    An hourly arithmetic mean over a sensor that reports on change over-weights
+    the busy part of the hour, so a power channel read that way sits high while
+    an energy counter beside it is exact. That is a night which does not add up
+    with nothing whatever wrong — and in a total it is indistinguishable from a
+    sensor that genuinely under-reports.
+
+    Our own integration weights every reading by how long it stood, so it is the
+    control. If the deficit lives in the hours taken from statistics and the
+    hours we integrated ourselves close, the estimator is the fault and the
+    house is fine.
+    """
+
+    @staticmethod
+    def _sourced(request, own_from=None, inflate: float = 1.0):
+        """Older hours from statistics, recent ones our own — and optionally the
+        statistics-derived POWER channels inflated, which is what the arithmetic
+        mean does to an event-reporting sensor."""
+        power = {"pv", "load", "grid_import"}
+        buckets = []
+        for bucket in request.buckets:
+            own = own_from is not None and bucket.start_utc.date() >= own_from
+            source = {
+                key: (
+                    BucketSource.OWN_INTEGRAL
+                    if own
+                    else (BucketSource.LTS_MEAN if key in power else BucketSource.LTS_SUM)
+                )
+                for key in bucket.source
+            }
+            wh = dict(bucket.wh)
+            if not own and inflate != 1.0:
+                for key in power:
+                    if wh.get(key) is not None:
+                        wh[key] = wh[key] * inflate
+            buckets.append(replace(bucket, source=source, wh=wh))
+        return replace(request, buckets=tuple(buckets))
+
+    @staticmethod
+    def _measure(request):
+        specs = specs_for()
+        provisional = build_days(request.buckets, specs, LossModel(), request.utc_offset_hours)
+        loss = fit_loss_model(provisional, specs, None)
+        return night_fit_raw(
+            build_days(request.buckets, specs, loss, request.utc_offset_hours), specs
+        )
+
+    def _request(self):
+        return to_request(house.build(days=DAYS, seed=0), specs=specs_for(), declared=DECLARED)
+
+    def test_a_biased_estimator_is_confined_to_the_hours_it_touched(self) -> None:
+        request = self._request()
+        cut = sorted({b.start_utc.date() for b in request.buckets})[-5]
+
+        raw = self._measure(self._sourced(request, own_from=cut, inflate=1.8))
+
+        measured = raw["night_measured_residual_wh"] / raw["night_measured_hours"]
+        told = raw["night_from_statistics_residual_wh"] / raw["night_from_statistics_hours"]
+        assert abs(measured) < 15.0, "the hours we integrated ourselves should close"
+        assert told < -100.0, "the hours we were told should carry the whole deficit"
+
+    def test_a_real_fault_shows_in_both_kinds(self) -> None:
+        """So the split cannot be read as exonerating a house that is genuinely
+        wrong — a mis-scaled sensor is mis-scaled whoever did the arithmetic."""
+        request = to_request(
+            house.scale(house.build(days=DAYS, seed=0), "battery_discharge", 0.5),
+            specs=specs_for(),
+            declared=DECLARED,
+        )
+        cut = sorted({b.start_utc.date() for b in request.buckets})[-5]
+
+        raw = self._measure(self._sourced(request, own_from=cut))
+
+        assert raw["night_measured_residual_wh"] / raw["night_measured_hours"] < -100.0
+        assert (
+            raw["night_from_statistics_residual_wh"] / raw["night_from_statistics_hours"] < -100.0
+        )
+
+    def test_the_halves_add_up_to_the_whole(self) -> None:
+        request = self._request()
+        cut = sorted({b.start_utc.date() for b in request.buckets})[-5]
+
+        raw = self._measure(self._sourced(request, own_from=cut, inflate=1.8))
+
+        assert (
+            raw["night_measured_hours"] + raw["night_from_statistics_hours"]
+            == raw["night_ledger_hours"]
+        )
+        assert raw["night_measured_residual_wh"] + raw[
+            "night_from_statistics_residual_wh"
+        ] == pytest.approx(raw["night_total_residual_wh"], abs=0.01)
+
+    def test_a_fresh_installation_gets_no_split(self) -> None:
+        """Everything is backfilled on day one, and one half being the whole
+        night republishes it under a second name."""
+        raw = self._measure(self._sourced(self._request(), own_from=None))
+
+        assert "night_measured_hours" not in raw
+        assert "night_from_statistics_hours" not in raw
+        assert raw["night_ledger_hours"] > 0
 
 
 class TestItIsStillPure:
