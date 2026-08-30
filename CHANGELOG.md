@@ -2,6 +2,32 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.14.0] - 2026-08-30
+
+### Added
+
+- **Hours with nothing supplying them are counted.** A month whose night does
+  not add up looks the same whether every hour is a little short or a few hours
+  are short of everything, and those have different causes. An hour drawing real
+  power while every source reads under 25 Wh cannot be explained by any sensor
+  reading the wrong amount — there is nothing to multiply — so it is proof that
+  something stopped reporting rather than that something reports wrongly. The
+  count is always present, so nought means nought.
+
+  Measured on synthetic houses: a battery reading half, a battery reading a
+  third and a consumption sensor reading double all produce residuals in the
+  hundreds of watts and *no* such hours; supply sensors going blind one hour in
+  six produce sixty of them and a smaller residual.
+
+- **Where each channel's hours came from**, in the coverage section. An hourly
+  arithmetic mean over a sensor that reports on change over-weights the busy
+  part of an hour, so a power channel read that way can sit high while an
+  energy counter beside it is exact — a difference that does not add up with
+  nothing at all wrong. The integration already treated such hours with more
+  caution; now you can see which ones they were.
+
+Diagnostics only. No verdict changes.
+
 ## [0.13.0] - 2026-08-30
 
 ### Added
