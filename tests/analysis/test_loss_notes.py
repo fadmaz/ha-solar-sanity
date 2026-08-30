@@ -17,7 +17,7 @@ from analysis.engine import analyse
 from analysis.faults import Code
 from analysis.model import Answer, DeclaredTopology, LossModel, Status
 from analysis.residual import build_days
-from analysis.topology import fit_loss_model
+from analysis.topology import fit_loss_model, joint_loss_fit
 
 from tests.synth import house
 from tests.synth.adapt import specs_for, to_request
@@ -33,6 +33,10 @@ DAYS = 30
 
 def _report(series):
     return analyse(to_request(series, declared=DECLARED))
+
+
+def _request(series):
+    return to_request(series, specs=specs_for(), declared=DECLARED)
 
 
 def _fit(series) -> LossModel:
@@ -142,32 +146,90 @@ class TestItStaysQuietWhenItShould:
         assert _standby_note(report) is None
 
 
+class TestTheTermsAreNowSeparable:
+    """The measurements that used to say the opposite.
+
+    Each of these asserted, before the joint fit, that the loss model could not
+    tell a real DC measurement from an unmetered draw. They now assert that it
+    can, and they are kept in that shape deliberately: if the fit ever regresses
+    to estimating one term at a time, these fail rather than the notes quietly
+    becoming wrong again.
+    """
+
+    def test_an_unmetered_draw_is_not_read_as_dc_measurement(self) -> None:
+        """80 W of draw on a house whose sensors both read AC.
+
+        Fitted one term at a time this came back as `pv_dc` above 0.04, and an
+        installation would have been told its sensors read DC-side and the loss
+        was normal. The flat column now takes it, to the watt.
+        """
+        drawing = _fit(house.add_standby(house.build(days=DAYS, seed=0), 80.0))
+
+        assert not drawing.established("pv_dc")
+        assert not drawing.established("battery_dc")
+
+    def test_the_draw_lands_in_the_flat_term_where_it_belongs(self) -> None:
+        request = _request(house.add_standby(house.build(days=DAYS, seed=0), 80.0))
+        specs = specs_for()
+        days = build_days(request.buckets, specs, LossModel(), request.utc_offset_hours)
+
+        fit = joint_loss_fit(days, specs)
+
+        assert fit is not None
+        assert fit["flat"] == pytest.approx(80.0, abs=5.0)
+        assert abs(fit["pv_dc"]) < 0.005
+        assert abs(fit["battery_dc"]) < 0.005
+
+    def test_a_genuine_dc_battery_is_still_found(self) -> None:
+        """The separation has to cost the true case nothing."""
+        genuine = _fit(house.measure_battery_dc(house.build(days=DAYS, seed=0)))
+
+        assert genuine.established("battery_dc")
+        assert 0.02 <= genuine.battery_dc_gamma <= 0.10
+
+    def test_all_three_are_recovered_at_once(self) -> None:
+        """The case that was impossible: a DC-measured house that also has an
+        unmetered draw. One term at a time, each contaminated the others."""
+        from analysis.model import LossModel
+        from analysis.residual import build_days
+        from analysis.topology import joint_loss_fit
+
+        series = house.add_standby(
+            house.measure_battery_dc(house.measure_pv_dc(house.build(days=DAYS, seed=0))), 80.0
+        )
+        specs = specs_for()
+        request = _request(series)
+        days = build_days(request.buckets, specs, LossModel(), request.utc_offset_hours)
+
+        fit = joint_loss_fit(days, specs)
+
+        assert fit is not None
+        assert fit["pv_dc"] == pytest.approx(0.041, abs=0.01)
+        assert fit["battery_dc"] == pytest.approx(0.051, abs=0.01)
+        assert fit["flat"] == pytest.approx(80.0, abs=10.0)
+
+    @pytest.mark.parametrize("seed", range(4))
+    def test_a_draw_never_fits_a_dc_term_on_any_seed(self, seed: int) -> None:
+        assert not _fit(house.add_standby(house.build(days=DAYS, seed=seed), 80.0)).fitted_terms
+
+
 class TestTheDcNotesStaySilent:
     """Pinning a decision, so it is not quietly reversed as an oversight.
 
     `pv_measured_dc` and `battery_measured_dc` have finished copy telling the
     reader that a few per cent of loss is normal conversion and there is nothing
-    to fix. Both stay unraised because the loss model's three terms are not
-    identifiable from one another, and the measurements below are why.
+    to fix.
+
+    They stayed unraised because the loss model's three terms were not
+    identifiable from one another: fitted one at a time, an unmetered draw was
+    read as DC conversion at a *larger* figure than a genuinely DC-measured
+    battery produced, so no threshold could separate them.
+
+    The joint fit ends that — see `TestTheTermsAreNowSeparable` below, which
+    replaced the two measurements that used to live here. Emitting the notes is
+    now a product decision rather than an impossibility, and it is not taken
+    here. The remaining tests keep them silent until somebody decides.
     """
-
-    def test_an_unmetered_draw_masquerades_as_dc_measurement(self) -> None:
-        """80 W of draw on a house whose sensors both read AC. If the DC notes
-        were emitted from `established()`, this installation would be told its
-        sensors read DC-side and the loss was normal."""
-        drawing = _fit(house.add_standby(house.build(days=DAYS, seed=0), 80.0))
-
-        assert drawing.established("pv_dc")
-        assert drawing.pv_dc_gamma > 0.04
-
-    def test_the_spurious_fit_can_exceed_the_genuine_one(self) -> None:
-        """Which is why no threshold separates them: the false case is larger
-        than the true one."""
-        genuine = _fit(house.measure_battery_dc(house.build(days=DAYS, seed=0)))
-        spurious = _fit(house.add_standby(house.build(days=DAYS, seed=0), 80.0))
-
-        assert genuine.established("battery_dc") and spurious.established("battery_dc")
-        assert spurious.battery_dc_gamma > genuine.battery_dc_gamma
 
     @pytest.mark.parametrize("seed", range(3))
     def test_neither_dc_note_is_ever_spoken(self, seed: int) -> None:

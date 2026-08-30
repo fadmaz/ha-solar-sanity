@@ -10,9 +10,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import Final
 
 from .faults import DC_MEASUREMENT_MAX_IQR, DC_MEASUREMENT_WINDOW
-from .linalg import median, theil_sen_intercept, theil_sen_slope
+from .linalg import least_squares, median, theil_sen_intercept, theil_sen_slope
 from .model import (
     Answer,
     Bucket,
@@ -25,6 +26,12 @@ from .model import (
     TopologyEstimate,
 )
 from .residual import DayResidual
+
+#: Hours needed before the joint loss fit is trusted. Three free coefficients
+#: against a residual that carries meter noise wants far more than three
+#: equations — a week of complete hours, which is also roughly where the old
+#: per-role estimator's own floor of fifty ratios sat.
+MIN_JOINT_FIT_HOURS: Final = 168
 
 #: Days of data before we will commit to a DC-vs-AC conclusion.
 MIN_DAYS_FOR_COUPLING = 14
@@ -167,6 +174,81 @@ def _gamma_for_role(
     return median(ratios)
 
 
+def _role_hourly(bucket: Bucket, keys: list[str]) -> float | None:
+    """One role's total for one hour, or ``None`` if any of its channels is absent.
+
+    Partial is not a total. A role carried by two sensors where one has a hole
+    would otherwise contribute half of itself and be fitted against as though
+    that were the whole thing.
+    """
+    parts = [value for key in keys if (value := bucket.value(key)) is not None]
+    if len(parts) < len(keys):
+        return None
+    return sum(parts)
+
+
+def joint_loss_fit(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
+) -> dict[str, float] | None:
+    """All three loss terms at once, by least squares.
+
+    One at a time is biased, and on a DC-coupled hybrid it is badly biased. The
+    terms overlap — generation and battery throughput rise together, and a
+    continuous draw is present in both — so a median-of-ratios attributed to one
+    carries a share of the others. Measured against a known 96%-efficient
+    inverter the generation term reads 62% high, which is enough to push a
+    healthy installation outside the window that would have absorbed it. Nothing
+    is then subtracted at all, and the house reports "still looking" forever on
+    a loss the model was built to explain.
+
+    Fitted against the *raw* residual ``r``, never ``dr``, for the reason
+    ``_gamma_for_role`` documented before it: ``dr`` already has the previous
+    model subtracted, so fitting against it estimates the loss that remains
+    rather than the loss that is there, and carried forward as the next run's
+    prior that alternates between a full estimate and nearly zero.
+
+    The flat column is fitted and its value discarded. It is here so that a
+    continuous unmetered draw lands in it rather than being smeared across the
+    two terms that are kept — the standby figure itself comes from the night
+    fit, which sees the same draw without any generation confusing it.
+    """
+    roles = {
+        "pv_dc": [spec.key for spec in specs if spec.role is Role.PV],
+        "battery_dc": [
+            spec.key for spec in specs if spec.role in (Role.BATTERY_CHARGE, Role.BATTERY_DISCHARGE)
+        ],
+    }
+    present = [name for name, keys in roles.items() if keys]
+    if not present:
+        return None
+
+    columns: dict[str, list[float]] = {name: [] for name in present}
+    flat: list[float] = []
+    target: list[float] = []
+    for day in days:
+        for bucket, raw in zip(day.buckets, day.r, strict=True):
+            amounts = {name: _role_hourly(bucket, roles[name]) for name in present}
+            if any(amount is None for amount in amounts.values()):
+                continue
+            for name, amount in amounts.items():
+                # Magnitude, not the signed sum. Charging and discharging both
+                # lose energy, and they carry opposite signs — summed, a battery
+                # that cycles evenly cancels to nothing and the term it needs
+                # cannot be seen at all.
+                columns[name].append(abs(amount))  # type: ignore[arg-type]
+            flat.append(1.0)
+            target.append(raw)
+
+    if len(target) < MIN_JOINT_FIT_HOURS:
+        return None
+
+    order = [*present, "flat"]
+    solved = least_squares([*(columns[name] for name in present), flat], target)
+    if solved is None:
+        return None
+    return dict(zip(order, solved, strict=True))
+
+
 def fit_loss_model(
     days: tuple[DayResidual, ...],
     specs: tuple[ChannelSpec, ...],
@@ -182,25 +264,23 @@ def fit_loss_model(
         return prior or LossModel()
 
     established: list[str] = []
+    joint = joint_loss_fit(days, specs) or {}
 
-    pv_gamma = _gamma_for_role(days, specs, Role.PV)
-    pv_dc = 0.0
-    if pv_gamma is not None and DC_MEASUREMENT_WINDOW[0] <= pv_gamma <= DC_MEASUREMENT_WINDOW[1]:
-        pv_dc = pv_gamma
-        established.append("pv_dc")
+    def accepted(term: str) -> float:
+        # The window is unchanged and still does the same job: a coefficient
+        # above it is a fault's territory, and absorbing it here would hide
+        # exactly what we are looking for. What changed is that the number
+        # offered to it is no longer contaminated by the other terms.
+        value = joint.get(term)
+        if value is None:
+            return 0.0
+        if not DC_MEASUREMENT_WINDOW[0] <= value <= DC_MEASUREMENT_WINDOW[1]:
+            return 0.0
+        established.append(term)
+        return value
 
-    charge_gamma = _gamma_for_role(days, specs, Role.BATTERY_CHARGE)
-    discharge_gamma = _gamma_for_role(days, specs, Role.BATTERY_DISCHARGE)
-    battery_dc = 0.0
-    if charge_gamma is not None and discharge_gamma is not None:
-        # The tell for a DC-measured battery is that gamma is positive on *both*
-        # directions simultaneously. No other fault does that.
-        both = [charge_gamma, discharge_gamma]
-        if all(DC_MEASUREMENT_WINDOW[0] <= g <= DC_MEASUREMENT_WINDOW[1] for g in both):
-            fitted = median(both)
-            if fitted is not None:
-                battery_dc = fitted
-                established.append("battery_dc")
+    pv_dc = accepted("pv_dc")
+    battery_dc = accepted("battery_dc")
 
     night_gamma, standby = _fit_night_terms(days, specs)
 
