@@ -50,6 +50,22 @@ All notable changes are documented here. This project follows Semantic Versionin
   fitted that was not there: the correction it had been applying was for a loss
   the house does not have.
 
+- **A house with no battery can now have its inverter's own draw absorbed.**
+  The continuous draw an inverter's power supply makes is measured at night, by
+  fitting the residual against battery throughput — the slope is conversion
+  loss, the intercept is whatever is drawn regardless. That fit refused to run
+  at all without a battery discharge channel, so on an installation without a
+  battery the draw was never subtracted, and in December, with ordinary meter
+  noise, that was enough to leave the house reporting "still looking"
+  indefinitely.
+
+  A house with no battery is the degenerate case of the same line rather than a
+  house the fit cannot speak about: there is no throughput to vary with, so
+  there is no slope, and the intercept is the whole of it. The bounds on what
+  may be called standby are unchanged.
+
+  Found by a new corpus of 3,000 healthy installations, at eight of them.
+
 - **The consumption sensor you told us about is now read.** Setup asks whether
   it covers the whole house; the answer was stored and never consulted. Answering
   no now opens the boundary, because whatever that sensor misses lands in the

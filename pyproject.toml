@@ -12,6 +12,16 @@ dependencies = []
 # tests/test_entity_honesty.py for why `asyncio.run` is the wrong tool for that
 # — it closes the loop out from under every test that follows.
 testpaths = ["tests"]
+# The clean corpus is 3,000 healthy installations and takes about three minutes
+# serially. Running it on every push would make the suite slow enough to start
+# being skipped, and a gate nobody waits for is not a gate. Every pull request
+# runs a 600-scenario stratified subset that still covers every axis
+# combination; the full corpus runs on main and on the Monday schedule.
+#
+# Deselected by default rather than opt-in, so `pytest tests` stays fast for
+# anyone working in the repository.
+addopts = "-m 'not slow'"
+markers = ["slow: the full clean corpus; runs on main and the weekly schedule"]
 # `analysis` is imported absolutely so the package can load with Home Assistant
 # absent. That is a structural purity guarantee, not a convention.
 pythonpath = [".", "custom_components/solar_sanity"]

@@ -189,11 +189,16 @@ class TestItReachesTheHousesThatNeedItMost:
     """The ledger and the night fit answer different questions, and the fit's
     preconditions were gating both.
 
-    `_night_samples` wants a discharge channel and two hundred night hours. So a
-    house with no battery got nothing at all, and every house got nothing for
+    `_night_samples` wanted a discharge channel and two hundred night hours. So
+    a house with no battery got nothing at all, and every house got nothing for
     its first sixteen days — which is exactly the window where somebody is
     looking at "still looking" and wanting to know why. The ledger needs neither
     of those things to total up what each channel reported.
+
+    The battery half of that has since been fixed at the source rather than
+    worked around here: a house with no battery is the degenerate case of the
+    same night line, with no slope and an intercept that is the whole of it. The
+    fortnight half stands, and is what the rest of this class is about.
     """
 
     @staticmethod
@@ -206,12 +211,25 @@ class TestItReachesTheHousesThatNeedItMost:
 
     @staticmethod
     def _no_battery(days: int, seed: int = 0):
+        """A house that never had a battery, with the identity still exact.
+
+        The charge and discharge terms were the other way round here, which left
+        the house missing by up to 8,978 Wh in an hour — a physically impossible
+        installation, asserted about as though it were a clean one. It survived
+        because the only thing that would have noticed was the night fit, and
+        the night fit refused to run on a house with no battery, which is the
+        very limitation this test exists to describe.
+
+        The battery is a store, so removing it moves its energy to the other
+        side: what it absorbed the house must now consume, and what it supplied
+        the house no longer needs. Hence ``+ charged - discharged``.
+        """
         clean = house.build(days=days, seed=seed)
         series = clean.copy_with(
             battery_charge=[0.0] * clean.hours,
             battery_discharge=[0.0] * clean.hours,
             load=[
-                consumed + out - into
+                consumed + into - out
                 for consumed, out, into in zip(
                     clean.data["load"],
                     clean.data["battery_discharge"],
@@ -224,6 +242,26 @@ class TestItReachesTheHousesThatNeedItMost:
             s for s in specs_for() if s.role not in (Role.BATTERY_CHARGE, Role.BATTERY_DISCHARGE)
         )
         return series, specs
+
+    def test_the_fixture_is_a_house_that_could_exist(self) -> None:
+        """Checked, not assumed. Everything below is a statement about a house,
+        and a house that does not conserve energy makes all of them vacuous."""
+        series, _ = self._no_battery(30)
+        data = series.data
+
+        worst = max(
+            abs(
+                data["pv"][hour]
+                + data["grid_import"][hour]
+                + data["battery_discharge"][hour]
+                - data["load"][hour]
+                - data["grid_export"][hour]
+                - data["battery_charge"][hour]
+            )
+            for hour in range(series.hours)
+        )
+
+        assert worst < 1e-6, f"the batteryless fixture misses by {worst:.1f} Wh an hour"
 
     def test_a_house_with_no_battery_still_gets_a_ledger(self) -> None:
         series, specs = self._no_battery(30)
@@ -239,8 +277,31 @@ class TestItReachesTheHousesThatNeedItMost:
         )
 
         assert raw["night_ledger_hours"] > 0
-        # The fit genuinely cannot run here, and does not pretend to.
-        assert "night_hours" not in raw
+
+    def test_the_night_fit_now_speaks_about_a_batteryless_house(self) -> None:
+        """It used to refuse, and the refusal cost these houses a verdict.
+
+        With no battery there is no throughput for the residual to vary with, so
+        there is no conversion loss to find — but the continuous draw is still
+        measurable, and it is the only one of the two such a house can have. The
+        slope is therefore absent rather than nought: nought is a measurement,
+        and this is the absence of one.
+        """
+        series, specs = self._no_battery(30)
+
+        raw = self._raw(
+            series,
+            specs,
+            DeclaredTopology(
+                has_battery=Answer.NO,
+                grid_is_single_net_sensor=Answer.NO,
+                load_covers_whole_house=Answer.YES,
+            ),
+        )
+
+        assert raw["night_hours"] > 0
+        assert "night_slope" not in raw
+        assert "night_intercept_w" in raw
 
     @pytest.mark.parametrize("days", [7, 10, 14])
     def test_it_is_there_before_the_fit_can_speak(self, days: int) -> None:

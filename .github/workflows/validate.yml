@@ -36,6 +36,25 @@ jobs:
       - name: Run the suite
         run: python -m pytest tests -q
 
+  corpus:
+    name: Clean corpus
+    # The full 3,000-scenario healthy-house corpus. Not on pull requests: they
+    # run the 600-scenario subset inside the ordinary suite, which covers every
+    # axis combination at fewer seeds. This is the one that would catch a false
+    # accusation that only one seed in ten produces.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt
+      - name: Every healthy house, silent
+        # No coverage on this job: it makes the engine about thirteen times
+        # slower, which turns three minutes into forty.
+        run: python -m pytest tests -q -m slow -n auto
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

@@ -257,14 +257,3 @@ def add_noise(series: Series, pct: float, seed: int = 7) -> Series:
     for channel, values in series.data.items():
         out[channel] = [v * (1.0 + rng.uniform(-pct, pct)) for v in values]
     return series.copy_with(**out)
-
-
-def split_arrays(series: Series, lag_hours: int = 2) -> Series:
-    """Two genuinely separate arrays on different roof aspects.
-
-    Correlated, but time-shifted — this must *not* be reported as a duplicate.
-    """
-    pv = series.data["pv"]
-    shifted = [0.0] * lag_hours + pv[:-lag_hours] if lag_hours else list(pv)
-    combined = [(a + b) / 2.0 for a, b in zip(pv, shifted, strict=True)]
-    return series.copy_with(pv=combined)
