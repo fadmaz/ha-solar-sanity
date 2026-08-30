@@ -2,6 +2,30 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.13.0] - 2026-08-30
+
+### Added
+
+- **The night ledger now says *when* the gap happens, not just how big it is.**
+  A whole-night total cannot tell you whether a shortfall is spread evenly or
+  concentrated somewhere, and that difference is the diagnosis. The ledger is
+  emitted three times: the whole night, the hours the grid was quiet, and the
+  hours it was not.
+
+  The three things that can be wrong leave different marks. A grid meter that
+  under-reads shows a gap only in the hours the grid was involved. A battery
+  that under-reports shows it where the battery works hardest. Consumption that
+  over-reads shows it everywhere, because consumption happens in every hour.
+  Reading those apart used to mean comparing two diagnostics downloads by hand.
+
+  The halves are computed by the same path as the whole and are checked to sum
+  back to it — hours, residual, and every channel individually. The split is
+  omitted when one half would be the entire night, because publishing the same
+  totals under a second name is how a reader comes to believe two numbers agreed
+  when only one was ever computed.
+
+  Diagnostics only. No verdict changes.
+
 ## [0.12.3] - 2026-08-29
 
 ### Fixed
