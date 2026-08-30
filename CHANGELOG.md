@@ -52,6 +52,48 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ### Fixed
 
+- **An inverter that idles at more than about 45 W is no longer left
+  unexplained.** The continuous draw an inverter's own power supply makes is
+  meant to be absorbed anywhere between 10 W and 120 W. It was also capped at a
+  fifth of what the house uses overnight, and on an ordinary house that ceiling
+  arrives at about 45 W — so most of the advertised range was unreachable, and a
+  hybrid idling at 80 W, which is an unremarkable figure, reported "still
+  looking" indefinitely.
+
+  The cap was asking the right question the wrong way. What it was really for is
+  telling a constant draw apart from a consumption sensor reading low by a
+  fraction, and those are not distinguishable by size — but they are completely
+  distinguishable by shape, because one is the same number every hour and the
+  other is a share of whatever the house happened to use. Fitted side by side,
+  each lands in its own column. A consumption channel reading even ten per cent
+  low is still refused, as it was before.
+
+  A draw larger than 120 W is still reported rather than absorbed, with the
+  figure, as it was before.
+
+- **A battery 90% efficient on its DC side is now recognised as one.** The two
+  directions do not lose the same fraction — the charge side loses
+  `gamma / (1 - gamma)` where the discharge side loses `gamma` — and they were
+  being fitted as a single coefficient against the sum of the two. What comes
+  back from that is a blend, and a blend is always above the smaller of the
+  pair: at 90% efficiency the discharge coefficient is exactly 0.1000, which is
+  exactly what the model accepts, while the blend was 0.1057, which it does not.
+  So the model refused a loss its own bounds admit, subtracted nothing at all,
+  and left 5.5% of the day's energy unexplained on a healthy installation.
+
+  The two are now fitted apart, and the pair is checked against itself: one
+  battery's directions imply one efficiency, and a pair that implies none is
+  refused however small it is. That check earns its place immediately — on a
+  house whose export is unmapped, the residual is largest exactly when the
+  battery is charging, and without it the fit would take a spurious 4.4%
+  discharge loss and silence a correct finding.
+
+  When the pair is refused, the generation term is fitted again without it. A
+  column fitted beside one that turned out to be explaining something other than
+  loss carries part of whatever that was: two real battery banks beside a
+  consumption clamp reading 55% put a spurious 2.6% into generation, which was
+  enough to call the two banks a duplicated pair.
+
 - **A house that never exports is no longer told that it does.** If your
   generation is metered before the inverter and the conversion loss is larger
   than the model will absorb, what is left over is large, daily, one-signed and

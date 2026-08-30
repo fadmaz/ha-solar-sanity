@@ -190,8 +190,17 @@ def expected_loss(bucket: Bucket, specs: tuple[ChannelSpec, ...], loss: LossMode
             continue
         if spec.role is Role.PV:
             total += loss.pv_dc_gamma * value
-        elif spec.role in (Role.BATTERY_CHARGE, Role.BATTERY_DISCHARGE):
+        elif spec.role is Role.BATTERY_DISCHARGE:
             total += loss.battery_dc_gamma * value
+        elif spec.role is Role.BATTERY_CHARGE:
+            # Not the same fraction as discharge. `battery_dc_gamma` is the
+            # loss on the way out, so the round-trip efficiency it implies is
+            # `1 - gamma`, and the loss on the way in is that same energy
+            # measured against the smaller number: gamma / (1 - gamma). At 90%
+            # efficient that is 0.1111 against 0.1000 — an eleven per cent
+            # difference, and it grows. Applying one figure to both directions
+            # under-corrects a charging hour every time.
+            total += loss.battery_dc_gamma / (1.0 - loss.battery_dc_gamma) * value
 
     total += loss.standby_w * (bucket.seconds / 3600.0)
     return total
