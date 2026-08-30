@@ -105,12 +105,23 @@ TRACKING_MIN_WH = 25.0
 #: to be roughly their size, and the engine then tells somebody to unmap half
 #: their generation. Found by an adversarial sweep at one house in sixty.
 #:
-#: Measured: a duplicated sensor sits at 0.000 with clean data and 0.056 with
-#: ten per cent of independent error on both devices, while two real strings
-#: beside an unmetered draw sit at 0.459 to 0.543. An order of magnitude apart,
-#: so this sits three times above the worst duplicate and half the best
-#: adversary.
-DUPLICATE_MAX_MISMATCH = 0.20
+#: Measured: a duplicated sensor sits at 0.000 with clean data, 0.024 at five
+#: per cent of independent error on both devices and 0.056 at ten. Two real
+#: strings beside an unmetered draw sit at 0.459 to 0.543.
+#:
+#: It was 0.20, sized against that second figure. A closer adversary has since
+#: been measured: two real battery banks of equal size beside a consumption
+#: clamp reading 55% of the house sit at 0.101, because the energy the clamp
+#: misses is 0.45 of the load while one bank carries 0.50 of it. Four and a half
+#: times nearer than the strings, and inside the old bound — so the engine named
+#: two working batteries a duplicated pair.
+#:
+#: 0.08 refuses that with a quarter to spare and still takes a duplicate carrying
+#: five per cent of independent noise with three times over. The margin above a
+#: duplicate at ten per cent noise is the thin one, and it is the right side to
+#: be thin on: a missed duplicate is found by the ordinary path, while this is
+#: an accusation against equipment that is working.
+DUPLICATE_MAX_MISMATCH = 0.08
 
 #: How closely a pair must move together before we will say in so many words
 #: that they track each other.

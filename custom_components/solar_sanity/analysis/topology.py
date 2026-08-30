@@ -39,6 +39,45 @@ MIN_DAYS_FOR_COUPLING = 14
 #: Generation at or below this counts as night, for fitting purposes.
 NIGHT_MAX_PV_WH = 50.0
 
+#: How far the charge side may sit from the figure its discharge partner
+#: implies, before the pair is not describing one battery.
+#:
+#: Two free columns can fit more than one column could, and some of what they
+#: can fit is not loss. On a house whose export is unmapped the residual is
+#: largest exactly when the battery is charging, and the fit will happily take
+#: a 0.044 discharge coefficient to help explain it — enough to drop a real
+#: `missing_export_channel` finding below the band and silence it. That is the
+#: cost of the extra freedom, and this is what pays for it: the two directions
+#: of one battery are locked together by its efficiency, so a pair that
+#: describes no efficiency at all can be refused however small it is.
+#:
+#: Measured over 864 healthy corpus houses whose battery term is in range, the
+#: worst disagreement is 0.107 — all of them `self_consumed` at 5% meter noise,
+#: where charging absorbs the surplus and the charge column is nearly collinear
+#: with generation. The spurious fit on an unmapped-export house sits at 1.02.
+#: Nine and a half times apart; 0.35 is between them, three times clear of each.
+DC_BATTERY_DIRECTION_TOLERANCE = 0.35
+
+#: Widening the accepted band beyond `DC_MEASUREMENT_WINDOW` was measured and
+#: *not* taken, and the reason is worth keeping.
+#:
+#: The two directions of one battery are locked to each other by its efficiency
+#: — the charge coefficient must be `gamma / (1 - gamma)` — so the pair can be
+#: checked rather than merely bounded, and on clean data the agreement is exact
+#: at every efficiency from 0.95 to 0.75. That check would have justified
+#: reaching down to a battery 75% efficient.
+#:
+#: It is not robust enough. Charging absorbs the surplus, so on a
+#: self-consumption house the charge column and the generation column are
+#: nearly collinear, and at the 5% meter noise this project already calls
+#: healthy the fitted charge coefficient wanders by up to 0.093 in absolute
+#: terms — far enough to change sign. The fault it would need to separate, a
+#: discharge channel reading ten per cent low, sits at 0.125. A ratio of 1.3
+#: between the noise and the signal is not a test.
+#:
+#: Fixing that means constraining the pair to one parameter and profiling over
+#: it rather than fitting two free coefficients. Worth doing; not done here.
+
 #: Hours needed before a night fit means anything.
 MIN_STANDBY_SAMPLES = 200
 
@@ -48,12 +87,25 @@ MIN_STANDBY_SAMPLES = 200
 #: about rather than something we should quietly subtract.
 STANDBY_PLAUSIBLE_W = (10.0, 120.0)
 
-#: ...and how large it may be relative to what the house draws at night. An
-#: inverter's own supply is a small fraction of the load it is serving. A
-#: consumption sensor reading half looks exactly like a constant draw when the
-#: night load is low, and without this the fit absorbs the fault as loss and
-#: the engine goes quiet about it.
-STANDBY_MAX_SHARE_OF_LOAD = 0.20
+#: How much of the night residual may move *with the consumption channel*
+#: before the draw is not a constant draw at all.
+#:
+#: This replaces a cap on the draw as a share of night load, which was the right
+#: idea measured the wrong way. It asked "is this small enough to be an inverter
+#: idling", and the honest answer for a 250 W night load was a ceiling of about
+#: 45 W — against an advertised band reaching 120 W, and against real hybrid
+#: inverters that idle at 30 to 100 W. Worse, `add_standby` takes the draw out
+#: of the metered load, so the denominator fell as the numerator rose and the
+#: true ceiling was a sixth of night load rather than a fifth.
+#:
+#: The question it was really asking is whether the residual is *constant* or
+#: *proportional to consumption*, and that can be asked directly. Fitted
+#: together over night hours, a continuous draw puts everything in the flat term
+#: and nothing in the load term; a consumption sensor reading low by a fraction
+#: does the reverse. Measured at 5% meter noise: 0.0115 for a constant draw of
+#: any size, against 0.111 for a load channel reading merely ten per cent low,
+#: and 1.00 for one reading half. Ten times apart at their closest.
+MAX_LOAD_PROPORTIONAL_SHARE = 0.04
 
 
 class Closure(Enum):
@@ -211,7 +263,10 @@ def _role_hourly(bucket: Bucket, keys: list[str]) -> float | None:
 
 
 def joint_loss_fit(
-    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
+    days: tuple[DayResidual, ...],
+    specs: tuple[ChannelSpec, ...],
+    *,
+    with_battery: bool = True,
 ) -> dict[str, float] | None:
     """All three loss terms at once, by least squares.
 
@@ -237,10 +292,17 @@ def joint_loss_fit(
     """
     roles = {
         "pv_dc": [spec.key for spec in specs if spec.role is Role.PV],
-        "battery_dc": [
-            spec.key for spec in specs if spec.role in (Role.BATTERY_CHARGE, Role.BATTERY_DISCHARGE)
-        ],
+        # Charging and discharging are separate columns because they lose
+        # separate amounts. Summed into one, the single coefficient that comes
+        # back is a blend of the two, and a blend of 0.1000 and 0.1111 is
+        # 0.1057 — which is outside the window that would have accepted the
+        # 0.1000. The model was rejecting a loss its own bounds admit, on a
+        # battery whose only sin was being 90% efficient.
+        "battery_charge": [spec.key for spec in specs if spec.role is Role.BATTERY_CHARGE],
+        "battery_discharge": [spec.key for spec in specs if spec.role is Role.BATTERY_DISCHARGE],
     }
+    if not with_battery:
+        roles = {"pv_dc": roles["pv_dc"]}
     present = [name for name, keys in roles.items() if keys]
     if not present:
         return None
@@ -288,6 +350,26 @@ def fit_loss_model(
 
     established: list[str] = []
     joint = joint_loss_fit(days, specs) or {}
+    battery_dc = _accepted_battery(joint, established)
+
+    if battery_dc == 0.0 and any(
+        spec.role in (Role.BATTERY_CHARGE, Role.BATTERY_DISCHARGE) for spec in specs
+    ):
+        # The pair described no battery, so refit without it before reading the
+        # generation term. This is the same argument that made the fit joint in
+        # the first place, one step further on: columns fitted side by side
+        # share their errors, so a column fitted beside one that turned out to
+        # be explaining something other than loss is carrying part of whatever
+        # that was.
+        #
+        # It is not hypothetical. Two real battery banks beside a load CT
+        # reading 55% put 0.53 into the discharge column — refused — and 0.0257
+        # into generation, which the window accepts. That spurious 2.6% was
+        # enough to break a tie and call the two banks a duplicate pair. Refit
+        # without them and generation comes back at -0.068, refused as it should
+        # be. A house whose inverter really is metered on the DC side is
+        # unaffected: 0.0400 and 0.1000 both ways, to four decimals.
+        joint = joint_loss_fit(days, specs, with_battery=False) or joint
 
     def accepted(term: str) -> float:
         # The window is unchanged and still does the same job: a coefficient
@@ -303,7 +385,6 @@ def fit_loss_model(
         return value
 
     pv_dc = accepted("pv_dc")
-    battery_dc = accepted("battery_dc")
 
     night_gamma, standby = _fit_night_terms(days, specs)
 
@@ -326,6 +407,46 @@ def fit_loss_model(
         samples=len(days),
         fitted_terms=tuple(established),
     )
+
+
+def _accepted_battery(joint: dict[str, float], established: list[str]) -> float:
+    """The battery's DC loss, taken from the direction that defines it.
+
+    A DC-measured battery does not lose the same fraction both ways. With ``e``
+    the round-trip efficiency and the measured quantities on the right,
+
+        residual = (1 - e) * discharge + ((1 - e) / e) * charge
+
+    so the loss *fraction* is the discharge coefficient, and the charge side is
+    the larger number implied by it. Fitting one coefficient against the sum of
+    the two magnitudes returned neither: it returned a blend, and a blend is
+    always above the smaller of the pair. At 90% efficiency the discharge
+    coefficient is exactly 0.1000 — exactly what the window admits — while the
+    blend is 0.1057, which it does not. The model was refusing a loss its own
+    bounds accept, on the strength of a number that describes no physical
+    quantity.
+
+    The window is unchanged. This is not a widening; it is the same test asked
+    of the right number.
+
+    The pair is then checked against itself. Splitting one column into two buys
+    the fit a degree of freedom it can spend on things that are not loss — on a
+    house with unmapped export it will take a 0.044 discharge coefficient to
+    help explain energy that is leaving, and silence the finding that would
+    have named it. Requiring the charge side to be the number the discharge
+    side implies costs a real battery nothing and refuses that outright.
+    """
+    charge = joint.get("battery_charge")
+    discharge = joint.get("battery_discharge")
+    if charge is None or discharge is None:
+        return 0.0
+    if not DC_MEASUREMENT_WINDOW[0] <= discharge <= DC_MEASUREMENT_WINDOW[1]:
+        return 0.0
+    if abs(charge - discharge / (1.0 - discharge)) > DC_BATTERY_DIRECTION_TOLERANCE:
+        return 0.0
+
+    established.append("battery_dc")
+    return discharge
 
 
 def _fit_night_terms(
@@ -371,7 +492,7 @@ def _fit_night_terms(
         if slope is not None and DC_MEASUREMENT_WINDOW[0] <= slope <= DC_MEASUREMENT_WINDOW[1]
         else None
     )
-    return gamma, _plausible_standby(intercept, loads)
+    return gamma, _plausible_standby(intercept, _load_proportional_share(xs, loads, ys))
 
 
 def _is_night(bucket: Bucket, pv_keys: list[str]) -> bool:
@@ -751,21 +872,52 @@ def _night_line(xs: list[float], ys: list[float]) -> tuple[float | None, float] 
     return None if intercept is None else (slope, intercept)
 
 
-def _plausible_standby(intercept: float, night_loads: list[float]) -> float:
+def _load_proportional_share(
+    discharge: list[float], loads: list[float], residual: list[float]
+) -> float | None:
+    """How much of the night residual moves with the consumption channel.
+
+    The screen that decides whether a flat term is a flat term. A continuous
+    draw is the same number every hour; a consumption sensor reading low by a
+    fraction is a *share* of whatever the house happened to use, and the two
+    are indistinguishable from the size of the residual alone. Fitted side by
+    side they separate completely, because each lands in its own column.
+
+    Least squares rather than Theil-Sen, and only as a screen: the value that
+    gets accepted is still the robust one. This decides *whether* the term is a
+    constant draw, not *how large* it is.
+    """
+    if not loads or len(loads) != len(residual):
+        return None
+
+    # A house with no battery has an all-zero discharge column, which is
+    # collinear with nothing and makes the system singular — the solver refuses,
+    # and refusing here would take the standby term away from exactly the
+    # installations that most need it. There is no battery term to separate
+    # there, so the column is simply not offered.
+    columns = [loads, [1.0] * len(loads)]
+    index = 0
+    if any(value != 0.0 for value in discharge):
+        columns.insert(0, discharge)
+        index = 1
+
+    fitted = least_squares(columns, residual)
+    return None if fitted is None else fitted[index]
+
+
+def _plausible_standby(intercept: float, load_share: float | None) -> float:
     """The intercept, if it can only be an inverter's own draw.
 
     Absolute bounds are not enough on their own: at 250 W of night load, a
     consumption sensor reading half produces a constant 125 W of residual,
-    which sits comfortably inside any plausible idle range. The share test is
-    what separates them — an inverter's supply is a small part of what it
-    serves, and half a house is not.
+    which sits comfortably inside any plausible idle range. What separates them
+    is that a miscounted consumption channel scales with consumption and an
+    inverter's own supply does not — which is a question about shape, and is
+    now asked as one rather than inferred from magnitude.
     """
     if not (STANDBY_PLAUSIBLE_W[0] <= intercept <= STANDBY_PLAUSIBLE_W[1]):
         return 0.0
-    typical = median(night_loads)
-    if typical is None or typical <= 0:
-        return 0.0
-    if intercept > typical * STANDBY_MAX_SHARE_OF_LOAD:
+    if load_share is None or abs(load_share) > MAX_LOAD_PROPORTIONAL_SHARE:
         return 0.0
     return intercept
 

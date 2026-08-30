@@ -128,15 +128,23 @@ class TestTheBoundaryOfWhatCanBeAbsorbed:
     gives up on an installation that has nothing wrong with it.
 
     A battery metered on its DC side is an ordinary hybrid, and its round-trip
-    efficiency is an ordinary property of the hardware. Somewhere below 0.91 the
-    verdict stops arriving — not gradually, but at a cliff — and the owner is
-    told "the numbers move around but not consistently enough to name" for as
-    long as the installation stands. These tests exist so that the day someone
-    fixes it, the failure tells them the boundary moved rather than letting it
-    move unnoticed.
+    efficiency is an ordinary property of the hardware. Below some efficiency
+    the verdict stops arriving — not gradually, but at a cliff, because
+    rejection is all-or-nothing: a coefficient a hair outside the window means
+    nothing whatever is subtracted rather than slightly less. These tests exist
+    so that the day the boundary moves, the failure says so rather than letting
+    it move unnoticed.
+
+    It has moved once already. It was at 0.91, for a reason that turned out to
+    be a defect rather than a policy: the two directions of a DC battery lose
+    different fractions, and fitting one coefficient against the sum of their
+    magnitudes returned a blend of the two — always above the smaller. At 0.90
+    the discharge coefficient is exactly 0.1000, exactly what the window admits,
+    while the blend was 0.1057, which it does not. Fitting the directions apart
+    put the boundary where the window always said it was.
     """
 
-    @pytest.mark.parametrize("efficiency", [0.98, 0.96, 0.94, 0.92, 0.91])
+    @pytest.mark.parametrize("efficiency", [0.98, 0.96, 0.94, 0.92, 0.91, 0.90])
     @pytest.mark.parametrize("seed", range(4))
     def test_down_to_here_the_loss_is_absorbed(self, efficiency: float, seed: int) -> None:
         report = _dc_battery(efficiency, seed=seed)
@@ -146,7 +154,7 @@ class TestTheBoundaryOfWhatCanBeAbsorbed:
             f"{report.residual.median_daily_abs_pct:.2f}%"
         )
 
-    @pytest.mark.parametrize("efficiency", [0.90, 0.88, 0.85])
+    @pytest.mark.parametrize("efficiency", [0.89, 0.88, 0.85])
     @pytest.mark.parametrize("seed", range(4))
     def test_below_it_a_healthy_house_gets_no_verdict(self, efficiency: float, seed: int) -> None:
         """A known limitation, pinned. **This failing is good news.**
@@ -168,29 +176,26 @@ class TestTheBoundaryOfWhatCanBeAbsorbed:
             f"this test should say so"
         )
 
-    def test_the_estimator_cannot_produce_the_value_its_own_window_accepts(self) -> None:
-        """The mechanism, so the fix is obvious to whoever picks this up.
+    def test_the_two_directions_are_fitted_apart_and_agree(self) -> None:
+        """The defect that used to live here, kept as the thing that must not return.
 
         A battery metered on the DC side does not lose the same fraction in both
-        directions. Working it through, with ``e`` the round-trip efficiency and
-        the measured quantities on the right::
+        directions. With ``e`` the round-trip efficiency and the measured
+        quantities on the right::
 
             residual = (1 - e) * discharge + ((1 - e) / e) * charge
 
-        Two different coefficients, and the charge one is always the larger.
-        ``joint_loss_fit`` fits a single coefficient against ``|charge| +
-        |discharge|``, so what it recovers is a blend of the two — necessarily
-        above the smaller.
+        Two different coefficients, and the charge one is always the larger. The
+        fit used to take a single coefficient against ``|charge| + |discharge|``,
+        so what came back was a blend — necessarily above the smaller of the
+        pair. At ``e = 0.90`` the discharge coefficient is exactly 0.1000, which
+        is exactly ``DC_MEASUREMENT_WINDOW``'s upper bound and therefore
+        acceptable, while the blend was 0.1057, which is not. The model rejected
+        a loss its own window admits and subtracted nothing at all.
 
-        At ``e = 0.90`` the discharge coefficient is exactly 0.1000, which is
-        exactly ``DC_MEASUREMENT_WINDOW``'s upper bound and therefore acceptable.
-        The blend is 0.1057, which is not. So the model rejects a loss its own
-        window admits, subtracts nothing at all, and a 5.5% residual is left for
-        the bands to worry about.
-
-        Fitting the two columns separately recovers both exactly — checked here,
-        not asserted — and their ratio is a physical signature a fault would not
-        satisfy: ``charge_coefficient == discharge_coefficient / (1 - discharge_coefficient)``.
+        Fitted apart, both come back exact, and the pair agrees about one
+        efficiency — which is a claim a fault would have to satisfy as well as
+        merely landing in range, and is what lets the extra column be safe.
         """
         efficiency = 0.90
         request = to_request(
@@ -231,5 +236,11 @@ class TestTheBoundaryOfWhatCanBeAbsorbed:
         assert low <= separately[0] <= high, "the physical coefficient is acceptable"
         assert blended[0] > high, "yet the blend of it with the charge side is not"
 
-        # Which is why nothing is subtracted, and the house is left unexplained.
-        assert topology.fit_loss_model(days, request.specs, None).fitted_terms == ()
+        # The pair agrees about one battery, which is what the fit now requires.
+        predicted = separately[0] / (1 - separately[0])
+        assert abs(separately[1] - predicted) < topology.DC_BATTERY_DIRECTION_TOLERANCE
+
+        # And so the loss is taken, rather than the house left unexplained.
+        fitted = topology.fit_loss_model(days, request.specs, None)
+        assert "battery_dc" in fitted.fitted_terms
+        assert fitted.battery_dc_gamma == pytest.approx(1 - efficiency, abs=1e-3)

@@ -178,7 +178,9 @@ class TestTheTermsAreNowSeparable:
         assert fit is not None
         assert fit["flat"] == pytest.approx(80.0, abs=5.0)
         assert abs(fit["pv_dc"]) < 0.005
-        assert abs(fit["battery_dc"]) < 0.005
+        # Two battery columns, not one: the directions lose different fractions.
+        assert abs(fit["battery_charge"]) < 0.005
+        assert abs(fit["battery_discharge"]) < 0.005
 
     def test_a_genuine_dc_battery_is_still_found(self) -> None:
         """The separation has to cost the true case nothing."""
@@ -189,7 +191,13 @@ class TestTheTermsAreNowSeparable:
 
     def test_all_three_are_recovered_at_once(self) -> None:
         """The case that was impossible: a DC-measured house that also has an
-        unmetered draw. One term at a time, each contaminated the others."""
+        unmetered draw. One term at a time, each contaminated the others.
+
+        Four columns now rather than three. A battery metered on its DC side
+        does not lose the same fraction both ways — the charge side is
+        ``gamma / (1 - gamma)`` against the discharge side's ``gamma`` — so the
+        two are fitted apart and both come back exact.
+        """
         from analysis.model import LossModel
         from analysis.residual import build_days
         from analysis.topology import joint_loss_fit
@@ -205,12 +213,28 @@ class TestTheTermsAreNowSeparable:
 
         assert fit is not None
         assert fit["pv_dc"] == pytest.approx(0.041, abs=0.01)
-        assert fit["battery_dc"] == pytest.approx(0.051, abs=0.01)
+        assert fit["battery_discharge"] == pytest.approx(0.05, abs=0.01)
+        assert fit["battery_charge"] == pytest.approx(0.0526, abs=0.01)
         assert fit["flat"] == pytest.approx(80.0, abs=10.0)
 
     @pytest.mark.parametrize("seed", range(4))
     def test_a_draw_never_fits_a_dc_term_on_any_seed(self, seed: int) -> None:
-        assert not _fit(house.add_standby(house.build(days=DAYS, seed=seed), 80.0)).fitted_terms
+        """It lands in the term that is actually about it, and only that one.
+
+        This used to assert that an 80 W draw fitted *nothing*, which was true
+        and was true for the wrong reason: the standby term was capped at a
+        fifth of night load, so 80 W was refused on this house and the empty
+        tuple proved only that the cap had fired. With the cap replaced by a
+        test of shape, the draw is absorbed where it belongs — and the two DC
+        terms it used to be confused with come back at exactly nought, which is
+        the thing this class exists to demonstrate.
+        """
+        fitted = _fit(house.add_standby(house.build(days=DAYS, seed=seed), 80.0))
+
+        assert fitted.fitted_terms == ("standby",)
+        assert fitted.standby_w == pytest.approx(80.0, abs=1.0)
+        assert fitted.pv_dc_gamma == 0.0
+        assert fitted.battery_dc_gamma == 0.0
 
 
 class TestTheDcNotesStaySilent:
