@@ -2,7 +2,27 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
-## [Unreleased]
+## [0.17.0] - 2026-08-30
+
+### Added
+
+- **When the model absorbs a loss, it now says so.** The three terms the loss
+  model fits — a generation sensor reading before the inverter, a battery
+  metered on its DC side, a continuous unmetered draw — were being subtracted
+  from your numbers before anything was checked. Only the last of them was ever
+  mentioned. So a generation sensor reading a tenth above the rest of the system
+  was quietly accounted for, the verdict came back "no problem found", and the
+  assumption behind that answer was shown to nobody.
+
+  That was never the cautious option. It is the one where a wrong assumption
+  never surfaces. Each term now appears as a note saying what was taken and
+  what it was taken to mean.
+
+  The generation note gives the figure both ways round, because a sensor a
+  twentieth of whose reading never arrives is a sensor reading a nineteenth
+  high, and **nothing in the data can tell those apart** — dividing by an
+  efficiency and multiplying by its reciprocal produce the same series. So the
+  note says what has been assumed and what to check if the assumption is wrong.
 
 ### Changed
 
@@ -50,26 +70,6 @@ All notable changes are documented here. This project follows Semantic Versionin
   fitted that was not there: the correction it had been applying was for a loss
   the house does not have.
 
-### Fixed
-
-- **When the model absorbs a loss, it now says so.** The three terms the loss
-  model fits — a generation sensor reading before the inverter, a battery
-  metered on its DC side, a continuous unmetered draw — were being subtracted
-  from your numbers before anything was checked. Only the last of them was ever
-  mentioned. So a generation sensor reading a tenth above the rest of the system
-  was quietly accounted for, the verdict came back "no problem found", and the
-  assumption behind that answer was shown to nobody.
-
-  That was never the cautious option. It is the one where a wrong assumption
-  never surfaces. Each term now appears as a note saying what was taken and
-  what it was taken to mean.
-
-  The generation note gives the figure both ways round, because a sensor a
-  twentieth of whose reading never arrives is a sensor reading a nineteenth
-  high, and **nothing in the data can tell those apart** — dividing by an
-  efficiency and multiplying by its reciprocal produce the same series. So the
-  note says what has been assumed and what to check if the assumption is wrong.
-
 - **A generation sensor up to 15% above the rest of the system is now
   accounted for**, rather than leaving the house with no verdict at all. The old
   ceiling was a tenth, which cut through the middle of the range real inverters
@@ -81,24 +81,35 @@ All notable changes are documented here. This project follows Semantic Versionin
   the engine goes back to saying it cannot explain the difference, because at
   that point it cannot.
 
-- **An inverter that idles at more than about 45 W is no longer left
-  unexplained.** The continuous draw an inverter's own power supply makes is
-  meant to be absorbed anywhere between 10 W and 120 W. It was also capped at a
-  fifth of what the house uses overnight, and on an ordinary house that ceiling
-  arrives at about 45 W — so most of the advertised range was unreachable, and a
-  hybrid idling at 80 W, which is an unremarkable figure, reported "still
-  looking" indefinitely.
+- **The consumption sensor you told us about is now read.** Setup asks whether
+  it covers the whole house; the answer was stored and never consulted. Answering
+  no now opens the boundary, because whatever that sensor misses lands in the
+  residual looking like a fault — so the engine was calling these houses fully
+  measured on their owner's own word that they are not.
 
-  The cap was asking the right question the wrong way. What it was really for is
-  telling a constant draw apart from a consumption sensor reading low by a
-  fraction, and those are not distinguishable by size — but they are completely
-  distinguishable by shape, because one is the same number every hour and the
-  other is a share of whatever the house happened to use. Fitted side by side,
-  each lands in its own column. A consumption channel reading even ten per cent
-  low is still refused, as it was before.
+### Fixed
 
-  A draw larger than 120 W is still reported rather than absorbed, with the
-  figure, as it was before.
+- **A house that never exports is no longer told that it does.** If your
+  generation is metered before the inverter and the conversion loss is larger
+  than the model will absorb, what is left over is large, daily, one-signed and
+  concentrated in the sunny hours — which is exactly what energy leaving an
+  unmetered export path looks like. So a self-consumption installation, whose
+  surplus goes into its battery and which sends nothing to the grid at all, was
+  told with high confidence to go and map an export sensor it has no use for.
+
+  The hours that tell the two apart are the sunny ones where consumption is
+  still ahead of generation. Nothing can leave the house in them, so unmeasured
+  export accounts for nothing there, while a loss proportional to generation is
+  present in proportion to generation. Night is quiet under either story and is
+  most of the rest, so including it in the comparison had been hiding the
+  difference.
+
+  Being loud in those hours is not enough on its own to stay quiet, because a
+  rented roof exporting its entire output is loud there too — at the full rate
+  of generation rather than the small fraction an inverter loses. Both are
+  required now, so a roof whose export really is unmapped is still told so,
+  including when its inverter is metered on the DC side and both things are true
+  at once.
 
 - **A battery 90% efficient on its DC side is now recognised as one.** The two
   directions do not lose the same fraction — the charge side loses
@@ -123,27 +134,24 @@ All notable changes are documented here. This project follows Semantic Versionin
   consumption clamp reading 55% put a spurious 2.6% into generation, which was
   enough to call the two banks a duplicated pair.
 
-- **A house that never exports is no longer told that it does.** If your
-  generation is metered before the inverter and the conversion loss is larger
-  than the model will absorb, what is left over is large, daily, one-signed and
-  concentrated in the sunny hours — which is exactly what energy leaving an
-  unmetered export path looks like. So a self-consumption installation, whose
-  surplus goes into its battery and which sends nothing to the grid at all, was
-  told with high confidence to go and map an export sensor it has no use for.
+- **An inverter that idles at more than about 45 W is no longer left
+  unexplained.** The continuous draw an inverter's own power supply makes is
+  meant to be absorbed anywhere between 10 W and 120 W. It was also capped at a
+  fifth of what the house uses overnight, and on an ordinary house that ceiling
+  arrives at about 45 W — so most of the advertised range was unreachable, and a
+  hybrid idling at 80 W, which is an unremarkable figure, reported "still
+  looking" indefinitely.
 
-  The hours that tell the two apart are the sunny ones where consumption is
-  still ahead of generation. Nothing can leave the house in them, so unmeasured
-  export accounts for nothing there, while a loss proportional to generation is
-  present in proportion to generation. Night is quiet under either story and is
-  most of the rest, so including it in the comparison had been hiding the
-  difference.
+  The cap was asking the right question the wrong way. What it was really for is
+  telling a constant draw apart from a consumption sensor reading low by a
+  fraction, and those are not distinguishable by size — but they are completely
+  distinguishable by shape, because one is the same number every hour and the
+  other is a share of whatever the house happened to use. Fitted side by side,
+  each lands in its own column. A consumption channel reading even ten per cent
+  low is still refused, as it was before.
 
-  Being loud in those hours is not enough on its own to stay quiet, because a
-  rented roof exporting its entire output is loud there too — at the full rate
-  of generation rather than the small fraction an inverter loses. Both are
-  required now, so a roof whose export really is unmapped is still told so,
-  including when its inverter is metered on the DC side and both things are true
-  at once.
+  A draw larger than 120 W is still reported rather than absorbed, with the
+  figure, as it was before.
 
 - **A house with no battery can now have its inverter's own draw absorbed.**
   The continuous draw an inverter's power supply makes is measured at night, by
@@ -160,12 +168,6 @@ All notable changes are documented here. This project follows Semantic Versionin
   may be called standby are unchanged.
 
   Found by a new corpus of 3,000 healthy installations, at eight of them.
-
-- **The consumption sensor you told us about is now read.** Setup asks whether
-  it covers the whole house; the answer was stored and never consulted. Answering
-  no now opens the boundary, because whatever that sensor misses lands in the
-  residual looking like a fault — so the engine was calling these houses fully
-  measured on their owner's own word that they are not.
 
 ## [0.16.0] - 2026-08-30
 
