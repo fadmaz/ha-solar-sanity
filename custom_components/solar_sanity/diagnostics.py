@@ -41,6 +41,10 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Any) ->
         # enough data yet" carries no evidence at all and the only way to
         # investigate is to ask the user to read attributes back one by one.
         "coverage": data.coordinator.coverage_snapshot() if data else None,
+        # The arithmetic itself. `coverage` says how much data there is; this is
+        # the data, so somebody holding this file can run the engine over it and
+        # get the same verdict rather than reasoning about a summary of it.
+        "window": data.coordinator.window_snapshot() if data else None,
         "status": report.status.value if report else None,
         # Whether the identity was *shown* to fail, as opposed to merely not
         # closing tidily. "Still looking" is reached both ways and the word is

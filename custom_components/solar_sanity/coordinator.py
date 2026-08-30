@@ -23,7 +23,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
-from typing import Any
+from typing import Any, Final
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -101,6 +101,23 @@ class SolarSanityData:
 
     coordinator: SolarSanityCoordinator
     store: Store
+
+
+#: Single characters, because this is repeated once per channel per hour and a
+#: month of six channels is four thousand of them.
+_QUALITY_CODE: Final = {
+    Quality.OK: "O",
+    Quality.MISSING: "M",
+    Quality.RESET_SUSPECT: "R",
+    Quality.DERIVED_FROM_MEAN: "D",
+    Quality.STALE: "S",
+}
+
+_SOURCE_CODE: Final = {
+    BucketSource.OWN_INTEGRAL: "i",
+    BucketSource.LTS_SUM: "s",
+    BucketSource.LTS_MEAN: "m",
+}
 
 
 def _count_sources(buckets: Sequence[Bucket], key: str) -> dict[str, int]:
@@ -937,6 +954,49 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             # is reported the moment it happens.
             return None
         return round(readable / len(specs) * 100)
+
+    def window_snapshot(self) -> dict[str, Any]:
+        """Every hour in the window, as numbers, so the verdict can be replayed.
+
+        The engine is a pure function of these buckets. Without them a bug
+        report says what the answer was and nothing about the arithmetic, so
+        every question has to be settled by asking the user to run something —
+        and a diagnosis that cannot be re-derived offline gets retracted, which
+        has now happened three times on one installation.
+
+        Columnar rather than a list of objects: the same window as a dict per
+        bucket is roughly four times the bytes for the same content, and this is
+        a file people paste into issue trackers. Quality and source are single
+        characters per channel, in ``keys`` order, for the same reason.
+
+        Values are emitted unrounded, unlike every figure this integration shows
+        a person. Those are rounded because a total that cancels to nothing
+        reads as broken when it prints as 2.6e-21; this block is not read by
+        eye, it is fed back into the engine, and rounding it to milliwatt-hours
+        was enough to move a replayed residual from 5e-16 to 3e-06. Harmless
+        here, and precisely the kind of drift that makes a replay stop being
+        evidence.
+        """
+        specs = self.specs
+        keys = [spec.key for spec in specs]
+        rows = []
+        for bucket in self._buckets:
+            rows.append(
+                [
+                    bucket.start_utc.isoformat(),
+                    bucket.seconds,
+                    [bucket.wh.get(key) for key in keys],
+                    "".join(_QUALITY_CODE.get(bucket.quality.get(key), "?") for key in keys),
+                    "".join(_SOURCE_CODE.get(bucket.source.get(key), "?") for key in keys),
+                ]
+            )
+        return {
+            "keys": keys,
+            "quality_codes": {code: q.value for q, code in _QUALITY_CODE.items()},
+            "source_codes": {code: s.value for s, code in _SOURCE_CODE.items()},
+            "columns": ["start_utc", "seconds", "wh", "quality", "source"],
+            "rows": rows,
+        }
 
     def coverage_snapshot(self) -> dict[str, Any]:
         """Everything needed to explain a verdict, in one downloadable place.
