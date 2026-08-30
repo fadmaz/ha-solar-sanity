@@ -16,6 +16,7 @@ from .linalg import median, theil_sen_intercept, theil_sen_slope
 from .model import (
     Answer,
     Bucket,
+    BucketSource,
     ChannelSpec,
     Coupling,
     DeclaredTopology,
@@ -340,7 +341,58 @@ def night_ledger(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) 
         out[f"night_total_{role.key}_wh"] = wh(amount)
 
     out.update(_split_by_the_grid(days, shape, wh))
+    out.update(_split_by_provenance(days, shape, wh))
     out.update(_hours_with_no_supply(days, shape, wh))
+    return out
+
+
+def _split_by_provenance(
+    days: tuple[DayResidual, ...],
+    shape: _Shape,
+    wh: Callable[[float], float],
+) -> dict[str, float]:
+    """The same ledger again, for hours we measured against hours we were told.
+
+    An hourly arithmetic mean over a sensor that reports on change over-weights
+    the busy part of the hour, so a power channel read that way sits high while
+    an energy counter beside it is exact. That produces a night that does not
+    add up with nothing whatever wrong — and it is indistinguishable, in a
+    total, from a sensor that genuinely under-reports.
+
+    Our own integration is the control. It weights every reading by how long it
+    stood, so if the deficit lives in the hours taken from statistics and the
+    hours we integrated ourselves close, the fault is in the estimator rather
+    than in the house. That is a question no amount of staring at one number
+    can answer, and it answers itself given a few days of running.
+
+    Emitted only once both kinds exist. A fresh installation is entirely
+    backfilled, and a split with one empty half republishes the whole under a
+    second name.
+    """
+
+    def measured(bucket: Bucket) -> bool:
+        return all(
+            bucket.source.get(key) is BucketSource.OWN_INTEGRAL
+            for role in shape.present
+            for key in shape.keys_for[role]
+        )
+
+    def told(bucket: Bucket) -> bool:
+        return not measured(bucket)
+
+    halves = {
+        "night_measured": _accumulate(days, shape, measured),
+        "night_from_statistics": _accumulate(days, shape, told),
+    }
+    if not all(hours for _, _, hours in halves.values()):
+        return {}
+
+    out: dict[str, float] = {}
+    for prefix, (totals, residual, hours) in halves.items():
+        out[f"{prefix}_hours"] = float(hours)
+        out[f"{prefix}_residual_wh"] = wh(residual)
+        for role, amount in totals.items():
+            out[f"{prefix}_{role.key}_wh"] = wh(amount)
     return out
 
 
