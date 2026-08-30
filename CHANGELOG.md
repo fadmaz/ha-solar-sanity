@@ -50,6 +50,30 @@ All notable changes are documented here. This project follows Semantic Versionin
   fitted that was not there: the correction it had been applying was for a loss
   the house does not have.
 
+### Fixed
+
+- **A house that never exports is no longer told that it does.** If your
+  generation is metered before the inverter and the conversion loss is larger
+  than the model will absorb, what is left over is large, daily, one-signed and
+  concentrated in the sunny hours — which is exactly what energy leaving an
+  unmetered export path looks like. So a self-consumption installation, whose
+  surplus goes into its battery and which sends nothing to the grid at all, was
+  told with high confidence to go and map an export sensor it has no use for.
+
+  The hours that tell the two apart are the sunny ones where consumption is
+  still ahead of generation. Nothing can leave the house in them, so unmeasured
+  export accounts for nothing there, while a loss proportional to generation is
+  present in proportion to generation. Night is quiet under either story and is
+  most of the rest, so including it in the comparison had been hiding the
+  difference.
+
+  Being loud in those hours is not enough on its own to stay quiet, because a
+  rented roof exporting its entire output is loud there too — at the full rate
+  of generation rather than the small fraction an inverter loses. Both are
+  required now, so a roof whose export really is unmapped is still told so,
+  including when its inverter is metered on the DC side and both things are true
+  at once.
+
 - **A house with no battery can now have its inverter's own draw absorbed.**
   The continuous draw an inverter's power supply makes is measured at night, by
   fitting the residual against battery throughput — the slope is conversion

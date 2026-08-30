@@ -226,13 +226,22 @@ def freeze(series: Series, channel: str, from_hour: int) -> Series:
     return series.copy_with(**{channel: values})
 
 
-def measure_pv_dc(series: Series, efficiency: float = 0.96) -> Series:
+def measure_pv_dc(
+    series: Series, efficiency: float = 0.96, channels: tuple[str, ...] = ("pv",)
+) -> Series:
     """Generation measured before the inverter — a topology fact, not a fault.
 
     The reported number is larger than what reaches the house, by exactly the
     conversion loss.
+
+    ``channels`` because an installation with two arrays has two generation
+    channels, and an inverter converts both. Scaling only the one literally
+    named ``pv`` left half of such a house on the AC side, which halved the
+    coefficient the loss model recovers — 0.024 for a true 0.040 — and bought
+    that topology roughly double the headroom it should have had before the
+    acceptance window refused it.
     """
-    return series.copy_with(pv=[v / efficiency for v in series.data["pv"]])
+    return series.copy_with(**{key: [v / efficiency for v in series.data[key]] for key in channels})
 
 
 def measure_battery_dc(series: Series, efficiency: float = 0.95) -> Series:

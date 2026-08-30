@@ -96,9 +96,9 @@ class Losses:
     battery: float = 1.0
     standby_w: float = 0.0
 
-    def applied(self, series: Series) -> Series:
+    def applied(self, series: Series, generation: tuple[str, ...] = ("pv",)) -> Series:
         if self.pv < 1.0:
-            series = house.measure_pv_dc(series, efficiency=self.pv)
+            series = house.measure_pv_dc(series, efficiency=self.pv, channels=generation)
         if self.battery < 1.0:
             series = house.measure_battery_dc(series, efficiency=self.battery)
         if self.standby_w:
@@ -127,10 +127,21 @@ class Topology:
     extra: tuple[ChannelSpec, ...] = ()
     battery_wh: float = 10000.0
 
+    def generation_keys(self) -> tuple[str, ...]:
+        """Every channel carrying generation, not just the one called ``pv``.
+
+        The loss profile is applied after the topology has been shaped, so on a
+        two-array house the split has already happened by then and both halves
+        have to be told about the inverter.
+        """
+        return tuple(spec.key for spec in self.specs() if spec.role is Role.PV)
+
     def series(self, *, seed: int, kwp: float, losses: Losses | None = None) -> Series:
         built = house.build(days=30, seed=seed, kwp=kwp, battery_wh=self.battery_wh)
         shaped = built if self.shape is None else self.shape(built)  # type: ignore[operator]
-        return shaped if losses is None else losses.applied(shaped)
+        if losses is None:
+            return shaped
+        return losses.applied(shaped, generation=self.generation_keys())
 
     def specs(self) -> tuple[ChannelSpec, ...]:
         return specs_for(self.keys) + self.extra
