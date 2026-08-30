@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 from typing import Any
@@ -101,6 +101,21 @@ class SolarSanityData:
 
     coordinator: SolarSanityCoordinator
     store: Store
+
+
+def _count_sources(buckets: Sequence[Bucket], key: str) -> dict[str, int]:
+    """How many of this channel's hours came from each source.
+
+    Free rather than a method: it needs nothing from the coordinator, and a
+    test that stands one up as a stub should not have to grow a member to ask a
+    question about a list of buckets.
+    """
+    counts: dict[str, int] = {}
+    for bucket in buckets:
+        source = bucket.source.get(key)
+        if source is not None and bucket.wh.get(key) is not None:
+            counts[source.value] = counts.get(source.value, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
@@ -983,6 +998,16 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 "valid_hours": len(valid),
                 "first_utc": buckets[0].start_utc.isoformat() if buckets else None,
                 "last_utc": buckets[-1].start_utc.isoformat() if buckets else None,
+                # Where the numbers came from, per channel.
+                #
+                # `lts_mean` is the weak one: an hourly arithmetic mean over a
+                # sensor that reports on change over-weights the busy part of
+                # an hour, so a power channel read this way can sit high while
+                # an energy counter beside it is exact. That is a residual with
+                # nothing wrong behind it, and without this the file gave no
+                # way to tell it from a real one — a month of evidence looked
+                # equally good whichever it was.
+                "by_source": {spec.key: _count_sources(buckets, spec.key) for spec in self.specs},
             },
             "valid_hours_per_local_day": dict(sorted(per_day.items())),
             "days_meeting_minimum": sum(

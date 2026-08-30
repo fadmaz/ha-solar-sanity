@@ -155,5 +155,8 @@ class TestEmpty:
             "valid_hours": 0,
             "first_utc": None,
             "last_utc": None,
+            # A channel with no hours yet has no provenance to report, and an
+            # empty mapping says that better than a missing key does.
+            "by_source": {"pv": {}, "load": {}, "grid_import": {}},
         }
         assert snapshot["days_meeting_minimum"] == 0

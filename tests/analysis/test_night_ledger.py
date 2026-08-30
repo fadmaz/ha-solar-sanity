@@ -344,6 +344,85 @@ class TestTheSplitSaysWhenTheGapHappens:
         assert raw["night_ledger_hours"] > 0
 
 
+class TestItTellsBlindApartFromMisScaled:
+    """The one question a total cannot answer.
+
+    A month whose night is short by 500 W looks identical whether every hour is
+    short by 500 W or a fifth of the hours are short by everything — and those
+    have different causes and different fixes. Scaling a channel cannot rescue
+    an hour where every source reads zero, because there is nothing to multiply.
+    So an hour drawing real power with nothing measured supplying it is proof
+    that something stopped reporting rather than that something reports the
+    wrong amount, and the absence of such hours is equally strong the other way.
+    """
+
+    @staticmethod
+    def _blind(series, every: int = 6):
+        """Every Nth night hour the supply sensors report a hard zero while the
+        house keeps drawing. Zero, not absent — an absent channel is dropped by
+        `build_days` long before it reaches here, which is the whole reason a
+        sensor that lies about being idle is worth detecting separately."""
+        imports = list(series.data["grid_import"])
+        discharge = list(series.data["battery_discharge"])
+        pv = series.data["pv"]
+        seen = 0
+        for index in range(len(imports)):
+            if pv[index] <= 0.0 and (imports[index] > 0 or discharge[index] > 0):
+                seen += 1
+                if seen % every == 0:
+                    imports[index] = 0.0
+                    discharge[index] = 0.0
+        return series.copy_with(grid_import=imports, battery_discharge=discharge)
+
+    def test_a_healthy_house_has_none(self) -> None:
+        assert _raw(house.build(days=DAYS, seed=0))["night_hours_with_no_supply"] == 0.0
+
+    @pytest.mark.parametrize(
+        "name,corrupt",
+        [
+            ("battery out reads half", lambda c: house.scale(c, "battery_discharge", 0.5)),
+            ("consumption reads double", lambda c: house.scale(c, "load", 2.0)),
+            ("battery out reads a third", lambda c: house.scale(c, "battery_discharge", 0.33)),
+        ],
+    )
+    def test_a_mis_scaled_channel_produces_none_however_large_the_gap(
+        self, name: str, corrupt
+    ) -> None:
+        """This is the point. These have residuals of hundreds of watts and
+        still no hour without a supply, because a wrong number is still a
+        number."""
+        raw = _raw(corrupt(house.build(days=DAYS, seed=0)))
+
+        assert raw["night_total_residual_wh"] < -10_000.0, f"{name}: nothing to detect"
+        assert raw["night_hours_with_no_supply"] == 0.0, name
+
+    def test_a_sensor_going_blind_is_counted(self) -> None:
+        raw = _raw(self._blind(house.build(days=DAYS, seed=0)))
+
+        assert raw["night_hours_with_no_supply"] > 0.0
+        assert raw["night_unsupplied_draw_wh"] > 0.0
+
+    def test_the_draw_reported_is_the_draw_in_those_hours(self) -> None:
+        """So the figure can be turned into a rate rather than only a count."""
+        raw = _raw(self._blind(house.build(days=DAYS, seed=0)))
+        per_hour = raw["night_unsupplied_draw_wh"] / raw["night_hours_with_no_supply"]
+
+        assert 100.0 < per_hour < 5000.0
+
+    @pytest.mark.parametrize("every", [4, 8, 12])
+    def test_more_blind_hours_are_counted_as_more(self, every: int) -> None:
+        raw = _raw(self._blind(house.build(days=DAYS, seed=0), every=every))
+        expected = _raw(self._blind(house.build(days=DAYS, seed=0), every=every * 2))
+
+        assert raw["night_hours_with_no_supply"] > expected["night_hours_with_no_supply"]
+
+    def test_the_key_is_always_present_so_zero_means_zero(self) -> None:
+        """An absent key and a zero are different facts, and the reader of a
+        diagnostics file cannot tell which they are looking at unless the key is
+        always there."""
+        assert "night_hours_with_no_supply" in _raw(house.build(days=DAYS, seed=0))
+
+
 class TestItIsStillPure:
     @pytest.mark.parametrize("seed", range(3))
     def test_the_same_input_gives_the_same_ledger(self, seed: int) -> None:
