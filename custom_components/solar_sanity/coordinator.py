@@ -103,6 +103,21 @@ class SolarSanityData:
     store: Store
 
 
+def _count_sources(buckets: Sequence[Bucket], key: str) -> dict[str, int]:
+    """How many of this channel's hours came from each source.
+
+    Free rather than a method: it needs nothing from the coordinator, and a
+    test that stands one up as a stub should not have to grow a member to ask a
+    question about a list of buckets.
+    """
+    counts: dict[str, int] = {}
+    for bucket in buckets:
+        source = bucket.source.get(key)
+        if source is not None and bucket.wh.get(key) is not None:
+            counts[source.value] = counts.get(source.value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
     """Owns the measurement window and the analysis result."""
 
@@ -923,16 +938,6 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             return None
         return round(readable / len(specs) * 100)
 
-    @staticmethod
-    def _count_sources(buckets: Sequence[Bucket], key: str) -> dict[str, int]:
-        """How many of this channel's hours came from each source."""
-        counts: dict[str, int] = {}
-        for bucket in buckets:
-            source = bucket.source.get(key)
-            if source is not None and bucket.wh.get(key) is not None:
-                counts[source.value] = counts.get(source.value, 0) + 1
-        return dict(sorted(counts.items()))
-
     def coverage_snapshot(self) -> dict[str, Any]:
         """Everything needed to explain a verdict, in one downloadable place.
 
@@ -1002,9 +1007,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 # nothing wrong behind it, and without this the file gave no
                 # way to tell it from a real one — a month of evidence looked
                 # equally good whichever it was.
-                "by_source": {
-                    spec.key: self._count_sources(buckets, spec.key) for spec in self.specs
-                },
+                "by_source": {spec.key: _count_sources(buckets, spec.key) for spec in self.specs},
             },
             "valid_hours_per_local_day": dict(sorted(per_day.items())),
             "days_meeting_minimum": sum(
