@@ -340,7 +340,66 @@ def night_ledger(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) 
         out[f"night_total_{role.key}_wh"] = wh(amount)
 
     out.update(_split_by_the_grid(days, shape, wh))
+    out.update(_hours_with_no_supply(days, shape, wh))
     return out
+
+
+#: A channel below this in an hour has not meaningfully supplied anything.
+SUPPLY_FLOOR_WH = 25.0
+
+#: Consumption above this in an hour is real draw rather than a rounding edge.
+DRAW_FLOOR_WH = 200.0
+
+
+def _hours_with_no_supply(
+    days: tuple[DayResidual, ...],
+    shape: _Shape,
+    wh: Callable[[float], float],
+) -> dict[str, float]:
+    """Night hours drawing real power with nothing measured supplying it.
+
+    The one question a mis-scaled sensor and a blind one answer differently.
+    Scaling a channel cannot rescue an hour where every source reads zero —
+    there is nothing to multiply. So hours like these are proof that something
+    stopped reporting rather than that something reports the wrong amount, and
+    their absence is equally strong the other way.
+
+    It matters because the two are indistinguishable in a total. A month whose
+    night is short by 500 W looks the same whether every hour is short by 500 W
+    or a fifth of the hours are short by everything, and those have different
+    causes and different fixes.
+    """
+    sources = [role for role in shape.present if role.sign > 0]
+    sinks = [role for role in shape.present if role.sign < 0]
+    if not sources or not sinks:
+        return {}
+
+    hours = 0
+    unexplained = 0.0
+    for day in days:
+        for bucket in day.buckets:
+            if not _is_night(bucket, shape.pv_keys):
+                continue
+            supplied = sum(
+                amount
+                for role in sources
+                if (amount := _role_total(bucket, shape.keys_for[role])) is not None
+            )
+            drawn = sum(
+                amount
+                for role in sinks
+                if (amount := _role_total(bucket, shape.keys_for[role])) is not None
+            )
+            if supplied < SUPPLY_FLOOR_WH and drawn > DRAW_FLOOR_WH:
+                hours += 1
+                unexplained += drawn
+
+    if not hours:
+        return {"night_hours_with_no_supply": 0.0}
+    return {
+        "night_hours_with_no_supply": float(hours),
+        "night_unsupplied_draw_wh": wh(unexplained),
+    }
 
 
 #: Roles that mean the grid was involved in an hour.

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 from typing import Any
@@ -923,6 +923,16 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             return None
         return round(readable / len(specs) * 100)
 
+    @staticmethod
+    def _count_sources(buckets: Sequence[Bucket], key: str) -> dict[str, int]:
+        """How many of this channel's hours came from each source."""
+        counts: dict[str, int] = {}
+        for bucket in buckets:
+            source = bucket.source.get(key)
+            if source is not None and bucket.wh.get(key) is not None:
+                counts[source.value] = counts.get(source.value, 0) + 1
+        return dict(sorted(counts.items()))
+
     def coverage_snapshot(self) -> dict[str, Any]:
         """Everything needed to explain a verdict, in one downloadable place.
 
@@ -983,6 +993,18 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 "valid_hours": len(valid),
                 "first_utc": buckets[0].start_utc.isoformat() if buckets else None,
                 "last_utc": buckets[-1].start_utc.isoformat() if buckets else None,
+                # Where the numbers came from, per channel.
+                #
+                # `lts_mean` is the weak one: an hourly arithmetic mean over a
+                # sensor that reports on change over-weights the busy part of
+                # an hour, so a power channel read this way can sit high while
+                # an energy counter beside it is exact. That is a residual with
+                # nothing wrong behind it, and without this the file gave no
+                # way to tell it from a real one — a month of evidence looked
+                # equally good whichever it was.
+                "by_source": {
+                    spec.key: self._count_sources(buckets, spec.key) for spec in self.specs
+                },
             },
             "valid_hours_per_local_day": dict(sorted(per_day.items())),
             "days_meeting_minimum": sum(
