@@ -131,6 +131,29 @@ def check_closure(specs: tuple[ChannelSpec, ...], declared: DeclaredTopology) ->
         # Battery absent or unknown: still run the storage probe as a falsifier.
         return ClosureResult(Closure.OPEN, "No battery channel mapped.")
 
+    # Asked at setup, stored, and until now never read by anything.
+    #
+    # It belongs here and nowhere else: a load sensor covering part of the house
+    # leaves the rest of the consumption outside every channel we have, so the
+    # identity cannot close and saying it does is the one thing this function
+    # exists to prevent. The owner has already told us so — we were simply not
+    # listening, and were reporting their house as fully measured on their own
+    # word that it is not.
+    #
+    # Deliberately the last branch. `check_closure` returns on first match, and
+    # every branch above it describes a boundary that is open for a *different*
+    # reason. In particular the export branch sets `unmeasured_export`, which is
+    # what earns a house the restricted night-hours verdict; answering ahead of
+    # it would return an open boundary with that flag unset and silently take
+    # the only real verdict available away from every house with no export
+    # meter — a strictly worse answer, arrived at by adding information.
+    if declared.load_covers_whole_house is Answer.NO:
+        return ClosureResult(
+            Closure.OPEN,
+            "Your consumption sensor does not cover the whole house, so whatever "
+            "it misses will look like energy that went missing.",
+        )
+
     return ClosureResult(Closure.CLOSED)
 
 

@@ -113,19 +113,26 @@ class TestAPairIsNamedRatherThanGuessedAt:
         assert report.finding.code == Code.DUPLICATE_CHANNEL
         assert report.status is Status.FAULT_FOUND
 
-    def test_a_duplicate_too_small_to_be_actionable_is_left_alone(self) -> None:
-        """Not a gap in this detector — the bar in front of it.
+    def test_a_duplicate_below_the_daily_band_is_still_named(self) -> None:
+        """This one was unreported, and the detector was never the reason.
 
-        Duplicating grid import on this house leaves an 8% residual with only
-        two actionable days in the last seven, and the engine declines to
-        attribute a cause until five of the last seven are actionable. A
-        duplicate that never pushes the house past that bar stays unreported,
-        which is the same answer it would give for any other fault of that size.
+        Duplicating grid import leaves a residual whose median day sits at 8% —
+        inside the clean band — with the days that exceed it spread across a
+        fortnight rather than bunched in one week. The old gate wanted five
+        *actionable* days out of the last seven, so days that were merely
+        unsettled counted toward nothing, and a duplicated channel on a real
+        house went unnamed indefinitely while the detector that could name it
+        was never asked.
+
+        Counting every day that is not clean, over a window long enough to hold
+        them, reaches it. The evidence was always there.
         """
         report = _analyse(*_duplicated("grid_import", Role.GRID_IMPORT))
 
-        assert report.status is Status.INVESTIGATING
-        assert report.finding is None
+        assert report.status is Status.FAULT_FOUND
+        assert report.finding is not None
+        assert report.finding.code == Code.DUPLICATE_CHANNEL
+        assert set(report.finding.channel_keys) == {"grid_import", "grid_import_b"}
 
     def test_both_channels_are_named(self) -> None:
         series, spec = _duplicated("pv", Role.PV)
@@ -805,29 +812,51 @@ class TestTheCounterfactualIsNotEnoughOnItsOwn:
 
         assert reached >= 40, f"only {reached} of 60 reached the detector"
 
-    def test_the_counterfactual_alone_would_have_fired(self) -> None:
-        """Pins the mechanism, so nobody removes the identity test believing the
-        counterfactual already covered this."""
+    def test_the_counterfactual_no_longer_fires_anywhere_on_this_grid(self) -> None:
+        """It used to fire at seed=1, kwp=3.0, 300 W. Now it fires nowhere.
+
+        Nothing in the counterfactual changed. ``_closes_without`` asks whether
+        dropping a channel would leave the house settled, and "settled" is the
+        same verdict test the rest of the engine uses — so widening that window
+        from seven days to fourteen, at the same proportion, tightened this too.
+        Agreeing on six days out of seven is a thing an ordinary spell of
+        weather can do to a house that is genuinely out; agreeing on twelve out
+        of fourteen is much harder to do by luck.
+
+        This is recorded rather than deleted because it inverts the class's
+        original claim. The identity test is no longer the only thing standing
+        between these two real strings and a wrong answer — but it is still the
+        thing that *discriminates*, and the sweep above is what protects the
+        user. If a later change narrows the window again, this fails and says
+        which false positive comes back with it.
+        """
         from analysis import engine
 
-        series = house.add_standby(
-            house.two_aspects(house.build(days=DAYS, seed=1, kwp=3.0), "pv", "pv_west", tilt=0.0),
-            300.0,
-        )
-        specs = (*specs_for(), extra_spec("pv_west", Role.PV, "Solar west"))
-        request = to_request(series, specs=specs, declared=DECLARED)
-        buckets = engine._apply_corrections(request.buckets, request.active_corrections)
+        fired = []
+        for seed in range(4):
+            for kwp in (3.0, 6.0, 9.0):
+                for watts in (150.0, 300.0, 400.0, 600.0, 900.0):
+                    series = house.add_standby(
+                        house.two_aspects(
+                            house.build(days=DAYS, seed=seed, kwp=kwp),
+                            "pv",
+                            "pv_west",
+                            tilt=0.0,
+                        ),
+                        watts,
+                    )
+                    specs = (*specs_for(), extra_spec("pv_west", Role.PV, "Solar west"))
+                    request = to_request(series, specs=specs, declared=DECLARED)
+                    buckets = engine._apply_corrections(request.buckets, request.active_corrections)
+                    closing = [
+                        key
+                        for key in ("pv", "pv_west")
+                        if engine._closes_without(request, specs, buckets, key)[0]
+                    ]
+                    if len(closing) == 2:
+                        fired.append((seed, kwp, watts))
 
-        closing = [
-            key
-            for key in ("pv", "pv_west")
-            if engine._closes_without(request, specs, buckets, key)[0]
-        ]
-
-        assert closing == ["pv", "pv_west"], (
-            "both real strings still look interchangeable — the identity test is "
-            "the only thing standing between this house and a wrong answer"
-        )
+        assert fired == [], f"the counterfactual calls half a real array a duplicate at {fired}"
 
 
 class TestAFigureWeCannotComputeIsNeverPrinted:

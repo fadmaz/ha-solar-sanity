@@ -44,11 +44,53 @@ from .residual import (
 )
 from .topology import Closure
 
-#: Consecutive actionable days before we will look for an explanation at all.
-MIN_ACTIONABLE_DAYS = 5
+#: Days of usable history before any verdict is possible. Not a band count —
+#: this one is only about whether there is data at all.
+MIN_DAYS_OF_DATA = 5
 
-#: Clean days out of the last seven that mean "say nothing".
-CLEAN_DAYS_FOR_OK = 6
+#: Days of history before an active correction may be judged to have outlived
+#: its fault. The same number, a different question: that stage runs ahead of
+#: every other and needed a floor of its own rather than borrowing one.
+MIN_BASELINE_DAYS_FOR_STALE = 5
+
+#: The window every verdict is decided over.
+#:
+#: It was seven, and seven days of weather is one spell. As the tail rolled, a
+#: house sitting near a band edge changed its answer from one refresh to the
+#: next with nothing about it having changed. It costs a week on the first
+#: verdict, which the copy already prepares people for, and buys an answer that
+#: holds still.
+VERDICT_WINDOW = 14
+
+#: Clean days in that window meaning "say nothing".
+#:
+#: The same proportion as the six of seven it replaces. Across 72 healthy
+#: scenarios the same 60 came back OK at every threshold from ten to thirteen,
+#: so this number is not what decides anything here — which is the reason the
+#: ratio was kept rather than an unrelated opportunity quietly taken with it.
+#:
+#: Holding the ratio and lengthening the window is not neutral, though: it is a
+#: stricter test, because a run of agreeable days is easier to come by over one
+#: week than two. That tightening is inherited by `_closes_without`, which asks
+#: the same question, and it removes a false positive the counterfactual used to
+#: produce — see `TestTheCounterfactualIsNotEnoughOnItsOwn`.
+MIN_CLEAN_DAYS_FOR_OK = 12
+
+#: Days that are *not* clean before we will look for an explanation.
+#:
+#: This counted `actionable` days alone, which left `watch` counting toward
+#: nothing whatsoever: a fortnight of clean and watch days satisfied neither
+#: this gate nor the one above, so the engine returned "the numbers move around
+#: but not consistently enough to name" without ever generating a hypothesis,
+#: and would have gone on doing so indefinitely.
+#:
+#: Measured over 108 healthy scenarios — three topologies, twelve seeds, three
+#: noise levels. At eight and at nine the result is identical: every one of the
+#: 72 fully measured houses reports OK, and no house anywhere is blamed for
+#: something that is not wrong with it. At ten, six houses with a genuinely
+#: unmapped export channel stop being told so. Eight is chosen over nine for the
+#: margin below that, not because they differ.
+MIN_UNSETTLED_DAYS = 8
 
 #: Below this in both channels, an hour is telling us nothing about whether two
 #: sensors track each other. Two channels that are asleep agree perfectly.
@@ -171,7 +213,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     provisional = build_days(
         buckets, specs, request.loss_model or LossModel(), request.utc_offset_hours
     )
-    if len(provisional) < MIN_ACTIONABLE_DAYS:
+    if len(provisional) < MIN_DAYS_OF_DATA:
         return AnalysisReport(
             status=Status.INSUFFICIENT_DATA,
             reason=_shortage_reason(len(provisional), buckets, specs),
@@ -183,7 +225,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     estimate = topology.infer(days, specs, request.declared, loss)
     summary = _summarise(days)
 
-    if len(days) < MIN_ACTIONABLE_DAYS:
+    if len(days) < MIN_DAYS_OF_DATA:
         return AnalysisReport(
             status=Status.INSUFFICIENT_DATA,
             reason=f"Only {len(days)} complete days of data so far.",
@@ -192,6 +234,11 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             residual=summary,
         )
 
+    # The signal floor keeps its own seven-day window rather than following the
+    # verdict window to fourteen. MIN_SIGNAL_WH is an absolute quantity of
+    # watt-hours, so doubling the days it is measured over would halve it in
+    # effect — loosening a floor that exists to stop attribution running on
+    # noise, as a side effect of a change about something else.
     recent = days[-7:]
     if _would_be_ok(days):
         return AnalysisReport(
@@ -217,7 +264,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
         if structural is not None:
             return structural
 
-    if sum(1 for d in recent if d.band == "actionable") < MIN_ACTIONABLE_DAYS:
+    if not _enough_to_attribute(days):
         restricted = _restricted_report(
             request,
             specs,
@@ -413,11 +460,16 @@ def _restricted_report(
         return None
 
     days = build_days(buckets, specs, loss, request.utc_offset_hours, verifiable_only=True)
-    if len(days) < MIN_ACTIONABLE_DAYS:
+    if len(days) < MIN_DAYS_OF_DATA:
         return None
 
     summary = _summarise(days)
     notes = _unverifiable_notes(days, full_days) + _draw_note(days, specs) + _loss_notes(loss)
+    # The signal floor keeps its own seven-day window rather than following the
+    # verdict window to fourteen. MIN_SIGNAL_WH is an absolute quantity of
+    # watt-hours, so doubling the days it is measured over would halve it in
+    # effect — loosening a floor that exists to stop attribution running on
+    # noise, as a side effect of a change about something else.
     recent = days[-7:]
 
     common = {
@@ -428,10 +480,10 @@ def _restricted_report(
         "residual": summary,
     }
 
-    if sum(1 for d in recent if d.band == "clean") >= min(CLEAN_DAYS_FOR_OK, len(recent)):
+    if _would_be_ok(days):
         return AnalysisReport(status=Status.OK, **common)
 
-    if sum(1 for d in recent if d.band == "actionable") < MIN_ACTIONABLE_DAYS:
+    if not _enough_to_attribute(days):
         return AnalysisReport(
             status=Status.INVESTIGATING,
             reason="The numbers move around but not consistently enough to name.",
@@ -1074,10 +1126,29 @@ def _duplicate_pair(
 
 def _would_be_ok(days: tuple[DayResidual, ...]) -> bool:
     """The verdict test, in one place so nothing can disagree with it."""
-    recent = days[-7:]
+    recent = days[-VERDICT_WINDOW:]
     if not recent:
         return False
-    return sum(1 for d in recent if d.band == "clean") >= min(CLEAN_DAYS_FOR_OK, len(recent))
+    return sum(1 for d in recent if d.band == "clean") >= min(MIN_CLEAN_DAYS_FOR_OK, len(recent))
+
+
+def _enough_to_attribute(days: tuple[DayResidual, ...]) -> bool:
+    """Whether there is enough unsettled evidence to go looking for a cause.
+
+    Also in one place, and for a sharper reason than tidiness: this test existed
+    twice, once in `analyse` and once inside `_restricted_report`, and the second
+    copy governs the path an installation with no export meter is reported
+    through. Changing one and not the other would have left two contradictory
+    verdict rules in one file, with the divergent one where it matters most.
+
+    Counts every day that is not clean, because `watch` counting toward nothing
+    is how a house could be demonstrably unsettled and never once have a
+    hypothesis generated for it.
+    """
+    recent = days[-VERDICT_WINDOW:]
+    if not recent:
+        return False
+    return sum(1 for d in recent if d.band != "clean") >= min(MIN_UNSETTLED_DAYS, len(recent))
 
 
 def _days_for(
@@ -1124,7 +1195,7 @@ def _stale_corrections(request: AnalysisRequest, specs: tuple[ChannelSpec, ...])
         return ()
 
     baseline = _days_for(request, specs, corrections)
-    if len(baseline) < MIN_ACTIONABLE_DAYS:
+    if len(baseline) < MIN_BASELINE_DAYS_FOR_STALE:
         # This stage runs ahead of the day floor every other stage answers to,
         # and that made it the most confident thing in the engine on the least
         # evidence. `_would_be_ok` collapses to "one clean day" on a one-day
