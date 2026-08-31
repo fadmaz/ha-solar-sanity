@@ -203,8 +203,13 @@ async def test_the_orphan_sweep_spares_an_unloaded_installation(
     absent.add_to_hass(hass)
     theirs = _raise_for(hass, absent.entry_id)
 
+    # Each step asserted separately, because the first version of this test
+    # failed at the end and there were three candidate explanations.
+    assert issue_registry.async_get_issue(DOMAIN, theirs) is not None
     # Never loaded, which is the strongest form of "not loaded" available here.
     assert absent.state is ConfigEntryState.NOT_LOADED
+    configured = {e.entry_id for e in hass.config_entries.async_entries(DOMAIN)}
+    assert absent.entry_id in configured
 
     other = MockConfigEntry(domain=DOMAIN, data=dict(entry_data))
     other.add_to_hass(hass)
