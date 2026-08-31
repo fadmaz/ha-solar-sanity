@@ -75,10 +75,9 @@ async def test_setup_reconciles_the_panel_to_the_report_exactly(
     that has since been fixed, or one raised by an older version of the
     analysis, does not survive on the panel by inertia.
 
-    The claim that a *reload* must not flap a card the report still wants is a
-    real one, made in ``async_remove_issues``'s docstring, and it is not tested
-    here: proving it needs an analysis that genuinely produces a finding, which
-    needs a month of seeded statistics. Recorded rather than quietly skipped.
+    The other half of that claim — that a card the report *still wants* survives
+    a reload — is tested below, in two pieces. See
+    ``test_unloading_does_not_take_the_cards_with_it``.
     """
     entry.add_to_hass(hass)
     stale = _raise_for(hass, entry.entry_id, kind="a_finding_no_longer_made")
@@ -139,3 +138,78 @@ async def test_a_card_stranded_by_an_older_release_is_swept_at_setup(
     await hass.async_block_till_done()
 
     assert issue_registry.async_get_issue(DOMAIN, stranded) is None
+
+
+async def test_unloading_does_not_take_the_cards_with_it(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry: MockConfigEntry,
+    issue_registry: ir.IssueRegistry,
+) -> None:
+    """The sentence in ``async_remove_issues``: *not on unload*.
+
+    This is the half of the no-flapping claim that needs no seeded statistics,
+    and it is the half where the mistake would actually be made. Unload is the
+    obvious place to hang a cleanup — it is symmetric with setup, and a reload
+    unloads before it sets up again. Hanging it there would delete and recreate
+    every card on every reload, and Home Assistant records a dismissal against
+    the issue rather than against its contents, so each round trip would quietly
+    un-dismiss something the user had already dealt with.
+
+    Removal is the only correct hook, because removal is the only time the
+    installation is genuinely gone.
+
+    What this does not prove is the whole round trip: that after the reload the
+    fresh analysis names the same finding and re-raises the same card. That
+    needs an analysis that genuinely produces a finding, which needs a month of
+    seeded statistics. The reconciliation half is covered above, so what remains
+    untested is the analysis agreeing with itself across a restart — a property
+    of the engine, not of this module.
+    """
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    issue_id = _raise_for(hass, entry.entry_id)
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is not None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is not None
+
+
+async def test_the_orphan_sweep_spares_an_unloaded_installation(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry_data: dict,
+    issue_registry: ir.IssueRegistry,
+) -> None:
+    """An unloaded installation is still an installation.
+
+    The sweep runs at every setup, against every *configured* entry rather than
+    every loaded one, and the difference is the whole test. An entry that is
+    merely unloaded — mid-reload, failed once and retrying, disabled by the user
+    for an afternoon — still describes a real house, and its cards are still
+    about that house.
+
+    Sweeping it would be the flapping failure reached by a second route: not
+    through its own unload, which the test above covers, but through some other
+    installation being set up while it is down. A house with two inverters
+    reloads one of them and loses the other's dismissed card.
+    """
+    absent = MockConfigEntry(domain=DOMAIN, data=dict(entry_data))
+    absent.add_to_hass(hass)
+    theirs = _raise_for(hass, absent.entry_id)
+
+    # Never loaded, which is the strongest form of "not loaded" available here.
+    assert absent.state is ConfigEntryState.NOT_LOADED
+
+    other = MockConfigEntry(domain=DOMAIN, data=dict(entry_data))
+    other.add_to_hass(hass)
+    await hass.config_entries.async_setup(other.entry_id)
+    await hass.async_block_till_done()
+
+    assert other.state is ConfigEntryState.LOADED
+    assert issue_registry.async_get_issue(DOMAIN, theirs) is not None
