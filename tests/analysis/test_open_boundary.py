@@ -20,7 +20,7 @@ from analysis.model import Answer, DeclaredTopology, LossModel, Role, Status
 from analysis.residual import build_days
 from analysis.topology import Closure, check_closure, fit_loss_model
 
-from tests.synth import house
+from tests.synth import corpus, house
 from tests.synth.adapt import specs_for, to_request
 
 #: The user's own shape: import measured, export not, battery measured.
@@ -549,6 +549,141 @@ class TestVerifiableHoursOnly:
         report = analyse(to_request(house.build(days=30, seed=1), declared=DECLARED))
 
         assert report.notes == ()
+
+
+class TestASurplusThatComesBackIsNotExport:
+    """Energy that left the house does not return at three in the morning.
+
+    The note quoting how much goes missing during a surplus counted only the
+    surplus hours and ignored every other hour of the day. On an installation
+    whose afternoon runs short and whose night runs long by the same amount that
+    produced a confident figure — "about 5.9 kWh a day … most likely what you
+    are sending to the grid" — for a house whose month closes to within 1.4% and
+    which exports nothing at all.
+
+    The distinguishing property is not the size of the shortfall but whether it
+    survives. Export is a one-way trip; a disagreement about *when* energy moved
+    is repaid within the day. Measured across every export variant tried — five
+    per cent meter noise, a DC-metered inverter at 0.90 and 0.85, an 80 W
+    unmetered draw — a genuine unmapped export path leaves 0.96 to 1.02 of its
+    surplus shortfall still missing. The installation this was found on sits at
+    -0.098.
+    """
+
+    #: Hours the shift takes consumption out of, and puts it back into.
+    #:
+    #: Deliberately keyed to the clock rather than to how much the sun is doing.
+    #: A shift proportional to generation is a *generation* fault by another
+    #: name, and the loss model rightly absorbs part of it — the first version of
+    #: this fixture did that and measured 0.78 rather than the negative figure it
+    #: was written to produce.
+    TAKEN_FROM = tuple(range(9, 16))
+    GIVEN_BACK = (0, 1, 2, 3)
+    WATTS = 1200.0
+
+    @classmethod
+    def _repaid(cls, series):
+        """The same watt-hours, booked to the wrong hour of the day.
+
+        Every daily total is untouched: what is taken out of the afternoon is
+        added back after dark. Nothing leaves the house, so any sentence about
+        export is wrong about it — which is the whole point.
+        """
+        load = list(series.data["load"])
+        moved = 0.0
+        for hour in range(series.hours):
+            if hour % 24 in cls.TAKEN_FROM:
+                shift = min(cls.WATTS, load[hour])
+                load[hour] -= shift
+                moved += shift
+
+        dark = [hour for hour in range(series.hours) if hour % 24 in cls.GIVEN_BACK]
+        for hour in dark:
+            load[hour] += moved / len(dark)
+        return series.copy_with(load=load)
+
+    @classmethod
+    def _house(cls, seed: int):
+        """Self-consuming, so the export it is accused of cannot be happening.
+
+        ``house.drop("grid_export")`` would not do: that leaves the export
+        occurring and merely unmapped, which is the genuine fault this must not
+        silence.
+        """
+        return cls._repaid(corpus._self_consumed(house.build(days=30, seed=seed)))
+
+    def _report(self, series):
+        return analyse(to_request(series, specs=specs_for(NO_EXPORT), declared=DECLARED))
+
+    @pytest.mark.parametrize("seed", range(6))
+    def test_a_repaid_surplus_is_not_called_export(self, seed: int) -> None:
+        notes = " ".join(self._report(self._house(seed)).notes)
+
+        assert "sending to the grid" not in notes, (
+            "a house that gives the energy back was told it was exporting"
+        )
+
+    @pytest.mark.parametrize("seed", range(6))
+    def test_the_figure_is_still_reported(self, seed: int) -> None:
+        """Withholding the *explanation* must not withhold the *measurement*.
+
+        The number is real and it is the largest thing about this installation.
+        Saying nothing would leave its owner staring at "still looking" with no
+        idea how much is in play, which is the failure this whole note exists to
+        prevent.
+        """
+        notes = " ".join(self._report(self._house(seed)).notes)
+
+        assert "kWh a day goes missing" in notes
+        assert "when* energy moved" in notes
+
+    @pytest.mark.parametrize("seed", range(3))
+    def test_a_genuine_unmapped_export_still_says_so(self, seed: int) -> None:
+        """The case this must not break, on a house that reaches this path.
+
+        A halved consumption sensor is visible at night, so attribution has
+        something to name and the notes come from the restricted report — which
+        is the only route by which a real export house still reads these
+        sentences.
+        """
+        series = house.halve(house.drop(house.build(days=30, seed=seed), "grid_export"), "load")
+
+        notes = " ".join(self._report(series).notes)
+
+        assert "sending to the grid" in notes
+        assert "when* energy moved" not in notes
+
+    def test_the_two_are_far_apart_rather_than_nearly_apart(self) -> None:
+        """The threshold sits in a gap, not on an edge.
+
+        If these ever converge the discrimination has stopped working, and a
+        figure somebody acts on is riding on the third decimal place.
+        """
+        from analysis.engine import MIN_SURPLUS_THAT_SURVIVES, _surplus_balance
+        from analysis.residual import build_days
+
+        def surviving(series) -> float:
+            request = to_request(series, specs=specs_for(NO_EXPORT), declared=DECLARED)
+            # `surplus_mask` reads the spec stubs the engine populates as it
+            # runs, so the analysis has to happen before the question is asked.
+            analyse(request)
+            provisional = build_days(
+                request.buckets, request.specs, LossModel(), request.utc_offset_hours
+            )
+            loss = fit_loss_model(provisional, request.specs, None)
+            days = build_days(request.buckets, request.specs, loss, request.utc_offset_hours)
+            balance = _surplus_balance(days)
+            assert balance is not None
+            return balance[1]
+
+        exporting = [
+            surviving(house.drop(house.build(days=30, seed=seed), "grid_export"))
+            for seed in range(4)
+        ]
+        repaid = [surviving(self._house(seed)) for seed in range(4)]
+
+        assert min(exporting) > MIN_SURPLUS_THAT_SURVIVES + 0.4, exporting
+        assert max(repaid) < MIN_SURPLUS_THAT_SURVIVES - 0.4, repaid
 
 
 class TestLocalDayGrouping:
