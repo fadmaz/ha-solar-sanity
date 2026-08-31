@@ -2,7 +2,7 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
-## [Unreleased]
+## [0.18.0] - 2026-08-31
 
 ### Added
 
@@ -52,6 +52,17 @@ All notable changes are documented here. This project follows Semantic Versionin
   like their sensors disagreeing about *when* energy moved rather than about how
   much of it there was.
 
+
+- **Solar Sanity no longer requires a component it never uses.** The manifest
+  declared Home Assistant's `frontend` as a hard dependency, which means Home
+  Assistant refuses to start this integration if it cannot start that one
+  first. Nothing here ever called it: the card's static path goes through
+  `http`, and the Lovelace resource registration already checks whether
+  Lovelace is loaded and steps aside when it is not.
+
+  On an ordinary installation the frontend is always there, so this cost
+  nothing. On one without it — a headless or trimmed-down setup — Solar
+  Sanity would not start at all, for a line that was never true.
 
 - **A stored file this version cannot read no longer stops the integration
   starting.** Solar Sanity keeps its fitted loss model in a small file so a
