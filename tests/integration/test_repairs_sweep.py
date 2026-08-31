@@ -15,7 +15,7 @@ actionable nor dismissible. It cleared on the next restart, which is not a fix.
 
 from __future__ import annotations
 
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -180,51 +180,43 @@ async def test_unloading_does_not_take_the_cards_with_it(
     assert issue_registry.async_get_issue(DOMAIN, issue_id) is not None
 
 
-async def test_the_orphan_sweep_spares_an_unloaded_installation(
+async def test_the_orphan_sweep_spares_a_disabled_installation(
     hass: HomeAssistant,
     enable_custom_integrations: None,
     entry_data: dict,
     issue_registry: ir.IssueRegistry,
 ) -> None:
-    """An unloaded installation is still an installation.
+    """A disabled installation is still an installation.
 
     The sweep runs at every setup, against every *configured* entry rather than
-    every loaded one, and the difference is the whole test. An entry that is
-    merely unloaded — mid-reload, failed once and retrying, disabled by the user
-    for an afternoon — still describes a real house, and its cards are still
-    about that house.
+    every loaded one, and the difference is the whole test. Disabling an entry
+    is temporary and user-initiated — the house is still there, the mapping is
+    still whatever it was, and the card is still about something real. Sweeping
+    it would be the flapping failure reached by a second route: not through its
+    own unload, which the test above covers, but through another installation
+    being set up while it is down.
 
-    Sweeping it would be the flapping failure reached by a second route: not
-    through its own unload, which the test above covers, but through some other
-    installation being set up while it is down. A house with two inverters
-    reloads one of them and loses the other's dismissed card.
+    Disabled rather than merely unloaded, and the first version of this test got
+    that wrong. Setting up one entry loads the *component*, and loading a
+    component sets up every configured entry belonging to it — so the
+    "unloaded" entry was loaded by the time the sweep ran, and its own
+    reconcile cleared the card, correctly. Home Assistant does not set up a
+    disabled entry, and ``async_entries`` still lists it, which is exactly the
+    gap between "configured" and "loaded" that this test needs to sit in.
     """
-    absent = MockConfigEntry(domain=DOMAIN, data=dict(entry_data))
+    absent = MockConfigEntry(
+        domain=DOMAIN, data=dict(entry_data), disabled_by=ConfigEntryDisabler.USER
+    )
     absent.add_to_hass(hass)
     theirs = _raise_for(hass, absent.entry_id)
 
-    # Each step asserted separately, because the first version of this test
-    # failed at the end and there were three candidate explanations.
-    assert issue_registry.async_get_issue(DOMAIN, theirs) is not None
-    # Never loaded, which is the strongest form of "not loaded" available here.
-    assert absent.state is ConfigEntryState.NOT_LOADED
-    configured = {e.entry_id for e in hass.config_entries.async_entries(DOMAIN)}
-    assert absent.entry_id in configured
-
     other = MockConfigEntry(domain=DOMAIN, data=dict(entry_data))
     other.add_to_hass(hass)
-
-    from custom_components.solar_sanity.repairs import issue_ids_for_entry
-
-    assert absent.entry_id != other.entry_id, "two entries, one id"
-    assert theirs not in issue_ids_for_entry(hass, other.entry_id), (
-        absent.entry_id,
-        other.entry_id,
-        theirs,
-    )
-
     await hass.config_entries.async_setup(other.entry_id)
     await hass.async_block_till_done()
 
     assert other.state is ConfigEntryState.LOADED
+    # Still configured, still down, still holding its card.
+    assert absent.entry_id in {e.entry_id for e in hass.config_entries.async_entries(DOMAIN)}
+    assert absent.state is not ConfigEntryState.LOADED
     assert issue_registry.async_get_issue(DOMAIN, theirs) is not None
