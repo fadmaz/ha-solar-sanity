@@ -26,6 +26,28 @@ All notable changes are documented here. This project follows Semantic Versionin
   like their sensors disagreeing about *when* energy moved rather than about how
   much of it there was.
 
+## [Unreleased]
+
+### Fixed
+
+- **A stored file this version cannot read no longer stops the integration
+  starting.** Solar Sanity keeps its fitted loss model in a small file so a
+  restart does not reset a month of learning. Home Assistant refuses to read a
+  file written by a different version of that format unless an integration says
+  how to convert it — and where that refusal was caught for the older shared
+  file, it was not caught for the one every installation has. The exception
+  travelled all the way out and the integration did not start.
+
+  No released version writes a different version of that file, so this could not
+  happen yet. It would have happened to the first person to *downgrade* after a
+  future release changed it — somebody rolling back because something else had
+  already gone wrong, who would have found Solar Sanity dead on arrival with
+  nothing in the log to explain it.
+
+  An unreadable file now costs the loss model and nothing else, with a warning
+  saying so. The model is refitted from the same data within a day, which is
+  why it is the safe thing to lose.
+
 ## [0.17.0] - 2026-08-30
 
 ### Added
