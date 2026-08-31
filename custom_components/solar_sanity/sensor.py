@@ -31,6 +31,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
 from .analysis.model import AnalysisReport, Status
+from .const import CONF_FORECAST_ENTRIES
 from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .entity import SolarSanityEntity
 
@@ -169,9 +170,96 @@ async def async_setup_entry(
         if description.key != "live_residual" or coordinator.has_live_tier
     ]
 
-    async_add_entities(
+    entities: list[SensorEntity] = [
         SolarSanitySensor(coordinator, entry, description) for description in descriptions
-    )
+    ]
+
+    # One per configured provider, created because a provider is configured and
+    # not because it has earned a figure yet. Earned-ness changes with the
+    # weather; an entity that appears and disappears with it would break every
+    # automation and history graph pointing at it, and would do so silently.
+    # Before there are twenty-one comparable days the state is unknown and the
+    # reason attribute says why in a sentence.
+    for provider_entry_id in coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or []:
+        provider = hass.config_entries.async_get_entry(provider_entry_id)
+        if provider is None:
+            continue
+        entities.append(ForecastBiasSensor(coordinator, entry, provider_entry_id, provider.title))
+
+    async_add_entities(entities)
+
+
+class ForecastBiasSensor(SolarSanityEntity, SensorEntity):
+    """How far one provider's forecast sits from what the roof did.
+
+    No ``state_class``. This is a judgement rather than a measurement: it is
+    recomputed over a rolling window, it is snapped to five points so that a
+    reader is not invited to watch it wobble, and it may go back to unknown when
+    the days behind it stop qualifying. Recording that as a statistic would
+    produce a history graph of an opinion changing its mind.
+
+    The percentage is signed the way a person reads it: negative means the
+    system produced less than was forecast.
+    """
+
+    _attr_icon = "mdi:crosshairs-question"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "forecast_bias"
+
+    def __init__(
+        self,
+        coordinator: SolarSanityCoordinator,
+        entry: ConfigEntry,
+        provider_entry_id: str,
+        provider_name: str,
+    ) -> None:
+        super().__init__(coordinator, entry, f"forecast_bias_{provider_entry_id}")
+        self._provider_entry_id = provider_entry_id
+        # The name is a placeholder rather than part of the key, so renaming the
+        # provider integration renames this sensor instead of orphaning it.
+        self._attr_translation_placeholders = {"provider": provider_name}
+
+    @property
+    def _score(self) -> Any | None:
+        return next(
+            (
+                score
+                for score in self.coordinator.forecast_scores
+                if score.entry_id == self._provider_entry_id
+            ),
+            None,
+        )
+
+    @property
+    def native_value(self) -> StateType:
+        """``None`` until there is a figure worth showing.
+
+        ``Bias`` separates the value it measured from the value it will state.
+        Only the second is published: a bias computed from eleven days is real
+        arithmetic and not yet an answer, and showing it would invite somebody
+        to act on it.
+        """
+        score = self._score
+        return None if score is None else score.bias.reportable_pct
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """``reason`` is carried verbatim.
+
+        It is the sentence that explains an unknown state — "20 comparable days
+        so far; a figure needs 21" — and rewording it here would leave two
+        versions of the same explanation to drift apart.
+        """
+        score = self._score
+        if score is None:
+            return {"reason": "No forecast history has been scored yet."}
+        return {
+            "reason": score.bias.reason,
+            "direction": score.bias.direction,
+            "days_compared": score.bias.days,
+            **score.bias.measurements,
+        }
 
 
 class SolarSanitySensor(SolarSanityEntity, SensorEntity):
