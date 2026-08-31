@@ -37,6 +37,7 @@ import type {
   HomeAssistant,
   LovelaceCard,
   LovelaceCardConfig,
+  LovelaceCardEditor,
 } from "./types/hass";
 
 /** Chart geometry, in user units. The viewBox scales it to whatever fits. */
@@ -116,6 +117,11 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       throw new Error("`provider` must be a statistic id");
     }
     this._config = config;
+  }
+
+  /** Statically imported; see the status card's note on why not lazily. */
+  public static getConfigElement(): LovelaceCardEditor {
+    return document.createElement("solar-sanity-forecast-card-editor");
   }
 
   public static getStubConfig(): ForecastCardConfig {

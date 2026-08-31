@@ -56,16 +56,6 @@ export interface GridOptions {
   max_columns?: number;
 }
 
-/** What the integration returns from `solar_sanity/info`. */
-export interface SolarSanityInfo {
-  version: string;
-  api_version: number;
-  instances: Array<{
-    entry_id: string;
-    title: string;
-    providers: string[];
-  }>;
-}
 
 /** The five honest outcomes. Never a percentage. */
 export type SolarSanityStatus =
