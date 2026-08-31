@@ -213,6 +213,16 @@ async def test_the_orphan_sweep_spares_an_unloaded_installation(
 
     other = MockConfigEntry(domain=DOMAIN, data=dict(entry_data))
     other.add_to_hass(hass)
+
+    from custom_components.solar_sanity.repairs import issue_ids_for_entry
+
+    assert absent.entry_id != other.entry_id, "two entries, one id"
+    assert theirs not in issue_ids_for_entry(hass, other.entry_id), (
+        absent.entry_id,
+        other.entry_id,
+        theirs,
+    )
+
     await hass.config_entries.async_setup(other.entry_id)
     await hass.async_block_till_done()
 
