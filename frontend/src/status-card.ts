@@ -24,6 +24,7 @@ import type {
   HassEntity,
   HomeAssistant,
   LovelaceCardConfig,
+  LovelaceCardEditor,
   SolarSanityStatus,
   SolarSanityStatusAttributes,
 } from "./types/hass";
@@ -245,6 +246,19 @@ export class SolarSanityCard extends LitElement {
   public getGridOptions(): GridOptions {
     // Fixed height, deliberately. See the header comment.
     return { rows: 3, min_rows: 3, max_rows: 3, columns: 6, min_columns: 4 };
+  }
+
+  /**
+   * The editor element.
+   *
+   * Statically imported, and the lazy version is wrong here rather than merely
+   * unnecessary: `vite.config.ts` builds with `codeSplitting: false`, because
+   * the integration serves the card as one static asset. A dynamic import is
+   * inlined into the same file, so it would buy nothing and the comment
+   * claiming otherwise would be false the day it was written.
+   */
+  public static getConfigElement(): LovelaceCardEditor {
+    return document.createElement("solar-sanity-card-editor");
   }
 
   public static getStubConfig(): StatusCardConfig {

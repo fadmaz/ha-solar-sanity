@@ -6,6 +6,9 @@
  * `mode:` option on a single card never does.
  */
 
+// Imported for its registrations: both card editors. `getConfigElement` on
+// each card creates one by tag name, which only works once the module has run.
+import "./editors";
 import { SolarSanityForecastCard } from "./forecast-card";
 import { SolarSanityCard } from "./status-card";
 // Imported for its registrations: two strategies and one dashboard entry.

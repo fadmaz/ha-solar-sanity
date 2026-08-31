@@ -2,6 +2,26 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.23.0] - 2026-08-31
+
+### Added
+
+- **Both cards can now be configured by clicking them.** Until now the only way
+  to point the status card at a particular installation, or the forecast card at
+  a particular provider, was to edit the dashboard YAML by hand.
+
+  The status card's editor exists mostly for one sentence. The card finds its own
+  entity when you have a single installation, and nothing anywhere told you
+  *which one it found*. Now it says so, and says that leaving the field empty is
+  the right answer rather than an unfinished one.
+
+  The forecast card's editor lists the providers actually writing an archive,
+  read from the recorder rather than from a list of integration names this
+  project knows about — so a provider it has never heard of appears the day it
+  writes its first forecast.
+
+  Neither editor is required. Both cards still work with no configuration at all.
+
 ## [0.22.0] - 2026-08-31
 
 ### Added
