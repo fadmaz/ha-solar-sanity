@@ -182,7 +182,13 @@ about tomorrow, drawn from the immutable series above. Hand-rolled inline SVG,
 so it re-themes with no JavaScript and uses Home Assistant's own solar colour.
 
 Neither takes any configuration. Drop one on a dashboard and it finds its own
-data.
+data — the status card picks up your installation, the forecast card draws every
+provider you have.
+
+Both have an editor for when the defaults are not what you want: a second
+installation to choose between, or a single provider to isolate. The status
+card's editor also answers a question the interface could not previously answer
+at all, which is *which* installation the card picked when it picked for you.
 
 ### Laying them out for you
 
@@ -209,6 +215,34 @@ add **Solar Sanity** from Settings → Devices & Services.
 
 If your dashboards are in YAML mode you will need to add the card resource by
 hand; the log says so explicitly rather than failing silently.
+
+### Releases, and why there is no 1.0.0 yet
+
+Every release is tagged and carries a written changelog. The version number is
+deliberately still `0.x`, and the reason is specific rather than modest: **this
+has been validated on one installation.**
+
+That one house has been genuinely useful — most of what shipped in the last
+several releases was a defect it exposed, including two the test suite was
+asserting the opposite of. But a fault detector calibrated against a single
+roof is a fault detector with a sample size of one, and its thresholds have
+never met a topology its author did not think of. `1.0.0` is a claim about that,
+not about feature completeness, and it will be cut when the answers hold up
+somewhere else.
+
+Pre-releases are published on the same repository. To see them, open Solar
+Sanity in HACS, use the three-dot menu and turn on **beta versions** — the
+setting is per-repository, so it does not affect anything else you have
+installed. If you run one, the most useful thing you can send back is
+the diagnostics download.
+
+Read it before you post it. Coordinates, API keys and passwords are stripped;
+**your entity ids are not**, deliberately — they are what makes a mapping report
+answerable, and a report without them usually cannot be acted on. They do name
+your hardware, and the file also carries your hourly consumption for the last
+month. If that matters to you, send it privately rather than attaching it to a
+public issue.
+
 
 ## Setup
 
