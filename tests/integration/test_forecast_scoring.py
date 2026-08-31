@@ -95,6 +95,10 @@ class TestTheUnitsAreConverted:
         arithmetic at all — ``async_score_providers`` skips an id it cannot
         resolve, which is what it should do and what made the first version of
         this test pass vacuously in CI.
+
+        Thirty days rather than twenty because the pure module wants
+        twenty-one before it will put a number to anything, and says so:
+        "20 comparable days so far; a figure needs 21."
         """
         provider = MockConfigEntry(domain="forecast_solar", title="Forecast.Solar")
         provider.add_to_hass(hass)
@@ -103,8 +107,8 @@ class TestTheUnitsAreConverted:
             data={**entry_data, CONF_FORECAST_ENTRIES: [provider.entry_id]},
         )
         coordinator = await _coordinator(hass, entry)
-        coordinator._buckets = [_bucket(NOON + timedelta(days=day), 4500.0) for day in range(20)]
-        forecast = {NOON + timedelta(days=day): 4.5 for day in range(20)}
+        coordinator._buckets = [_bucket(NOON + timedelta(days=day), 4500.0) for day in range(30)]
+        forecast = {NOON + timedelta(days=day): 4.5 for day in range(30)}
 
         with patch(
             "custom_components.solar_sanity.scoring.async_forecast_series",
