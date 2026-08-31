@@ -163,6 +163,11 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         #: anything, and says so in `Bias.reason` rather than showing a figure
         #: nobody should act on.
         self.forecast_scores: tuple[Any, ...] = ()
+        #: A year against the quote, once there is a year of it. ``None`` for a
+        #: long time and for many installations, which is correct: no guarantee
+        #: configured, or an archive that does not reach back a year, are both
+        #: questions that cannot be answered rather than answers of nought.
+        self.yield_note: Any | None = None
         self._snapshots: list[LiveSnapshot] = []
         self._accumulator: dict[str, float] = {}
         #: Whether any channel has ever produced a reading. Separates "nothing
@@ -840,7 +845,22 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
 
         await self._async_persist(report)
         await self._async_score_forecasts()
+        await self._async_check_the_promise()
         return report
+
+    async def _async_check_the_promise(self) -> None:
+        """A year's production against the figure on the quote.
+
+        Swallowed on failure for the same reason as the forecast score: it reads
+        an archive, and an archive that cannot be read must not cost a house the
+        verdict just computed.
+        """
+        from .yield_check import async_yield_against_promise
+
+        try:
+            self.yield_note = await async_yield_against_promise(self.hass, self)
+        except Exception:
+            _LOGGER.debug("yield against promise failed", exc_info=True)
 
     async def _async_score_forecasts(self) -> None:
         """Score each configured provider, on the same tick as the analysis.

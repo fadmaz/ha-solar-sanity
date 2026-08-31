@@ -85,6 +85,14 @@ def _status_attrs_for(coordinator: SolarSanityCoordinator) -> dict[str, Any]:
             "history for them. Solar Sanity must collect its own, which takes "
             "about a week."
         )
+
+    # Appended to the notes the card renders rather than given an attribute of
+    # its own. It is the same kind of sentence as the rest of them — something
+    # true beside the verdict rather than part of it — and a reader should not
+    # have to know that one of these came from a different module.
+    if coordinator.yield_note is not None:
+        attrs["notes"] = [*attrs.get("notes", []), coordinator.yield_note.note]
+
     return attrs
 
 
