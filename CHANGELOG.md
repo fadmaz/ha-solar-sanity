@@ -2,6 +2,53 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.21.0] - 2026-08-31
+
+### Added
+
+- **Solar Sanity tells you when your roof has stopped producing.** Every other
+  check it makes asks whether your numbers agree with each other. This one
+  asks whether the panels are doing anything — because a tripped string is
+  reported as zero by a sensor working perfectly, and the arithmetic can be
+  flawless while the roof sits idle.
+
+  It learns your daylight from your own history rather than from where the sun
+  is. A roof behind a hill is dark at nine whatever the almanac says. It needs
+  a run of empty hours rather than one — a single flat hour is a cloud — and it
+  needs the rest of your system still reporting, because if everything went
+  quiet then your broker stopped, not your panels, and that is not a reason to
+  climb a ladder.
+
+- **A year's production against the figure you were quoted.** Type the annual
+  yield your installer promised into the options and, once there is a genuine
+  year of history, Solar Sanity will tell you what you actually got.
+
+  A note, never a fault. Falling short is a conversation with whoever fitted
+  it, and a short year has honest causes this cannot tell apart — the weather,
+  shading that grew, a panel derating exactly as its warranty allows.
+
+  Never estimated from a partial year. Scaling nine months up to twelve
+  compares three summer months against an average one, which flatters an
+  installation checked in autumn and unfairly damns one checked in spring.
+
+### Fixed
+
+- **The card now shows what Solar Sanity has been saying all along.** Its
+  explanations — which hours could be checked, what was assumed about a
+  sensor, whether your energy adds up over the day even though the hours do
+  not — reached the sensor and stopped there. The card never read them.
+
+  On an installation reading OK those sentences are the entire explanation, so
+  "Everything reconciles" was the whole message on a house where that is only
+  true over a day, or only in the hours with no sun.
+
+### Removed
+
+- **Two declarations that did nothing.** `API_VERSION` was defined and never
+  read. `websocket_api` sat in the integration's required components while the
+  only mentions of that name in the code are comments about something else.
+  Both gone, and a build step now catches the second coming back by accident.
+
 ## [0.20.0] - 2026-08-31
 
 ### Added
