@@ -215,6 +215,25 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
     # -- configuration ------------------------------------------------------
 
     @property
+    def buckets(self) -> tuple[Bucket, ...]:
+        """The analysis window, for readers outside this class.
+
+        A copy, because the list is mutated in place on every bucket close and a
+        caller iterating it while that happens gets an inconsistent window
+        rather than an error.
+        """
+        return tuple(self._buckets)
+
+    @property
+    def time_zone(self) -> tzinfo | None:
+        """The installation's zone, or ``None`` when it cannot be resolved.
+
+        ``None`` is a real answer and callers must handle it: anything keying
+        days on an unresolvable zone collapses its whole window into one.
+        """
+        return self._time_zone()
+
+    @property
     def specs(self) -> tuple[ChannelSpec, ...]:
         """Configured channels, as the analysis engine wants them."""
         out: list[ChannelSpec] = []
