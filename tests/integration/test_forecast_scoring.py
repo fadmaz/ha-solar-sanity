@@ -244,3 +244,80 @@ class TestItRefusesRatherThanBlames:
         coordinator._buckets = [_bucket(NOON, 4500.0)]
 
         assert await async_score_providers(hass, coordinator) == []
+
+
+class TestTheSensorExistsBecauseAProviderDoes:
+    """Gated on configuration, not on having earned a figure.
+
+    Earned-ness changes with the weather. An entity that appeared and vanished
+    with it would break every automation and history graph pointing at it, and
+    would do so silently — so the sensor is created when a provider is
+    configured and reports ``unknown`` until there is something to say.
+    """
+
+    async def test_a_configured_provider_gets_a_sensor_before_it_has_a_figure(
+        self,
+        hass: HomeAssistant,
+        enable_custom_integrations: None,
+        entry_data: dict,
+    ) -> None:
+        provider = MockConfigEntry(domain="forecast_solar", title="Forecast.Solar")
+        provider.add_to_hass(hass)
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={**entry_data, CONF_FORECAST_ENTRIES: [provider.entry_id]},
+        )
+        await _coordinator(hass, entry)
+
+        states = [
+            state
+            for state in hass.states.async_all("sensor")
+            if "accuracy" in (state.attributes.get("friendly_name") or "").lower()
+        ]
+
+        assert states, "no bias sensor was created for a configured provider"
+        assert states[0].state in ("unknown", "unavailable")
+        assert states[0].attributes.get("reason")
+
+    async def test_no_provider_means_no_sensor(
+        self,
+        hass: HomeAssistant,
+        enable_custom_integrations: None,
+        entry: MockConfigEntry,
+    ) -> None:
+        await _coordinator(hass, entry)
+
+        assert not [
+            state
+            for state in hass.states.async_all("sensor")
+            if "accuracy" in (state.attributes.get("friendly_name") or "").lower()
+        ]
+
+    async def test_it_carries_no_state_class(
+        self,
+        hass: HomeAssistant,
+        enable_custom_integrations: None,
+        entry_data: dict,
+    ) -> None:
+        """A judgement, not a measurement.
+
+        It is recomputed over a rolling window, snapped to five points, and may
+        return to unknown when the days behind it stop qualifying. Recording it
+        as a statistic would produce a history graph of an opinion changing its
+        mind.
+        """
+        provider = MockConfigEntry(domain="forecast_solar", title="Forecast.Solar")
+        provider.add_to_hass(hass)
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={**entry_data, CONF_FORECAST_ENTRIES: [provider.entry_id]},
+        )
+        await _coordinator(hass, entry)
+
+        state = next(
+            state
+            for state in hass.states.async_all("sensor")
+            if "accuracy" in (state.attributes.get("friendly_name") or "").lower()
+        )
+
+        assert state.attributes.get("state_class") is None

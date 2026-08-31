@@ -157,6 +157,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         )
         self.entry = entry
         self._buckets: list[Bucket] = []
+        #: One entry per configured provider, once there is anything to say.
+        #: Empty is the normal state for the first three weeks — the estimator
+        #: wants twenty-one comparable days before it will put a number to
+        #: anything, and says so in `Bias.reason` rather than showing a figure
+        #: nobody should act on.
+        self.forecast_scores: tuple[Any, ...] = ()
         self._snapshots: list[LiveSnapshot] = []
         self._accumulator: dict[str, float] = {}
         #: Whether any channel has ever produced a reading. Separates "nothing
@@ -833,7 +839,26 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             self._loss_model = report.loss_model
 
         await self._async_persist(report)
+        await self._async_score_forecasts()
         return report
+
+    async def _async_score_forecasts(self) -> None:
+        """Score each configured provider, on the same tick as the analysis.
+
+        Deliberately not its own timer. The analysis already runs every six
+        hours, the scoring wants the same window it just built, and a second
+        timer is a second thing to unregister on unload.
+
+        Swallowed on failure, which is not the usual rule here. A forecast score
+        is a side dish: it reads an archive, and an archive that cannot be read
+        must not cost a house the verdict this method just computed.
+        """
+        from .scoring import async_score_providers
+
+        try:
+            self.forecast_scores = tuple(await async_score_providers(self.hass, self))
+        except Exception:
+            _LOGGER.debug("forecast scoring failed", exc_info=True)
 
     def _unrecorded_keys(self) -> tuple[str, ...]:
         """Channel keys whose entity the recorder holds no statistics for."""

@@ -160,6 +160,9 @@
       },
       "live_residual": {
         "name": "Live residual"
+      },
+      "forecast_bias": {
+        "name": "{provider} accuracy"
       }
     },
     "binary_sensor": {
