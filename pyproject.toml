@@ -6,11 +6,38 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.pytest.ini_options]
-# `asyncio_mode` is unset because nothing here needs it: Home Assistant's own
-# fixtures drive the async tests that have one, and a helper that merely happens
-# to be a coroutine is driven directly instead. See `_drive` in
-# tests/test_entity_honesty.py for why `asyncio.run` is the wrong tool for that
-# — it closes the loop out from under every test that follows.
+# `asyncio_mode` is "auto" because the Home Assistant fixtures cannot work
+# without it. `pytest-homeassistant-custom-component` declares `hass` — and
+# roughly twenty others — as a plain `@pytest.fixture` on an `async def`
+# generator, and pytest-asyncio's strict mode ignores an async fixture carrying
+# no explicit mark. Ignores, not fails: the fixture simply never runs, and every
+# test asking for it errors at setup complaining about something else. Marking
+# the test by hand does not rescue it, because the fixture is what is unmarked.
+#
+# Measured on the pair CI actually installs, which `requirements-dev.txt` does
+# not choose — its floors are all unbounded and
+# `pytest-homeassistant-custom-component` hard-pins `pytest==9.0.0` and
+# `pytest-asyncio==1.3.0` underneath them. On that pair, a fixture shaped like
+# `hass` gives 2 passed and 2 setup errors under strict, and 4 passed under
+# auto.
+#
+# It changes nothing else. Auto mode only marks nodes it can substitute —
+# coroutine functions, async generators, and the async-hypothesis case — and
+# this suite has none outside `tests/integration`. Collection is identical
+# either way, which was checked rather than assumed.
+#
+# `_drive` in tests/test_entity_honesty.py stays exactly as it is. It sends
+# `None` into a coroutine that never suspends, which bypasses the plugin
+# entirely, and its docstring records why `asyncio.run` is the wrong tool there
+# — it closes the loop out from under every test that follows. That reasoning is
+# untouched by this setting, and the three sweep tests it carries do not need a
+# loop at all.
+#
+# One cosmetic consequence: where pytest-asyncio is absent — every machine
+# without Home Assistant, which is most of them — pytest prints
+# `Unknown config option: asyncio_mode`. Collection and results are unaffected,
+# and nothing here passes `--strict-config`.
+asyncio_mode = "auto"
 testpaths = ["tests"]
 # The clean corpus is 3,000 healthy installations and takes about three minutes
 # serially. Running it on every push would make the suite slow enough to start
