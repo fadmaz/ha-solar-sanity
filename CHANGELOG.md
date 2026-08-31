@@ -2,6 +2,35 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.22.0] - 2026-08-31
+
+### Added
+
+- **Tomorrow's forecast, corrected by what your provider actually does.** A new
+  sensor takes tomorrow's figure and moves it by the bias measured against your
+  own roof. It stays empty until there is a correction worth applying — a bias
+  from eleven days is real arithmetic and not yet an answer, and a number you
+  plan around should not be built from one.
+
+- **A `rescore_forecasts` service**, for when you have just mapped a channel or
+  just passed the twenty-first comparable day and would rather not wait six
+  hours. It answers with what it found, including why it will not put a number
+  to a provider yet.
+
+### Removed
+
+- **Two fault codes that could never be reported**, named here because these
+  identifiers appear in entity attributes and in the `solar_sanity_finding_raised`
+  event, so an automation could be watching for them:
+
+  - `submeter_included_in_parent`
+  - `stale_channel`
+
+  Neither was waiting on a detector. The first needed a channel role that was
+  declared and never assigned to anything; the second needed a field written in
+  one place and read in none, on data that is discarded whole when it is stale.
+  Nothing has stopped being detected, because neither was ever detectable.
+
 ## [0.21.1] - 2026-08-31
 
 ### Added

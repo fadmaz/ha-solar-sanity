@@ -28,7 +28,6 @@ class Role(Enum):
     LOAD = ("load", -1)
     GRID_EXPORT = ("grid_export", -1)
     BATTERY_CHARGE = ("battery_charge", -1)
-    SUBLOAD = ("subload", 0)
     BATTERY_SOC = ("battery_soc", 0)
 
     def __init__(self, key: str, sign: int) -> None:

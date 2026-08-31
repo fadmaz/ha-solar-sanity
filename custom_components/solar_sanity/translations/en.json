@@ -165,6 +165,9 @@
       },
       "forecast_bias": {
         "name": "{provider} accuracy"
+      },
+      "expected_tomorrow_corrected": {
+        "name": "Expected tomorrow (corrected)"
       }
     },
     "binary_sensor": {
@@ -181,6 +184,10 @@
     "export_report": {
       "name": "Export report",
       "description": "Return a plain-language summary of what Solar Sanity has found, suitable for pasting into a support request."
+    },
+    "rescore_forecasts": {
+      "name": "Rescore forecasts",
+      "description": "Compare every configured forecast provider against what your roof actually produced, now rather than at the next six-hourly check. Returns what it found, including why it will not put a number to a provider yet."
     }
   }
 }

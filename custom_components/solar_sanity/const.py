@@ -121,4 +121,5 @@ EVENT_FINDING_CLEARED: Final = f"{DOMAIN}_finding_cleared"
 
 # --- services --------------------------------------------------------------
 SERVICE_VALIDATE_NOW: Final = "validate_now"
+SERVICE_RESCORE_FORECASTS: Final = "rescore_forecasts"
 SERVICE_EXPORT_REPORT: Final = "export_report"

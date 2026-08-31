@@ -1019,6 +1019,32 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
     # -- reporting ----------------------------------------------------------
 
     @property
+    def expected_tomorrow_corrected_kwh(self) -> float | None:
+        """Tomorrow's forecast, adjusted by the provider's measured habit.
+
+        ``None`` until there is a correction worth applying, and the decision
+        about *worth* is not made here. ``Bias`` separates the figure it
+        measured from the figure it will state, and only the second is used —
+        a bias computed from eleven days is real arithmetic and not yet an
+        answer, and multiplying tomorrow by it would launder that distinction
+        into a number people plan around.
+
+        One provider, deliberately. Averaging two forecasts and then correcting
+        the average produces a figure no provider issued and no scoring covers.
+        Where several are configured the first with a stateable bias is used, so
+        the number on the card always belongs to one named source.
+        """
+        base = self.expected_tomorrow_kwh
+        if base is None:
+            return None
+
+        for score in self.forecast_scores:
+            percent = score.bias.reportable_pct
+            if percent:
+                return base * (1.0 + percent / 100.0)
+        return None
+
+    @property
     def expected_tomorrow_kwh(self) -> float | None:
         """Tomorrow's forecast total, or ``None`` when no provider is configured."""
         return self._expected_tomorrow_kwh

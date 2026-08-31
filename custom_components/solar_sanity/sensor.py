@@ -149,6 +149,18 @@ SENSORS: tuple[SolarSanitySensorDescription, ...] = (
         state_class=SensorStateClass.TOTAL,
         value_fn=lambda coordinator: coordinator.expected_tomorrow_kwh,
     ),
+    # `state_class: TOTAL` for the same reason as the uncorrected figure above:
+    # a forecast nobody records is a forecast nobody can score, and this one is
+    # the better of the two to keep.
+    SolarSanitySensorDescription(
+        key="expected_tomorrow_corrected",
+        translation_key="expected_tomorrow_corrected",
+        icon="mdi:weather-sunny-alert",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL,
+        value_fn=lambda coordinator: coordinator.expected_tomorrow_corrected_kwh,
+    ),
     SolarSanitySensorDescription(
         key="live_residual",
         translation_key="live_residual",

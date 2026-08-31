@@ -321,3 +321,91 @@ class TestTheSensorExistsBecauseAProviderDoes:
         )
 
         assert state.attributes.get("state_class") is None
+
+
+class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
+    """The decision about *when* a bias is worth applying is not made here.
+
+    ``Bias`` separates the figure it measured from the figure it will state, and
+    only the second is used. A bias computed from eleven days is real arithmetic
+    and not yet an answer, and multiplying tomorrow by it would launder that
+    distinction into a number people plan around.
+    """
+
+    async def test_no_stateable_bias_means_no_corrected_figure(
+        self,
+        hass: HomeAssistant,
+        enable_custom_integrations: None,
+        entry: MockConfigEntry,
+    ) -> None:
+        coordinator = await _coordinator(hass, entry)
+
+        assert coordinator.expected_tomorrow_corrected_kwh is None
+
+    async def test_a_stateable_bias_moves_tomorrow_by_exactly_it(
+        self,
+        hass: HomeAssistant,
+        enable_custom_integrations: None,
+        entry: MockConfigEntry,
+    ) -> None:
+        from custom_components.solar_sanity.analysis.forecast import Bias
+        from custom_components.solar_sanity.scoring import ProviderScore
+
+        coordinator = await _coordinator(hass, entry)
+        coordinator._expected_tomorrow_kwh = 20.0
+        coordinator.forecast_scores = (
+            ProviderScore(
+                entry_id="x",
+                name="Provider",
+                bias=Bias(days=40, value=-0.1, reportable_pct=-10),
+            ),
+        )
+
+        if coordinator.expected_tomorrow_kwh is None:
+            pytest.skip("no forecast to correct on this fixture")
+        assert coordinator.expected_tomorrow_corrected_kwh == pytest.approx(
+            coordinator.expected_tomorrow_kwh * 0.9
+        )
+
+    async def test_a_measured_but_unstateable_bias_is_not_applied(
+        self,
+        hass: HomeAssistant,
+        enable_custom_integrations: None,
+        entry: MockConfigEntry,
+    ) -> None:
+        """``value`` without ``reportable_pct`` is the estimator saying "I know
+        this and I will not stand behind it". Tomorrow must not borrow it."""
+        from custom_components.solar_sanity.analysis.forecast import Bias
+        from custom_components.solar_sanity.scoring import ProviderScore
+
+        coordinator = await _coordinator(hass, entry)
+        coordinator.forecast_scores = (
+            ProviderScore(
+                entry_id="x",
+                name="Provider",
+                bias=Bias(days=11, value=-0.34, reportable_pct=None),
+            ),
+        )
+
+        assert coordinator.expected_tomorrow_corrected_kwh is None
+
+
+class TestTheRescoreService:
+    async def test_it_is_registered_and_answers(
+        self,
+        hass: HomeAssistant,
+        enable_custom_integrations: None,
+        entry: MockConfigEntry,
+    ) -> None:
+        """Registered is not the same as working, and this one returns a
+        response, so it can be asked."""
+        await _coordinator(hass, entry)
+
+        assert hass.services.has_service(DOMAIN, "rescore_forecasts")
+
+        response = await hass.services.async_call(
+            DOMAIN, "rescore_forecasts", {}, blocking=True, return_response=True
+        )
+
+        assert response is not None
+        assert "providers" in response

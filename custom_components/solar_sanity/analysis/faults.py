@@ -28,7 +28,6 @@ class Code:
 
     # Stage A - categorical, per-channel, near-certain
     STUCK = "stuck_channel"
-    STALE = "stale_channel"
     PRODUCTION_STALLED = "production_stalled"
     UNIT_SCALE_1000 = "unit_scale_1000"
     CUMULATIVE_IN_PERIODIC = "cumulative_in_periodic_field"
@@ -42,7 +41,6 @@ class Code:
     SIGN_INVERTED = "channel_sign_inverted"
     CHANNEL_NEVER_POSITIVE = "channel_never_positive"
     DOUBLE_COUNTED = "double_counted_channel"
-    SUBMETER_IN_PARENT = "submeter_included_in_parent"
     MISSING_STORAGE = "missing_storage_channel"
     MISSING_EXPORT = "missing_export_channel"
     MISSING_GENERATION = "missing_generation_channel"
@@ -239,13 +237,6 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
         "This usually means the sensor covers a backup or critical-loads panel "
         "rather than the whole house.",
     ),
-    Code.SUBMETER_IN_PARENT: (
-        "{name} is already included in {other}",
-        "Every time {name} draws power, {other} rises by the same amount. It is "
-        "measured inside the larger total, so counting it separately doubles it.",
-        "Remove {name} from the balance. You can still track it separately for "
-        "your own interest — it just must not be added twice.",
-    ),
     Code.STUCK: (
         "{name} has stopped changing",
         "{name} has reported exactly {observed:g} for {hours:.0f} hours while "
@@ -263,11 +254,6 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
         "Check the inverter for a fault it has cleared since, and check whether "
         "one string is offline — a partial loss looks like a bad day, and a "
         "total one looks like this.",
-    ),
-    Code.STALE: (
-        "{name} has stopped updating",
-        "{name} last reported {hours:.0f} hours ago. Everything else is current.",
-        "Check the integration that provides it.",
     ),
     Code.PV_MEASURED_DC: (
         "{name} reads about {over:.0f}% above the rest of the system",
