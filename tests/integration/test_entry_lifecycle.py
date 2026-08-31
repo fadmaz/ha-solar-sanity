@@ -45,27 +45,36 @@ async def test_an_entry_sets_up_and_reaches_loaded(
     assert entry.state is ConfigEntryState.LOADED
 
 
-async def test_the_integration_is_found_at_all(
+async def test_every_declared_dependency_can_actually_be_set_up(
     hass: HomeAssistant,
     enable_custom_integrations: None,
     entry: MockConfigEntry,
 ) -> None:
-    """Separated from the test above so its failure is unambiguous.
+    """Separated from the test above so its failure names the right cause.
 
-    ``custom_components`` in this repository has no ``__init__.py``, so it is an
-    implicit namespace package. Home Assistant's loader imports it and iterates
-    ``__path__``, which a namespace package does provide — but if that ever
-    stops working the symptom is not an import error. It is the integration
-    silently not being found, the entry never leaving ``NOT_LOADED``, and every
-    other test in this directory failing for reasons that look unrelated.
+    ``dependencies`` in the manifest is a promise Home Assistant keeps by
+    setting each one up first and refusing to set *us* up if it cannot. So a
+    name in that list which the integration does not actually call is not
+    harmless documentation — it is a hard prerequisite, and the failure it
+    produces points at us rather than at itself.
+
+    That is exactly what a real ``hass`` found the first time one was pointed at
+    this integration. ``frontend`` was declared, never called, and unavailable in
+    any ordinary test environment, so *every* test here failed with
+    "Could not setup dependencies: frontend" — a sentence about the integration
+    being broken, caused by a line claiming something it never needed.
+
+    The first version of this test blamed namespace-package resolution instead,
+    which was wrong and would have sent the next person to the wrong file.
     """
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    assert entry.state is not ConfigEntryState.NOT_LOADED, (
-        "the integration was not found — if custom_components stopped resolving "
-        "as a package, an empty custom_components/__init__.py is the fix"
+    assert entry.state is not ConfigEntryState.SETUP_ERROR, (
+        "a declared dependency could not be set up — check manifest.json's "
+        "`dependencies`, which must list only components this integration "
+        "genuinely calls"
     )
     assert DOMAIN in hass.config.components
 
@@ -75,9 +84,17 @@ async def test_unloading_returns_the_entry_to_not_loaded(
     enable_custom_integrations: None,
     entry: MockConfigEntry,
 ) -> None:
+    """The precondition is asserted, because without it this passes vacuously.
+
+    Unloading an entry that never loaded also returns ``True`` and also leaves
+    it ``NOT_LOADED``. On the first CI run this test was the only one of six
+    that passed, and it passed for exactly that reason while setup was failing
+    outright.
+    """
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED, "nothing was loaded to unload"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

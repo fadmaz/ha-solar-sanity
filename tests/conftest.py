@@ -23,11 +23,17 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 
-HAS_HOME_ASSISTANT = importlib.util.find_spec("homeassistant") is not None
+#: Both halves are checked. Home Assistant and the plugin install separately,
+#: and either one missing makes this directory uncollectable for a different
+#: reason — Home Assistant for the imports, the plugin for the fixtures.
+HAS_REAL_HASS = (
+    importlib.util.find_spec("homeassistant") is not None
+    and importlib.util.find_spec("pytest_homeassistant_custom_component") is not None
+)
 
 
 def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
-    """Refuse the integration directory outright when there is no Home Assistant.
+    """Refuse the integration directory outright without the real-hass stack.
 
     ``collect_ignore_glob`` is the obvious tool and the wrong one. It is consulted
     when a *file* is considered for collection, which is after the collector has
@@ -38,6 +44,6 @@ def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
 
     This hook runs before the descent, so the directory is never entered.
     """
-    if HAS_HOME_ASSISTANT:
+    if HAS_REAL_HASS:
         return None
     return collection_path.name == "integration" and collection_path.is_dir()

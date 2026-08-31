@@ -2,6 +2,7 @@
   "domain": "solar_sanity",
   "name": "Solar Sanity",
   "after_dependencies": [
+    "frontend",
     "recorder",
     "energy",
     "repairs"
@@ -11,7 +12,6 @@
   ],
   "config_flow": true,
   "dependencies": [
-    "frontend",
     "http",
     "websocket_api"
   ],
