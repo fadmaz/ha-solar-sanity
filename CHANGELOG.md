@@ -2,6 +2,35 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.20.0] - 2026-08-31
+
+### Added
+
+- **You can see how accurate your solar forecast actually is.** A new sensor
+  per configured provider, comparing what it said the day before against what
+  your roof then produced — signed the way you would read it, so negative
+  means the system produced less than promised.
+
+  Solar Sanity has been recording day-ahead forecasts since it was installed,
+  precisely because that history cannot be reconstructed later: forecast
+  entities carry no state class, so Home Assistant purges them within about
+  ten days. The scoring existed too. The two had never been introduced.
+
+  It says nothing for the first three weeks. Twenty-one comparable days is
+  the floor, and a shorter window is one spell of weather seen repeatedly
+  rather than a provider's habit — so until then the sensor reads unknown and
+  its `reason` says which of those it is waiting for. A figure it will not
+  stand behind is not shown at all.
+
+  The sensor exists as soon as a provider is configured, not once it has
+  earned a figure. Whether a figure is earned changes with the weather, and
+  an entity that came and went with it would quietly break anything pointing
+  at it.
+
+  Deliberately not recorded as a statistic: it is a judgement over a rolling
+  window rather than a measurement, and a history graph of it would be a
+  graph of an opinion changing its mind.
+
 ## [0.19.0] - 2026-08-31
 
 ### Changed
