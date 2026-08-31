@@ -108,6 +108,51 @@ MIN_SURPLUS_THAT_SURVIVES = 0.5
 
 MIN_UNSETTLED_DAYS = 8
 
+#: How much of the hourly discrepancy must still be there after a whole day
+#: before it can be a fault.
+#:
+#: A sensor reading the wrong amount is wrong in the same direction every hour,
+#: so its error accumulates: the day is out by the sum of its hours. Measured
+#: across every fault this project can produce — a channel reading half, a
+#: channel reading double, an inverted sign, a unit a thousand times too large,
+#: an unabsorbed conversion loss — the share surviving is **1.000** in every
+#: case, to three decimals. It cannot be otherwise; the residual never changes
+#: sign.
+#:
+#: A disagreement about *which hour* energy moved in cancels instead, because
+#: the energy is really there and really counted, just booked to a neighbour.
+#: The reference installation this was built for sits at 0.143: 504 kWh of
+#: hourly discrepancy nets to 17.5 kWh across the month.
+#:
+#: Half is a wide moat rather than a tuned edge — every fault is at 1.000 and
+#: the widest canceller measured is 0.394, on a house whose residual is
+#: essentially nothing anyway.
+MAX_SURVIVING_SHARE = 0.5
+
+#: How far the window may still be out, as a share of everything that moved
+#: through it, and still be described as adding up.
+#:
+#: This is the claim itself rather than the mechanism behind it. A quarter of
+#: the clean band: the reference installation sits at 1.19%, a house where only
+#: half the error cancels sits at 3.8-4.6%, and the faults are at 13-31%.
+MAX_WINDOW_IMBALANCE = 0.025
+
+#: How closely the hourly residual may track one channel's own shape before it
+#: is that channel rather than a disagreement about time.
+#:
+#: The trap this closes, found by looking for it: a battery whose charge and
+#: discharge are *both* scaled wrongly cancels within the day by construction —
+#: better than the reference installation does, at 0.05 against 0.14 — so no
+#: amount of cancellation can tell the two apart. What tells them apart is that
+#: the mis-scaled battery's residual *is* the battery: measured correlation
+#: exactly 1.000 doubled and -1.000 halved, on every seed. The reference
+#: installation sits at -0.105.
+#:
+#: Checked against every role rather than only storage. Nothing else measured
+#: cancels daily *and* resembles a channel, but the cheap general form costs
+#: nothing and does not have to be revisited when a new fault shape turns up.
+MAX_CHANNEL_RESEMBLANCE = 0.7
+
 #: Below this in both channels, an hour is telling us nothing about whether two
 #: sensors track each other. Two channels that are asleep agree perfectly.
 TRACKING_MIN_WH = 25.0
@@ -292,6 +337,20 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             return structural
 
     if not _enough_to_attribute(days):
+        # Before the restricted pass, because this is a better answer than the
+        # one that pass can give: "I checked your nights" is worth less than
+        # "your energy adds up", and a house that qualifies for this has a whole
+        # window that balances rather than half of one.
+        if (settled := _adds_up_over_the_day(days, specs)) is not None:
+            return AnalysisReport(
+                status=Status.OK,
+                notes=settled + _loss_notes(loss, specs),
+                measurements=_measurements(days, specs),
+                topology=estimate,
+                loss_model=loss,
+                residual=summary,
+            )
+
         restricted = _restricted_report(
             request,
             specs,
@@ -368,6 +427,20 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
                 identity_fails=True,
                 finding=_render_hypothesis(best, specs, days, summary),
                 deferred=tuple(h.code for h in scored[1:3]),
+                topology=estimate,
+                loss_model=loss,
+                residual=summary,
+            )
+
+        # Before the restricted pass, because this is a better answer than the
+        # one that pass can give: "I checked your nights" is worth less than
+        # "your energy adds up", and a house that qualifies for this has a whole
+        # window that balances rather than half of one.
+        if (settled := _adds_up_over_the_day(days, specs)) is not None:
+            return AnalysisReport(
+                status=Status.OK,
+                notes=settled + _loss_notes(loss, specs),
+                measurements=_measurements(days, specs),
                 topology=estimate,
                 loss_model=loss,
                 residual=summary,
@@ -707,6 +780,124 @@ def _unverifiable_notes(
                 "rather than about how much of it there was."
             )
     return tuple(notes)
+
+
+def _daily_cancellation(days: tuple[DayResidual, ...]) -> tuple[float, float, float] | None:
+    """Whether the hourly discrepancy is still there at the end of the day.
+
+    Returns ``(surviving_share, net_kwh, gross_kwh)``, or ``None`` when there is
+    nothing to measure.
+
+    ``gross`` is the hourly discrepancy added up without regard to sign — every
+    hour that failed to balance, however it failed. ``net`` is the same days'
+    residual added up *with* sign. A sensor reading the wrong amount makes those
+    two the same number, because it is wrong in the same direction every hour.
+    Channels that disagree about which hour energy arrived in make ``net`` far
+    smaller, because the energy is genuinely there and genuinely counted.
+
+    The share is scaled per hour rather than per day so it does not depend on
+    how many hours a day happened to survive validation.
+    """
+    if not days:
+        return None
+
+    gross = 0.0
+    net = 0.0
+    hours = 0
+    for day in days:
+        for value in day.dr:
+            gross += abs(value)
+            net += value
+            hours += 1
+
+    if hours == 0 or gross <= 0.0:
+        return None
+
+    daily_net = sum(abs(sum(day.dr)) for day in days)
+    per_hour = gross / hours
+    average_hours = hours / len(days)
+    surviving = daily_net / len(days) / (average_hours * per_hour)
+    return surviving, net / 1000.0, gross / 1000.0
+
+
+def _resembles_one_channel(days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]) -> bool:
+    """Whether the residual is really just one channel, read wrongly.
+
+    A channel scaled by the wrong factor contributes a residual that is that
+    channel's own shape — so the two move together exactly. That is worth
+    checking separately from how much cancels, because the most dangerous case
+    cancels beautifully: a battery whose charge *and* discharge are both
+    mis-scaled nets to nothing every day, since the same battery comes back out
+    as went in.
+
+    Signed by role, so charging and discharging are the one flow they physically
+    are rather than two channels that happen to be anti-correlated.
+    """
+    residual = [value for day in days for value in day.dr]
+    if len(residual) < MIN_HOURS_FOR_SNAP:
+        return False
+
+    for role in {spec.role for spec in specs}:
+        keys = [spec.key for spec in specs if spec.role is role]
+        flow: list[float] = []
+        for day in days:
+            for bucket in day.buckets:
+                amounts = [v for key in keys if (v := bucket.value(key)) is not None]
+                flow.append(sum(amounts) * role.sign if len(amounts) == len(keys) else 0.0)
+
+        if len(flow) != len(residual):
+            continue
+        resemblance = pearson(flow, residual)
+        if resemblance is not None and abs(resemblance) > MAX_CHANNEL_RESEMBLANCE:
+            return True
+    return False
+
+
+def _adds_up_over_the_day(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
+) -> tuple[str, ...] | None:
+    """The notes for a house whose totals balance and whose hours do not.
+
+    Returns ``None`` when this is not that house.
+
+    This exists because "the numbers move around but not consistently enough to
+    name" was being said to an installation whose numbers add up to within 1.4%
+    over a month. That sentence was not a hedge, it was wrong — and it was said
+    forever, because nothing about the house was going to change.
+
+    What is true instead is worth saying: the energy is all accounted for, and
+    what cannot be checked is anything finer than a day.
+    """
+    measured = _daily_cancellation(days)
+    if measured is None:
+        return None
+
+    surviving, net, gross = measured
+    if surviving > MAX_SURVIVING_SHARE:
+        return None
+
+    throughput = sum(day.total_throughput for day in days)
+    if throughput <= 0 or abs(net * 1000.0) > throughput * MAX_WINDOW_IMBALANCE:
+        # Most of it cancels, but what is left is not small. Half a fault and
+        # half a timing artefact is not something to reassure anybody about.
+        return None
+
+    if _resembles_one_channel(days, specs):
+        return None
+
+    return (
+        f"Your energy adds up. Over these {len(days)} days the totals come out "
+        f"{abs(net):.1f} kWh apart, against {gross:.0f} kWh of hour-by-hour "
+        "difference — so nearly all of it cancels out by the end of each day.",
+        "That rules out the thing worth worrying about. A sensor reading the "
+        "wrong amount is wrong in the same direction every hour, so its error "
+        "piles up rather than cancelling — yours does the opposite. Nothing has "
+        "gone missing; what is unreliable is which hour each amount landed in, "
+        "which is what channels measured in different ways, or simply noisy "
+        "ones, do to each other.",
+        "So this is a verdict about your days rather than your hours. Anything "
+        "shorter than a day cannot be checked while that holds.",
+    )
 
 
 def _surplus_balance(days: tuple[DayResidual, ...]) -> tuple[float, float] | None:
