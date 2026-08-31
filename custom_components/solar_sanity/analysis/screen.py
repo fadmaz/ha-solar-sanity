@@ -493,6 +493,146 @@ def screen_simultaneous_flow(
     return hits
 
 
+#: Hours a day must have been generating, historically, before their emptiness
+#: today means anything.
+#:
+#: Taken from the installation's own median for that hour of the day rather than
+#: from a sun position. A roof behind a hill is dark at nine whatever the
+#: almanac says, and a sun-elevation rule would call every winter morning a
+#: stall on exactly the systems where mornings are worth least.
+STALL_MIN_TYPICAL_WH = 200.0
+
+#: How many days of history before the median means anything.
+#:
+#: Below this the "typical" hour is a handful of days of one season's weather,
+#: and a fortnight of cloud would teach it that noon produces nothing.
+STALL_MIN_DAYS = 14
+
+#: Consecutive stalled hours before this is reported.
+#:
+#: One empty hour is a cloud. The shortest thing worth telling somebody about is
+#: a morning that never started, and requiring a run is what separates the two
+#: without needing to model weather at all.
+STALL_MIN_RUN_HOURS = 3
+
+#: How much of its typical output an hour must fall below to count as stalled.
+#:
+#: Not zero. An inverter that has tripped still reports its own standby draw on
+#: some installations, and a string that has gone offline on a two-string array
+#: leaves the other one producing.
+STALL_MAX_SHARE_OF_TYPICAL = 0.05
+
+
+def screen_production_stalled(
+    buckets: tuple[Bucket, ...], specs: tuple[ChannelSpec, ...]
+) -> list[ScreenHit]:
+    """Generation that stopped during hours this roof normally produces.
+
+    Not a residual fault — the arithmetic can be perfect while this happens,
+    because a tripped string is *correctly* reported as zero by a sensor that is
+    working exactly as it should. Every other check in this package asks whether
+    the numbers agree with each other. This one asks whether the roof is doing
+    anything, which is the question its owner actually has.
+
+    Four conditions, and each removes a way of being wrong:
+
+    *A typical hour.* The daylight predicate comes from the installation's own
+    median production for that hour of the day, not from a sun position. A roof
+    behind a hill is dark at nine whatever the almanac says.
+
+    *A run.* One empty hour is a cloud. Three consecutive is a morning that
+    never started.
+
+    *The rest of the system alive.* If nothing else reported either, the house
+    was not being watched and generation is not what stopped. That is the
+    difference between a fault and an outage, and reporting the second as the
+    first is how somebody spends an afternoon on the roof for nothing.
+
+    *A reading that exists.* An hour whose generation is ``MISSING`` says
+    nothing about production. ``value`` returns ``None`` for those and they are
+    skipped rather than counted as zero — the same distinction the whole engine
+    is built on.
+    """
+    pv_keys = [spec.key for spec in specs if spec.role is Role.PV]
+    if not pv_keys:
+        return []
+
+    # Counted off `start_utc`, not `local_date`. Screens run on the raw request
+    # and `local_date` is filled in later by `build_days` — reading it here gave
+    # an empty set and a screen that could never fire, which is how the first
+    # version of this passed every refusal test and none of the firing ones.
+    #
+    # A UTC day rather than a local one is the right resolution for the question
+    # being asked, which is only "is there enough history for a median to mean
+    # anything".
+    days = {bucket.start_utc.date() for bucket in buckets}
+    if len(days) < STALL_MIN_DAYS:
+        return []
+
+    by_hour: dict[int, list[float]] = {}
+    for bucket in buckets:
+        generated = _role_sum(bucket, pv_keys)
+        if generated is not None:
+            by_hour.setdefault(bucket.start_utc.hour, []).append(generated)
+
+    typical = {
+        hour: value
+        for hour, values in by_hour.items()
+        if (value := median(values)) is not None and value >= STALL_MIN_TYPICAL_WH
+    }
+    if not typical:
+        return []
+
+    run = 0
+    longest = 0
+    stalled_hours = 0
+    for bucket in sorted(buckets, key=lambda b: b.start_utc):
+        expected = typical.get(bucket.start_utc.hour)
+        generated = _role_sum(bucket, pv_keys)
+        if expected is None or generated is None or not _rest_alive(bucket, pv_keys):
+            run = 0
+            continue
+        if generated <= expected * STALL_MAX_SHARE_OF_TYPICAL:
+            run += 1
+            stalled_hours += 1
+            longest = max(longest, run)
+        else:
+            run = 0
+
+    if longest < STALL_MIN_RUN_HOURS:
+        return []
+
+    return [
+        ScreenHit(
+            code=Code.PRODUCTION_STALLED,
+            channel_keys=tuple(pv_keys),
+            confidence=Confidence.HIGH,
+            correction_kind=None,
+            fields={
+                "hours": float(longest),
+                "count": float(stalled_hours),
+                "days": float(len(days)),
+            },
+        )
+    ]
+
+
+def _role_sum(bucket: Bucket, keys: list[str]) -> float | None:
+    """A role's total, or ``None`` if any part of it is unreadable."""
+    parts = [value for key in keys if (value := bucket.value(key)) is not None]
+    return sum(parts) if len(parts) == len(keys) else None
+
+
+def _rest_alive(bucket: Bucket, pv_keys: list[str]) -> bool:
+    """Whether anything other than generation reported movement this hour.
+
+    A house where nothing at all moved was not being watched. Generation reading
+    zero then says nothing about the roof, and saying it does is how somebody
+    goes up a ladder because their broker was down.
+    """
+    return any(value not in (None, 0.0) for key, value in bucket.wh.items() if key not in pv_keys)
+
+
 def run_all(
     buckets: tuple[Bucket, ...],
     specs: tuple[ChannelSpec, ...],
@@ -530,4 +670,10 @@ def run_all(
     hits: list[ScreenHit] = []
     hits.extend(screen_unit_scale(buckets, specs))
     hits.extend(screen_simultaneous_flow(snapshots, specs))
+    # Last, and not short-circuiting. A stalled string is a fact about the roof
+    # rather than about the data, so it must not pre-empt a mis-scaled channel —
+    # and a channel wrong by a thousand makes every "typical hour" above wrong
+    # by the same factor, which would produce this finding on a house whose only
+    # problem is a unit.
+    hits.extend(screen_production_stalled(buckets, specs))
     return hits

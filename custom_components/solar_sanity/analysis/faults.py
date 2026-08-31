@@ -29,6 +29,7 @@ class Code:
     # Stage A - categorical, per-channel, near-certain
     STUCK = "stuck_channel"
     STALE = "stale_channel"
+    PRODUCTION_STALLED = "production_stalled"
     UNIT_SCALE_1000 = "unit_scale_1000"
     CUMULATIVE_IN_PERIODIC = "cumulative_in_periodic_field"
     SIGNED_NET_IN_DEDICATED = "signed_net_in_dedicated_slot"
@@ -251,6 +252,17 @@ _TEMPLATES: dict[str, tuple[str, str, str]] = {
         "everything else moved. A sensor that never changes is not measuring.",
         "Check the device is still reachable. Until it recovers, Solar Sanity "
         "cannot check anything else.",
+    ),
+    Code.PRODUCTION_STALLED: (
+        "{name} produced nothing for {hours:.0f} hours it normally would",
+        "Across {days:.0f} days this array has produced through these hours "
+        "every day. On {count:.0f} of them it produced nothing at all while the "
+        "rest of the system carried on reporting — so the sensor is working and "
+        "the panels are not, which is what a tripped string or a shut-down "
+        "inverter looks like from here.",
+        "Check the inverter for a fault it has cleared since, and check whether "
+        "one string is offline — a partial loss looks like a bad day, and a "
+        "total one looks like this.",
     ),
     Code.STALE: (
         "{name} has stopped updating",
