@@ -229,3 +229,50 @@ describe("a fault on a card that cannot grow", () => {
     expect(card.shadowRoot?.querySelector(".body")?.getAttribute("title")).toBe(DETAIL);
   });
 });
+
+describe("notes reach the card", () => {
+  // The sensor has published these all along and nothing rendered them. On an
+  // installation that reads `ok` they are the entire explanation — which hours
+  // could be checked, what was assumed about a sensor, whether the energy adds
+  // up over a day rather than an hour.
+  it("carries notes onto an ok verdict", () => {
+    const verdict = verdictFor("ok", {
+      days_of_data: 30,
+      notes: ["Your energy adds up.", "So this is a verdict about your days."],
+    });
+
+    expect(verdict.notes).toEqual([
+      "Your energy adds up.",
+      "So this is a verdict about your days.",
+    ]);
+  });
+
+  it("carries them onto a fault as well, where they qualify the accusation", () => {
+    const verdict = verdictFor("fault_found", {
+      headline: "Something is wrong",
+      detail: "A sentence.",
+      notes: ["Only the night hours could be checked."],
+    });
+
+    expect(verdict.notes).toEqual(["Only the night hours could be checked."]);
+  });
+
+  it("carries them onto still-looking", () => {
+    const verdict = verdictFor("investigating", {
+      reason: "Not consistent enough to name.",
+      notes: ["About 5.9 kWh a day goes missing while you have a surplus."],
+    });
+
+    expect(verdict.notes).toHaveLength(1);
+  });
+
+  it("leaves notes undefined when there are none", () => {
+    expect(verdictFor("ok", { days_of_data: 30 }).notes).toBeUndefined();
+  });
+
+  it("drops blank ones rather than rendering an empty bullet", () => {
+    const verdict = verdictFor("ok", { days_of_data: 30, notes: ["", "   ", "real"] });
+
+    expect(verdict.notes).toEqual(["real"]);
+  });
+});

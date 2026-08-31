@@ -85,6 +85,17 @@ export interface SolarSanityStatusAttributes {
   channels?: string[];
   days_of_data?: number;
   deferred?: string[];
+  /**
+   * Sentences the engine wants said alongside the verdict.
+   *
+   * The sensor has published these all along and nothing rendered them. They
+   * are where a restricted verdict says which hours it could check, where an
+   * absorbed loss says what was assumed about a sensor, and where a house whose
+   * energy adds up over the day is told so. On an installation that reads `ok`
+   * these are the entire explanation, and it was reaching the entity and
+   * stopping there.
+   */
+  notes?: string[];
 }
 
 declare global {

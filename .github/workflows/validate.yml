@@ -55,6 +55,18 @@ jobs:
         # slower, which turns three minutes into forty.
         run: python -m pytest tests -q -m slow -n auto
 
+      - name: No websocket commands without the dependency to serve them
+        run: |
+          # `websocket_api` was declared for years and never called. It is gone
+          # from the manifest; registering a command without putting it back
+          # would fail at runtime for every user, and only for users, because
+          # nothing in the test suite sets up the websocket component.
+          if grep -rn "async_register_command" custom_components/ --include=*.py; then
+            echo "::error::async_register_command needs websocket_api in manifest dependencies"
+            exit 1
+          fi
+          echo "no websocket commands registered"
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
