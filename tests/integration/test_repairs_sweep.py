@@ -59,28 +59,36 @@ async def test_removing_an_entry_takes_its_repair_cards_with_it(
     assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
 
 
-async def test_a_reload_keeps_the_card_the_user_has_already_seen(
+async def test_setup_reconciles_the_panel_to_the_report_exactly(
     hass: HomeAssistant,
     enable_custom_integrations: None,
     entry: MockConfigEntry,
     issue_registry: ir.IssueRegistry,
 ) -> None:
-    """Removal clears them; unload must not.
+    """A card the current report does not warrant is cleared, not left.
 
-    A reload unloads too, and flapping the issue would lose the user's
-    dismissal — so the card would come back after they had told it to go away,
-    every time anything touched the entry.
+    Learned from this test failing while asserting the opposite. It was written
+    to check that a reload leaves an existing card alone — and the card
+    vanished, because ``async_sync_issues`` runs at setup and computes the whole
+    wanted set from the report, deleting everything else belonging to this
+    entry. That is correct and stronger than what was being asserted: a finding
+    that has since been fixed, or one raised by an older version of the
+    analysis, does not survive on the panel by inertia.
+
+    The claim that a *reload* must not flap a card the report still wants is a
+    real one, made in ``async_remove_issues``'s docstring, and it is not tested
+    here: proving it needs an analysis that genuinely produces a finding, which
+    needs a month of seeded statistics. Recorded rather than quietly skipped.
     """
     entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    issue_id = _raise_for(hass, entry.entry_id)
+    stale = _raise_for(hass, entry.entry_id, kind="a_finding_no_longer_made")
+    assert issue_registry.async_get_issue(DOMAIN, stale) is not None
 
-    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    assert issue_registry.async_get_issue(DOMAIN, issue_id) is not None
+    assert issue_registry.async_get_issue(DOMAIN, stale) is None
 
 
 async def test_removing_one_installation_leaves_the_others_cards_alone(
