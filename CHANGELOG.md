@@ -4,6 +4,32 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+
+- **A verdict for a house whose totals add up and whose hours do not.** Solar
+  Sanity was telling one installation *"the numbers move around but not
+  consistently enough to name"* — every six hours, indefinitely — about a month
+  of readings that balance to within 1.4%. That was not a hedge. It was wrong,
+  and it was never going to stop, because nothing about the house was going to
+  change.
+
+  Such a house is now told what is true: its energy is all accounted for, and
+  what cannot be relied on is which hour each amount landed in. It gets a real
+  verdict, with the figures behind it, instead of a permanent shrug.
+
+  The reasoning is arithmetic rather than statistical, which is why it can be
+  trusted. A sensor reading the wrong amount is wrong in the *same direction*
+  every hour, so its error piles up and a day is out by the sum of its hours —
+  measured across every fault this project can produce, none of it cancels. A
+  disagreement about *when* energy moved cancels almost entirely, because the
+  energy is genuinely there and genuinely counted.
+
+  Three separate things have to hold before it is offered, and the third took
+  hunting for: a battery whose charge **and** discharge are both mis-scaled
+  cancels beautifully, since the same energy comes back out as went in. That
+  one is caught by noticing the leftover *is* the battery — its residual tracks
+  the battery exactly, where a genuine timing problem does not.
+
 ### Fixed
 
 - **A surplus that comes back is no longer called export.** On a house with no
@@ -26,9 +52,6 @@ All notable changes are documented here. This project follows Semantic Versionin
   like their sensors disagreeing about *when* energy moved rather than about how
   much of it there was.
 
-## [Unreleased]
-
-### Fixed
 
 - **A stored file this version cannot read no longer stops the integration
   starting.** Solar Sanity keeps its fitted loss model in a small file so a
