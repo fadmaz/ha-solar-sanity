@@ -30,11 +30,6 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Build the card
-        run: |
-          npm ci
-          npm run build
-
       - name: Stamp the version
         run: |
           python - <<'PY'
@@ -45,6 +40,18 @@ jobs:
           manifest["version"] = tag
           path.write_text(json.dumps(manifest, indent=2) + "\n")
           print(f"stamped manifest version {tag}")
+
+      - name: Build the card, now that it has a version to embed
+        run: |
+          # Ordered deliberately. `__SS_VERSION__` is replaced at build time
+          # from the manifest, so building first produced a card stamped with
+          # whatever the *previous* release said. Every release so far has been
+          # correct only because the release commit happens to bump the
+          # manifest by hand before the tag is pushed — a tag without that
+          # commit would have shipped a card lying about its own version, and
+          # the lie would be visible to users and to nobody testing.
+          npm ci
+          npm run build
           PY
 
       # HACS unpacks the zip's contents straight into the domain directory, so

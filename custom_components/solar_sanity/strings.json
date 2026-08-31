@@ -82,10 +82,12 @@
       "init": {
         "title": "Solar Sanity settings",
         "data": {
-          "guaranteed_annual_kwh": "Guaranteed annual production (kWh)"
+          "guaranteed_annual_kwh": "Guaranteed annual production (kWh)",
+          "suppressed_codes": "Findings to stop reporting"
         },
         "data_description": {
-          "guaranteed_annual_kwh": "The yearly figure your installer promised, if you have it. Kept for a future comparison — nothing reads it yet."
+          "guaranteed_annual_kwh": "The yearly figure your installer promised, if you have it. Compared against what you actually produced, once there is a full year of history to compare.",
+          "suppressed_codes": "Anything ticked here will not be raised again. Only findings this installation has actually been given are listed, and a dismissal can be undone by unticking it."
         }
       }
     }

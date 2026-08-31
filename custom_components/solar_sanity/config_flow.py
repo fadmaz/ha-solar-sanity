@@ -46,6 +46,7 @@ from .const import (
     CONF_ORIGIN,
     CONF_ROLE,
     DOMAIN,
+    OPT_SUPPRESSED,
 )
 from .discovery import Discovery, async_discover
 from .statistics_source import async_forecast_providers
@@ -394,6 +395,17 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
         return SolarSanityOptionsFlow()
 
 
+def _readable(code: str) -> str:
+    """A fault identifier, as a sentence rather than as a symbol.
+
+    These are stable identifiers that appear in entity attributes and events, so
+    they cannot be renamed to read well. Turning them over here costs nothing and
+    means a settings page does not ask somebody to make a decision about
+    ``signed_net_in_dedicated_slot``.
+    """
+    return code.replace("_", " ").capitalize()
+
+
 class SolarSanityOptionsFlow(OptionsFlowWithReload):
     """Options. No ``__init__``, and ``config_entry`` is read-only now."""
 
@@ -401,22 +413,61 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
         if user_input is not None:
             return self.async_create_entry(data={**self.config_entry.options, **user_input})
 
+        fields: dict[Any, Any] = {
+            vol.Optional(CONF_GUARANTEED_ANNUAL_KWH): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=100000,
+                    step=1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="kWh",
+                )
+            ),
+        }
+
+        dismissible = self._dismissible_codes()
+        if dismissible:
+            fields[vol.Optional(OPT_SUPPRESSED)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value=code, label=_readable(code))
+                        for code in dismissible
+                    ],
+                    multiple=True,
+                    mode=selector.SelectSelectorMode.LIST,
+                )
+            )
+
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(
-                    {
-                        vol.Optional(CONF_GUARANTEED_ANNUAL_KWH): selector.NumberSelector(
-                            selector.NumberSelectorConfig(
-                                min=0,
-                                max=100000,
-                                step=1,
-                                mode=selector.NumberSelectorMode.BOX,
-                                unit_of_measurement="kWh",
-                            )
-                        ),
-                    }
-                ),
-                self.config_entry.options,
+                vol.Schema(fields), self.config_entry.options
             ),
         )
+
+    def _dismissible_codes(self) -> list[str]:
+        """Findings this installation has actually seen, plus anything already off.
+
+        The engine has honoured ``suppressed_codes`` in five places for a long
+        time and nothing could ever write it — a setting the code kept faith with
+        and the product never offered. This is the missing half.
+
+        Deliberately not every code the engine knows. A list of thirty
+        identifiers is a list nobody reads, and most of them describe faults this
+        house does not have; offering somebody the chance to dismiss a diagnosis
+        they have never been given is how a settings page teaches people to
+        ignore it. What is offered is what has been said: the current finding,
+        the ones ranked behind it, and whatever is already dismissed — the last
+        of those because a setting you cannot see is a setting you cannot undo.
+        """
+        entry: Any = self.config_entry
+        seen: set[str] = set(entry.options.get(OPT_SUPPRESSED, []))
+
+        runtime = getattr(entry, "runtime_data", None)
+        report = getattr(getattr(runtime, "coordinator", None), "report", None)
+        if report is not None:
+            if report.finding is not None:
+                seen.add(report.finding.code)
+            seen.update(report.deferred)
+
+        return sorted(seen)
