@@ -15,12 +15,34 @@ must not take the services away from the other.
 
 from __future__ import annotations
 
+import pathlib
+
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.const import DOMAIN
 
-SERVICES = ("validate_now", "export_report")
+
+def _declared_services() -> tuple[str, ...]:
+    """Read from services.yaml rather than written down twice.
+
+    The first version listed the names here as a tuple, and adding a third
+    service failed this file rather than the integration — a test that has to be
+    edited whenever the thing it describes changes is a test that will eventually
+    be edited to agree with a mistake.
+    """
+    import re
+
+    yaml = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "custom_components"
+        / "solar_sanity"
+        / "services.yaml"
+    ).read_text(encoding="utf-8")
+    return tuple(sorted(re.findall(r"^([a-z_]+):", yaml, re.MULTILINE)))
+
+
+SERVICES = _declared_services()
 
 
 async def test_both_services_are_registered_under_the_names_the_yaml_declares(
