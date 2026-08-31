@@ -104,7 +104,7 @@ async def test_the_bucket_is_stamped_as_our_own_measurement(
 
     Hours this integration measured itself are held to 10%; hours derived from
     an hourly mean are held to 16%, because an arithmetic mean over an
-    event-reporting sensor over-weights the busy part of the hour. A bucket we
+    event-reporting sensor cannot say whether its hour was complete. A bucket we
     integrated must never be stamped as anything else.
     """
     from custom_components.solar_sanity.analysis.model import BucketSource

@@ -489,7 +489,8 @@ class TestItTellsBlindApartFromMisScaled:
 class TestItSeparatesWhatWeMeasuredFromWhatWeWereTold:
     """The control the ledger did not have.
 
-    An hourly arithmetic mean over a sensor that reports on change over-weights
+    An hourly mean cannot say whether its hour was complete, and an incomplete
+    one is presented exactly like a whole one, so a power channel read that way
     the busy part of the hour, so a power channel read that way sits high while
     an energy counter beside it is exact. That is a night which does not add up
     with nothing whatever wrong — and in a total it is indistinguishable from a

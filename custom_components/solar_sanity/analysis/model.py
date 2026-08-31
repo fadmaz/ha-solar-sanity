@@ -54,9 +54,27 @@ class Quality(Enum):
 class BucketSource(Enum):
     """How a bucket value was obtained.
 
-    ``LTS_MEAN`` is the weak one: an arithmetic hourly mean over an
-    event-reporting power sensor over-weights volatile hours. Buckets from this
-    source get a widened tolerance and may not support a ``certain`` finding.
+    ``LTS_MEAN`` is the weak one, though not for the reason this docstring gave
+    for most of the project's life. It said an hourly mean over an
+    event-reporting sensor over-weights volatile hours. That is false, and it
+    was checked against Home Assistant's own source rather than argued about:
+    ``sensor/recorder.py::_time_weighted_arithmetic_mean`` weights every state
+    by how long it was held and divides by the span, and the hourly figure is
+    ``func.avg`` over twelve equal five-minute rows. For an hour with all twelve
+    present, mean times one hour *is* the integral this integration computes.
+
+    It is weak when the hour is **incomplete**, which is a different and
+    narrower thing. ``func.avg`` over eight rows returns the average of those
+    eight and the hour is then treated as though they were all of it; and where
+    there was no prior state at all, the time-weighted mean moves its own start
+    forward, so a channel that begins reporting mid-hour is averaged over only
+    the part anybody watched. Both are ordinary on an MQTT-bridged inverter that
+    publishes after Home Assistant has started.
+
+    So the widened tolerance is right and the reason is imputation rather than
+    weighting. What ``OWN_INTEGRAL`` carries that the recorder cannot
+    reconstruct is not a better number — it is the attestation that the channel
+    was watched end to end for that whole hour with no gap worth the name.
     """
 
     OWN_INTEGRAL = "own_integral"

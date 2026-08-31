@@ -1,15 +1,20 @@
 """The hours this integration measured itself must survive a restart.
 
 Until now they did not. ``_buckets`` was a plain list initialised empty, so every
-restart refilled the window from Home Assistant's long-term statistics — a
-different measurement of the same hours, and a worse one. An hourly arithmetic
-mean over a sensor that reports on change over-weights the busy part of the
-hour; this integration weights every reading by how long it actually stood.
+restart refilled the window from Home Assistant's long-term statistics.
 
-So the engine was handed the weaker figure for hours it had already measured
-properly, *and* told to trust it less on top: ``MEAN_SOURCE_TOLERANCE_FACTOR``
-widens the actionable band from a tenth to a sixth for mean-derived hours. One
-reference installation showed 55 hours of its own against 3,580 backfilled.
+What is lost is an *attestation* rather than a better number. Home Assistant's
+hourly mean is time-weighted and, for an hour with all twelve of its five-minute
+rows present, agrees with the integral computed here — that was read out of its
+source. What a mean cannot say is whether the hour was complete: eight rows
+present returns the average of eight, presented exactly like a whole hour. Our
+own bucket knows it watched the channel end to end.
+
+The engine acts on that distinction. ``MEAN_SOURCE_TOLERANCE_FACTOR`` widens the
+actionable band from a tenth to a sixth, and ``build_days`` marks a whole day
+mean-derived if any channel in any of its hours is. One reference installation
+showed 55 hours of its own against 3,580 backfilled — so every day of it was
+judged on the wider band.
 
 The mechanism is ordering, and it already existed. ``async_setup_entry`` calls
 ``async_restore`` before ``_async_backfill``, and ``ingest_backfill`` skips any

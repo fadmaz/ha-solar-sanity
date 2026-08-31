@@ -591,9 +591,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         """Seed the window from long-term statistics at setup.
 
         Mean-derived buckets are tagged ``LTS_MEAN`` so the analysis widens its
-        tolerance and refuses to call a finding certain on them: an arithmetic
-        hourly mean over an event-reporting sensor over-weights volatile hours.
-        Sum-derived ones are exact and tagged ``LTS_SUM``.
+        tolerance and refuses to call a finding certain on them: an hourly mean
+        cannot say whether the hour it describes was complete. Sum-derived ones
+        are exact and tagged ``LTS_SUM``. See ``BucketSource``.
         """
         specs = self.specs
         by_key = {s.key: s.entity_id for s in specs}
@@ -863,17 +863,24 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             "retention_days": DIGEST_RETENTION_DAYS,
             # The window itself. Until this was saved, every restart threw away
             # the hours this integration had measured and refilled them from
-            # Home Assistant's statistics — which is a different measurement of
-            # the same thing, and a worse one. An hourly arithmetic mean over a
-            # sensor that reports on change over-weights the busy part of the
-            # hour; the integration here weights every reading by how long it
-            # actually stood. So the engine was being handed the weaker figure
-            # for hours it had already measured properly, and told to trust it
-            # less on top: `MEAN_SOURCE_TOLERANCE_FACTOR` widens the band from
-            # a tenth to a sixth for exactly those hours.
+            # Home Assistant's statistics.
             #
-            # One reference installation had 55 hours of its own against 3,580
-            # backfilled.
+            # What is restored is an attestation rather than a better number.
+            # Home Assistant's hourly mean is time-weighted and, for an hour
+            # with all twelve of its five-minute rows present, agrees with the
+            # integral computed here — that was read out of its source, and it
+            # corrected a belief this project had held in three places. The
+            # difference is that a mean cannot say whether the hour was
+            # complete: eight rows present returns the average of eight,
+            # presented as the whole hour. Our own bucket knows it watched the
+            # channel end to end.
+            #
+            # That distinction is worth a restart's worth of file, because the
+            # engine acts on it — `MEAN_SOURCE_TOLERANCE_FACTOR` widens the band
+            # from a tenth to a sixth, and `build_days` marks a whole day
+            # mean-derived if any channel in any of its hours is. One reference
+            # installation had 55 hours of its own against 3,580 backfilled, so
+            # every day of it was being judged on the wider band.
             #
             # The same columnar encoding the diagnostics block uses, which has a
             # round trip proven against eight different faults — identical
@@ -1190,12 +1197,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 "last_utc": buckets[-1].start_utc.isoformat() if buckets else None,
                 # Where the numbers came from, per channel.
                 #
-                # `lts_mean` is the weak one: an hourly arithmetic mean over a
-                # sensor that reports on change over-weights the busy part of
-                # an hour, so a power channel read this way can sit high while
-                # an energy counter beside it is exact. That is a residual with
-                # nothing wrong behind it, and without this the file gave no
-                # way to tell it from a real one — a month of evidence looked
+                # `lts_mean` is the weak one: an hourly mean cannot say
+                # whether its hour was complete, so a power channel read this
+                # way can sit wrong while an energy counter beside it is exact.
+                # That is a residual with nothing wrong behind it, and without
+                # this the file gave no way to tell it from a real one — a
+                # month of evidence looked
                 # equally good whichever it was.
                 "by_source": {spec.key: _count_sources(buckets, spec.key) for spec in self.specs},
             },

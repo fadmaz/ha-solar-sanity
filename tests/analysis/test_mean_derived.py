@@ -4,7 +4,8 @@ The statistics backfill supplies power channels as hourly means, because power
 sensors carry no sum and asking for `change` returns nothing. Those readings are
 good — the recorder saw every state change, where our own polling sees one in
 three hundred — but an arithmetic mean over an event-reporting sensor
-over-weights volatile hours, so they cannot support a certain finding.
+cannot say whether the hour it describes was complete, so they cannot
+support a certain finding.
 
 Two ways to get this wrong, both silent:
   * discard them, and the backfill produces nothing at all (the original bug);

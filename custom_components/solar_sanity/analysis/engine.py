@@ -1695,9 +1695,9 @@ def _render_hypothesis(
     if hyp.extra:
         fields.update(hyp.extra)
 
-    # A finding resting on mean-derived buckets cannot be certain: an
-    # arithmetic hourly mean over an event-reporting sensor over-weights
-    # volatile hours.
+    # A finding resting on mean-derived buckets cannot be certain: an hourly
+    # mean cannot say whether the hour it describes was complete, and an
+    # incomplete one is presented exactly like a whole one. See `BucketSource`.
     if any(day.from_mean for day in days):
         confidence = confidence.downgrade()
 
