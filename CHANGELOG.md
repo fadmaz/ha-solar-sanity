@@ -2,6 +2,43 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.19.0] - 2026-08-31
+
+### Changed
+
+- **What Solar Sanity measured itself now survives a restart.** The window it
+  works from lived only in memory, so every restart threw it away and rebuilt
+  it from Home Assistant's stored statistics. Those are not wrong, but they
+  cannot tell you one thing your own measurements can: whether the hour was
+  watched all the way through.
+
+  An hourly average is computed from twelve five-minute pieces. If a sensor
+  went quiet and only eight of them exist, the average of those eight is
+  presented exactly like a complete hour — and there is no way to tell the
+  difference afterwards. That is ordinary on an inverter bridged over MQTT,
+  which starts publishing after Home Assistant is already running.
+
+  Solar Sanity watches its channels continuously and knows which hours it saw
+  end to end. Those hours are judged on a tenth rather than a sixth, and can
+  support a confident answer. Until now every restart demoted them, and one
+  reference installation had 55 of its own hours against 3,580 rebuilt.
+
+  About 120 kB in the integration's own storage file at a full window.
+
+### Fixed
+
+- **A long-standing explanation in this project was wrong, and is corrected
+  in nine places.** Solar Sanity's own notes said Home Assistant's hourly
+  average over-weights the busy part of an hour. Checked against Home
+  Assistant's source rather than argued about: it does not. Every reading is
+  weighted by how long it actually stood, and for a complete hour the result
+  matches what this integration computes exactly.
+
+  The caution around those hours was right; the reason given for it was not.
+  Nothing about the verdicts changes — but an explanation a reader could
+  check and find false is worse than none, and this one was in the file that
+  defines the distinction.
+
 ## [0.18.0] - 2026-08-31
 
 ### Added
