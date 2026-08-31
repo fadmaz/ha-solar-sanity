@@ -104,6 +104,15 @@ interface Verdict {
   /** The unabridged text, when `body` is a lead rather than the whole thing. */
   full?: string;
   action?: { label: string; href: string };
+  /**
+   * What the engine wants said beside the verdict.
+   *
+   * Not folded into `body`. A note qualifies the answer rather than replacing
+   * it — "only the night hours could be checked", "your generation sensor reads
+   * 4% above the rest of the system" — and a reader needs to see which is the
+   * verdict and which is the caveat.
+   */
+  notes?: string[];
 }
 
 /**
@@ -121,6 +130,13 @@ export function verdictFor(
   status: SolarSanityStatus | "unavailable" | "unknown" | undefined,
   attrs: SolarSanityStatusAttributes,
 ): Verdict {
+  // Carried onto every verdict below rather than onto some of them. A note is
+  // a qualification of whatever was decided, and the verdict it qualifies most
+  // is `ok` — that is where "everything reconciles" would otherwise be the
+  // whole message on a house that reconciles only over a day, or only in the
+  // hours with no generation.
+  const notes = attrs.notes?.filter((note) => note.trim().length > 0);
+
   switch (status) {
     case "ok":
       return {
@@ -129,6 +145,7 @@ export function verdictFor(
         body: attrs.days_of_data
           ? `Everything reconciles across ${attrs.days_of_data} days of data.`
           : "Everything reconciles.",
+        notes,
       };
 
     case "fault_found":
@@ -140,6 +157,7 @@ export function verdictFor(
         // Repairs entry this opens. It is never only on the card.
         full: attrs.detail ?? undefined,
         action: { label: "Show me", href: "/config/repairs" },
+        notes,
       };
 
     case "investigating":
@@ -149,6 +167,7 @@ export function verdictFor(
         body:
           attrs.reason ??
           "The numbers move around, but not in a way I can name yet. Patterns usually declare themselves given another week.",
+        notes,
       };
 
     case "insufficient_data":
@@ -301,6 +320,11 @@ export class SolarSanityCard extends LitElement {
             <h2 class="headline">${verdict.headline}</h2>
           </div>
           <p class="body" title=${verdict.full ?? nothing}>${verdict.body}</p>
+          ${verdict.notes?.length
+            ? html`<ul class="notes">
+                ${verdict.notes.map((note) => html`<li>${note}</li>`)}
+              </ul>`
+            : nothing}
           ${verdict.action
             ? html`<button
                 class="action"
@@ -333,6 +357,16 @@ export class SolarSanityCard extends LitElement {
       padding: var(--ha-space-4, 16px);
       min-height: 96px;
       box-sizing: border-box;
+    }
+    .notes {
+      margin: 0;
+      padding-left: var(--ha-space-4, 16px);
+      display: flex;
+      flex-direction: column;
+      gap: var(--ha-space-2, 8px);
+      color: var(--secondary-text-color);
+      font-size: 0.9em;
+      line-height: 1.4;
     }
     .row {
       display: flex;
