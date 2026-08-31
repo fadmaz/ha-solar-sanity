@@ -38,6 +38,10 @@ dependencies = []
 # `Unknown config option: asyncio_mode`. Collection and results are unaffected,
 # and nothing here passes `--strict-config`.
 asyncio_mode = "auto"
+# Unset, pytest-asyncio warns on every run. The documented fallback is the
+# fixture caching scope rather than function scope, which is not what any
+# Home Assistant fixture wants.
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 # The clean corpus is 3,000 healthy installations and takes about three minutes
 # serially. Running it on every push would make the suite slow enough to start

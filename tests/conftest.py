@@ -21,14 +21,23 @@ two and belong to neither directory.
 from __future__ import annotations
 
 import importlib.util
+import pathlib
 
-#: Skipped wholesale rather than per-test when Home Assistant is missing.
-#:
-#: ``importorskip`` cannot help here: these modules need fixtures from
-#: ``pytest_homeassistant_custom_component``, and a missing fixture is a
-#: collection error rather than a skip. Refusing to collect them is the only
-#: thing that leaves the rest of the suite runnable.
-collect_ignore_glob: list[str] = []
+HAS_HOME_ASSISTANT = importlib.util.find_spec("homeassistant") is not None
 
-if importlib.util.find_spec("homeassistant") is None:  # pragma: no cover - env
-    collect_ignore_glob.append("integration/*")
+
+def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
+    """Refuse the integration directory outright when there is no Home Assistant.
+
+    ``collect_ignore_glob`` is the obvious tool and the wrong one. It is consulted
+    when a *file* is considered for collection, which is after the collector has
+    already descended into the directory and imported its ``conftest.py`` — and
+    that conftest imports ``pytest_homeassistant_custom_component`` at module
+    scope. The result is a collection *error* rather than an exclusion, and the
+    whole suite stops.
+
+    This hook runs before the descent, so the directory is never entered.
+    """
+    if HAS_HOME_ASSISTANT:
+        return None
+    return collection_path.name == "integration" and collection_path.is_dir()
