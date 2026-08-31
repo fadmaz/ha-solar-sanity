@@ -2,6 +2,30 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- **A surplus that comes back is no longer called export.** On a house with no
+  export meter, the note reporting how much goes missing while you have a
+  surplus counted only the surplus hours. It ignored every other hour of the
+  day — so an installation whose afternoon runs short and whose night runs long
+  by the same amount was told a specific number of kilowatt-hours a day was
+  going to the grid, when nothing was leaving at all and its month balanced to
+  within 1.4%.
+
+  Energy that crossed the boundary does not come back. A genuine unmapped export
+  path leaves the whole period short by what the surplus hours lost — measured
+  at 0.96 to 1.02 of it, and that held under five per cent meter noise, a
+  DC-metered inverter and an unmetered standby draw. A shortfall that is repaid
+  after dark is describing something else.
+
+  The measurement is still reported, because it is real and it is the largest
+  thing about such an installation. What changed is the sentence after it: those
+  houses are now told the two sides very largely cancel, and that this looks
+  like their sensors disagreeing about *when* energy moved rather than about how
+  much of it there was.
+
 ## [0.17.0] - 2026-08-30
 
 ### Added

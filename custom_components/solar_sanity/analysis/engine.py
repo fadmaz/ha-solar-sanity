@@ -91,6 +91,21 @@ MIN_CLEAN_DAYS_FOR_OK = 12
 #: something that is not wrong with it. At ten, six houses with a genuinely
 #: unmapped export channel stop being told so. Eight is chosen over nine for the
 #: margin below that, not because they differ.
+#: How much of a surplus-hour shortfall must still be missing at the end of the
+#: window before it may be described as export.
+#:
+#: Measured: a genuine unmapped export path leaves 0.96 to 1.02 of it missing,
+#: and that held across five per cent meter noise, a DC-metered inverter at 0.90
+#: and 0.85, and an 80 W unmetered draw. A house whose sensors merely disagree
+#: about the *hour* repays it — the installation this was found on sits at
+#: -0.098.
+#:
+#: Half is deliberately generous. Between the two lies a real house with both
+#: faults at once, and there the quoted figure is an overstatement rather than a
+#: fiction: at 0.5 it is out by a factor of two, which a sentence hedged with
+#: "most likely" can carry. Below that it is not a figure worth printing.
+MIN_SURPLUS_THAT_SURVIVES = 0.5
+
 MIN_UNSETTLED_DAYS = 8
 
 #: Below this in both channels, an hour is telling us nothing about whether two
@@ -672,27 +687,70 @@ def _unverifiable_notes(
         "that cannot be checked."
     ]
 
-    surplus = _surplus_kwh_per_day(full_days)
-    if surplus is not None and surplus > 0.1:
-        notes.append(
-            f"About {surplus:.1f} kWh a day is unaccounted for while you have a "
-            "surplus. With no export meter that is most likely what you are "
-            "sending to the grid, but it cannot be told apart from a generation "
-            "sensor reading high."
-        )
+    balance = _surplus_balance(full_days)
+    if balance is not None:
+        per_day, survives = balance
+        if per_day > 0.1 and survives >= MIN_SURPLUS_THAT_SURVIVES:
+            notes.append(
+                f"About {per_day:.1f} kWh a day is unaccounted for while you have "
+                "a surplus. With no export meter that is most likely what you are "
+                "sending to the grid, but it cannot be told apart from a "
+                "generation sensor reading high."
+            )
+        elif per_day > 0.1:
+            notes.append(
+                f"About {per_day:.1f} kWh a day goes missing while you have a "
+                "surplus, but nearly as much arrives unaccounted for at other "
+                "times, so across the whole period the two very largely cancel. "
+                "Energy that had left the house would not come back, so this "
+                "looks like your sensors disagreeing about *when* energy moved "
+                "rather than about how much of it there was."
+            )
     return tuple(notes)
 
 
-def _surplus_kwh_per_day(days: tuple[DayResidual, ...]) -> float | None:
-    """Energy unaccounted for in hours when generation exceeded consumption."""
+def _surplus_balance(days: tuple[DayResidual, ...]) -> tuple[float, float] | None:
+    """Energy missing in surplus hours, and how much of it is still missing.
+
+    Returns ``(kwh_per_day, share_surviving)``, or ``None`` when no surplus hour
+    is short of anything.
+
+    The second number is the one that decides whether this may be called export,
+    and it exists because the first on its own quietly assumed the answer. It
+    summed the shortfall in surplus hours and ignored every other hour of the
+    day — so a house whose afternoon runs short and whose night runs long by the
+    same amount was told a specific number of kilowatt-hours was leaving
+    unmeasured, when nothing was leaving at all.
+
+    **Export does not come back.** Energy that crossed the boundary is gone, so
+    a genuine unmapped export path leaves the whole window short by what the
+    surplus hours lost — measured at 0.96 to 1.02 of it across every variant
+    tried, including five per cent meter noise, a DC-metered inverter and an
+    unmetered standby draw. A house where the shortfall is repaid later is
+    describing something else: its sensors disagree about *when* energy moved.
+
+    The reference installation this was found on sits at **-0.098** — its
+    daytime shortfall of 177 kWh is answered by a nighttime surplus, and its
+    month closes to within 1.4%. It was being told 5.9 kWh a day was going to
+    the grid.
+    """
     if not days:
         return None
-    total = 0.0
+
+    surplus = 0.0
+    net = 0.0
     for day in days:
-        for surplus, value in zip(hypotheses.surplus_mask(day), day.dr, strict=True):
-            if surplus and value > 0:
-                total += value
-    return total / len(days) / 1000.0
+        for is_surplus, value in zip(hypotheses.surplus_mask(day), day.dr, strict=True):
+            # Every hour counts toward the net, including the ones a surplus
+            # cannot occur in. That is the entire point: those are where the
+            # energy comes back.
+            net += value
+            if is_surplus and value > 0.0:
+                surplus += value
+
+    if surplus <= 0.0:
+        return None
+    return surplus / len(days) / 1000.0, net / surplus
 
 
 def _with_closure(reason: str, closure: topology.ClosureResult) -> str:
