@@ -2,6 +2,32 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.21.1] - 2026-08-31
+
+### Added
+
+- **You can tell Solar Sanity to stop reporting a finding.** The engine has
+  honoured this setting for a long time — it skips the check entirely, which
+  also saves the most expensive work it does — and there was no way to switch
+  it on. Now there is, in the integration's options.
+
+  Only findings your installation has actually been given are listed. Being
+  offered the chance to dismiss a diagnosis you have never been given is how a
+  settings page teaches you to ignore it. Anything already dismissed stays on
+  the list so you can change your mind.
+
+### Fixed
+
+- **The dashboard card could have shipped stamped with the wrong version.**
+  The release build embedded the version into the card before writing that
+  version down, so the card carried whatever the previous release said. Every
+  release so far has been correct by luck rather than by design — the version
+  happened to be committed by hand first. Reordered.
+
+- **A settings field no longer describes itself as unused.** The guaranteed
+  annual production figure said "nothing reads it yet". It has been read since
+  0.21.0, which is the release that compares it against what you produced.
+
 ## [0.21.0] - 2026-08-31
 
 ### Added
