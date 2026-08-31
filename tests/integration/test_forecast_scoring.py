@@ -83,14 +83,25 @@ class TestTheUnitsAreConverted:
         self,
         hass: HomeAssistant,
         enable_custom_integrations: None,
-        entry: MockConfigEntry,
+        entry_data: dict,
     ) -> None:
         """End to end on the conversion.
 
-        If the division were missed, 4.5 kWh forecast against 4500 'kWh'
+        If the division were missed, 4.5 kWh forecast against 4500 "kWh"
         measured is a bias of +99,900%, and the snap that follows would report
         something confident and absurd.
+
+        A real provider entry has to exist in ``hass`` for this to reach the
+        arithmetic at all — ``async_score_providers`` skips an id it cannot
+        resolve, which is what it should do and what made the first version of
+        this test pass vacuously in CI.
         """
+        provider = MockConfigEntry(domain="forecast_solar", title="Forecast.Solar")
+        provider.add_to_hass(hass)
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={**entry_data, CONF_FORECAST_ENTRIES: [provider.entry_id]},
+        )
         coordinator = await _coordinator(hass, entry)
         coordinator._buckets = [_bucket(NOON + timedelta(days=day), 4500.0) for day in range(20)]
         forecast = {NOON + timedelta(days=day): 4.5 for day in range(20)}
@@ -102,6 +113,7 @@ class TestTheUnitsAreConverted:
             scores = await async_score_providers(hass, coordinator)
 
         assert scores, "no provider was scored"
+        assert scores[0].name == "Forecast.Solar"
         assert scores[0].bias.value == pytest.approx(0.0, abs=0.01)
 
 
