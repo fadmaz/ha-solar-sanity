@@ -41,13 +41,21 @@ def _metadata(entity_id: str, *, has_sum: bool) -> StatisticMetaData:
 
     ``source`` must be ``"recorder"`` for these, unlike our own external series
     where it is the half before the colon.
+
+    ``unit_class`` is required and its omission here is how this test first
+    failed — with ``RuntimeError: Detected code that doesn't specify unit_class``.
+    The production helper in ``statistics_source`` has carried it all along, and
+    CI greps for the name; the test writing the fixture had no such guard. Worth
+    recording, because a fixture that cannot be written is a better outcome than
+    one written wrongly and asserted about.
     """
     return StatisticMetaData(
-        mean_type=StatisticMeanType.ARITHMETIC if not has_sum else StatisticMeanType.NONE,
+        mean_type=StatisticMeanType.NONE if has_sum else StatisticMeanType.ARITHMETIC,
         has_sum=has_sum,
         name=None,
         source="recorder",
         statistic_id=entity_id,
+        unit_class="energy" if has_sum else "power",
         unit_of_measurement="kWh" if has_sum else "W",
     )
 
