@@ -40,6 +40,7 @@ jobs:
           manifest["version"] = tag
           path.write_text(json.dumps(manifest, indent=2) + "\n")
           print(f"stamped manifest version {tag}")
+          PY
 
       - name: Build the card, now that it has a version to embed
         run: |
@@ -52,7 +53,6 @@ jobs:
           # the lie would be visible to users and to nobody testing.
           npm ci
           npm run build
-          PY
 
       # HACS unpacks the zip's contents straight into the domain directory, so
       # the archive holds the contents flat rather than the directory itself.
