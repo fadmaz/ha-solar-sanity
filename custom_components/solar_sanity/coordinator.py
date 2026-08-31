@@ -119,6 +119,16 @@ _SOURCE_CODE: Final = {
     BucketSource.LTS_MEAN: "m",
 }
 
+#: The same two tables, inverted once here rather than at every read.
+#:
+#: Derived rather than written out, so they cannot drift from the tables above.
+#: A code the encoder never emits is therefore a code the decoder refuses, which
+#: is the behaviour wanted: an unrecognised character means the file was written
+#: by something else, and guessing at it would restore a window that looks right
+#: and is not.
+_QUALITY_BY_CODE: Final = {code: quality for quality, code in _QUALITY_CODE.items()}
+_SOURCE_BY_CODE: Final = {code: source for source, code in _SOURCE_CODE.items()}
+
 
 def _count_sources(buckets: Sequence[Bucket], key: str) -> dict[str, int]:
     """How many of this channel's hours came from each source.
@@ -581,9 +591,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         """Seed the window from long-term statistics at setup.
 
         Mean-derived buckets are tagged ``LTS_MEAN`` so the analysis widens its
-        tolerance and refuses to call a finding certain on them: an arithmetic
-        hourly mean over an event-reporting sensor over-weights volatile hours.
-        Sum-derived ones are exact and tagged ``LTS_SUM``.
+        tolerance and refuses to call a finding certain on them: an hourly mean
+        cannot say whether the hour it describes was complete. Sum-derived ones
+        are exact and tagged ``LTS_SUM``. See ``BucketSource``.
         """
         specs = self.specs
         by_key = {s.key: s.entity_id for s in specs}
@@ -851,6 +861,32 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             "last_status": report.status.value,
             "last_finding": report.finding.code if report.finding else None,
             "retention_days": DIGEST_RETENTION_DAYS,
+            # The window itself. Until this was saved, every restart threw away
+            # the hours this integration had measured and refilled them from
+            # Home Assistant's statistics.
+            #
+            # What is restored is an attestation rather than a better number.
+            # Home Assistant's hourly mean is time-weighted and, for an hour
+            # with all twelve of its five-minute rows present, agrees with the
+            # integral computed here — that was read out of its source, and it
+            # corrected a belief this project had held in three places. The
+            # difference is that a mean cannot say whether the hour was
+            # complete: eight rows present returns the average of eight,
+            # presented as the whole hour. Our own bucket knows it watched the
+            # channel end to end.
+            #
+            # That distinction is worth a restart's worth of file, because the
+            # engine acts on it — `MEAN_SOURCE_TOLERANCE_FACTOR` widens the band
+            # from a tenth to a sixth, and `build_days` marks a whole day
+            # mean-derived if any channel in any of its hours is. One reference
+            # installation had 55 hours of its own against 3,580 backfilled, so
+            # every day of it was being judged on the wider band.
+            #
+            # The same columnar encoding the diagnostics block uses, which has a
+            # round trip proven against eight different faults — identical
+            # verdict, residual, measurements, loss model and notes. Measured on
+            # a real month: 82 kB for 727 hours, 122 kB at the full window.
+            "window": self.window_snapshot(),
         }
         self._store.async_delay_save(lambda: payload, 30)
 
@@ -885,6 +921,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         if not stored:
             return
         self._loss_model = _loss_from_dict(stored.get("loss_model"))
+
+        # Ahead of the statistics backfill, which is what makes this work:
+        # `ingest_backfill` skips any hour already present, so whatever is
+        # restored here wins over the same hour re-derived from statistics.
+        # That ordering is in `async_setup_entry` and is the whole mechanism.
+        self._buckets = self._buckets_from_snapshot(stored.get("window"))
 
     async def _restore_from(self, store: Store) -> dict[str, Any] | None:
         """One stored file, or ``None`` if it cannot be read for any reason.
@@ -1036,6 +1078,63 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             "rows": rows,
         }
 
+    def _buckets_from_snapshot(self, snapshot: Any) -> list[Bucket]:
+        """The inverse of ``window_snapshot``, for restoring a saved window.
+
+        Deliberately strict. Every failure here returns nothing rather than
+        something partial: a window restored with a channel silently missing, or
+        an unreadable quality code quietly treated as OK, would launder guesses
+        into the one place this integration treats as measurement. Losing the
+        saved window costs a restart's worth of history; trusting a damaged one
+        costs a wrong answer with no way to tell.
+        """
+        if not isinstance(snapshot, dict):
+            return []
+
+        keys = snapshot.get("keys")
+        rows = snapshot.get("rows")
+        if not isinstance(keys, list) or not isinstance(rows, list):
+            return []
+
+        restored: list[Bucket] = []
+        for row in rows:
+            if not isinstance(row, list) or len(row) != 5:
+                return []
+            start_raw, seconds, values, quality_codes, source_codes = row
+            if not (
+                isinstance(values, list)
+                and isinstance(quality_codes, str)
+                and isinstance(source_codes, str)
+                and len(values) == len(keys)
+                and len(quality_codes) == len(keys)
+                and len(source_codes) == len(keys)
+            ):
+                return []
+
+            try:
+                start = datetime.fromisoformat(start_raw)
+                wh = {key: values[i] for i, key in enumerate(keys)}
+                quality = {key: _QUALITY_BY_CODE[quality_codes[i]] for i, key in enumerate(keys)}
+                source = {key: _SOURCE_BY_CODE[source_codes[i]] for i, key in enumerate(keys)}
+            except (KeyError, TypeError, ValueError):
+                return []
+
+            local_date, dst = self._local_day(start)
+            restored.append(
+                Bucket(
+                    start_utc=start,
+                    seconds=int(seconds),
+                    wh=wh,
+                    quality=quality,
+                    source=source,
+                    local_date=local_date,
+                    is_dst_transition=dst,
+                )
+            )
+
+        restored.sort(key=lambda bucket: bucket.start_utc)
+        return restored[-MAX_BUCKETS:]
+
     def coverage_snapshot(self) -> dict[str, Any]:
         """Everything needed to explain a verdict, in one downloadable place.
 
@@ -1098,12 +1197,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 "last_utc": buckets[-1].start_utc.isoformat() if buckets else None,
                 # Where the numbers came from, per channel.
                 #
-                # `lts_mean` is the weak one: an hourly arithmetic mean over a
-                # sensor that reports on change over-weights the busy part of
-                # an hour, so a power channel read this way can sit high while
-                # an energy counter beside it is exact. That is a residual with
-                # nothing wrong behind it, and without this the file gave no
-                # way to tell it from a real one — a month of evidence looked
+                # `lts_mean` is the weak one: an hourly mean cannot say
+                # whether its hour was complete, so a power channel read this
+                # way can sit wrong while an energy counter beside it is exact.
+                # That is a residual with nothing wrong behind it, and without
+                # this the file gave no way to tell it from a real one — a
+                # month of evidence looked
                 # equally good whichever it was.
                 "by_source": {spec.key: _count_sources(buckets, spec.key) for spec in self.specs},
             },

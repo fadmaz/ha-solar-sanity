@@ -609,11 +609,13 @@ def _split_by_provenance(
 ) -> dict[str, float]:
     """The same ledger again, for hours we measured against hours we were told.
 
-    An hourly arithmetic mean over a sensor that reports on change over-weights
-    the busy part of the hour, so a power channel read that way sits high while
-    an energy counter beside it is exact. That produces a night that does not
-    add up with nothing whatever wrong — and it is indistinguishable, in a
-    total, from a sensor that genuinely under-reports.
+    An hourly mean cannot say whether the hour it describes was complete: an
+    hour missing a third of its five-minute rows returns the average of the rest
+    and is presented exactly like a whole one. So a power channel read that way
+    can sit wrong while an energy counter beside it is exact. That produces a
+    night that does not add up with nothing whatever wrong — and it is
+    indistinguishable, in a total, from a sensor that genuinely under-reports.
+    See `BucketSource` for why this is imputation rather than weighting.
 
     Our own integration is the control. It weights every reading by how long it
     stood, so if the deficit lives in the hours taken from statistics and the

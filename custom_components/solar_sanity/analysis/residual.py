@@ -55,8 +55,16 @@ CLEAN_DAILY_FLOOR_WH = 300.0
 ACTIONABLE_HOURLY_FLOOR_WH = 150.0
 ACTIONABLE_DAILY_FLOOR_WH = 800.0
 
-#: Buckets derived from an arithmetic hourly mean over an event-reporting sensor
-#: are biased, so their tolerance is widened and they cannot support certainty.
+#: Buckets derived from an hourly mean carry a risk our own integration does
+#: not, so their tolerance is widened and they cannot support certainty.
+#:
+#: The risk is imputation, not weighting. Home Assistant's hourly mean is
+#: genuinely time-weighted — see ``BucketSource`` for the reading of its source
+#: that corrected this — and for a complete hour it agrees with the integral.
+#: What it cannot tell you is whether the hour *was* complete: an hour with
+#: eight of its twelve five-minute rows present returns the average of those
+#: eight, presented as the whole hour and indistinguishable from one that had
+#: all of them.
 MEAN_SOURCE_TOLERANCE_FACTOR = 1.6
 
 #: A day needs this many valid hours to be usable at all (75% coverage).
