@@ -568,11 +568,19 @@ class TestNoFaultCodeIsWrittenAndNeverRaised:
     #: the copy explaining that to the user is never reached either, so it is
     #: told to nobody.
     KNOWN_UNRAISED = {
+        # Faults nothing detects yet. Each is a sentence written for a user
+        # who cannot be shown it, which is a debt rather than a feature — the
+        # list exists to shrink.
+        #
+        # Two left it in 0.22.0, and both for the same reason: they were not
+        # waiting on a detector, they were unreachable. `submeter_included_in_parent`
+        # needed `Role.SUBLOAD`, which was declared with a sign of zero and never
+        # assigned to any channel by any code path. `stale_channel` needed
+        # `age_seconds`, which is written once and read nowhere, on snapshots
+        # that `capture_live` discards whole if any channel in them is stale.
         "channels_swapped",
-        "submeter_included_in_parent",
         "missing_generation_channel",
         "load_boundary_mismatch",
-        "stale_channel",
         "unexplained_residual",
         # `pv_measured_dc` and `battery_measured_dc` were here, silent because
         # the loss model's terms were not identifiable from one another. Both

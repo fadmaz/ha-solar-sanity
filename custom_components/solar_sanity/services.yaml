@@ -7,3 +7,8 @@ export_report:
   description: >-
     Return a plain-language summary of what Solar Sanity has found, suitable for
     pasting into a support request or a warranty enquiry.
+
+rescore_forecasts:
+  # No fields. It scores every configured provider on every installation,
+  # because a service that made you name one would be asking you to know
+  # an entry id.

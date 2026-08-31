@@ -33,6 +33,7 @@ from .const import (
     LIVE_INTERVAL,
     PLATFORMS,
     SERVICE_EXPORT_REPORT,
+    SERVICE_RESCORE_FORECASTS,
     SERVICE_VALIDATE_NOW,
     STORAGE_KEY_STATE,
     STORAGE_VERSION,
@@ -257,6 +258,44 @@ def _async_register_services(hass: HomeAssistant) -> None:
             )
         return {"installations": reports}
 
+    async def _rescore_forecasts(call: ServiceCall) -> dict[str, Any]:
+        """Score every provider now, and say what was found.
+
+        The scoring already runs on the six-hourly analysis tick, so this exists
+        for the case that tick cannot serve: somebody who has just mapped a
+        channel, or just passed the twenty-first comparable day, and wants to
+        know now rather than within six hours.
+
+        Returns ``Bias.reason`` verbatim for each provider. That sentence is the
+        one the sensor's attribute carries and the one the estimator wrote —
+        rephrasing it here would leave two versions of the same explanation to
+        drift apart.
+        """
+        from .scoring import async_score_providers
+
+        out: dict[str, Any] = {}
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            runtime = getattr(entry, "runtime_data", None)
+            coordinator = getattr(runtime, "coordinator", None)
+            if coordinator is None:
+                continue
+            scores = await async_score_providers(hass, coordinator)
+            coordinator.forecast_scores = tuple(scores)
+            coordinator.async_update_listeners()
+            for score in scores:
+                out[score.name] = {
+                    "bias_pct": score.bias.reportable_pct,
+                    "days_compared": score.bias.days,
+                    "reason": score.bias.reason,
+                }
+        return {"providers": out}
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESCORE_FORECASTS,
+        _rescore_forecasts,
+        supports_response=SupportsResponse.ONLY,
+    )
     hass.services.async_register(DOMAIN, SERVICE_VALIDATE_NOW, _validate_now)
     hass.services.async_register(
         DOMAIN,
