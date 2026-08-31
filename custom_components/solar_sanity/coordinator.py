@@ -861,16 +861,54 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         refitted from data within a day anyway, so this needs no migration
         ceremony — but throwing away a correctly fitted one costs a user their
         loss model for no reason.
+
+        Neither file may cost more than itself. ``Store`` calls
+        ``_async_migrate_func`` whenever the stored version differs from the one
+        asked for, and its default implementation raises ``NotImplementedError``
+        — so a file written by a release we have not met took that exception out
+        through ``async_setup_entry`` and the integration did not start at all.
+        The legacy load was already guarded; the primary one was not, which left
+        the failure aimed squarely at the file every installation has.
+
+        Nothing writes a version other than 1 today, so this was not yet
+        reachable in the field. It becomes reachable the moment either constant
+        moves, and it reaches *downgrading* users first — someone rolling back
+        because something else went wrong, who would find the integration dead
+        on arrival and nothing in the logs about a version.
+
+        Losing the model is the cheap half of this trade and is why it is safe:
+        it is refitted from the same data within a day. Losing setup is not.
         """
-        stored = await self._store.async_load()
+        stored = await self._restore_from(self._store)
         if not stored:
-            try:
-                stored = await self._legacy_store.async_load()
-            except Exception:
-                stored = None
+            stored = await self._restore_from(self._legacy_store)
         if not stored:
             return
         self._loss_model = _loss_from_dict(stored.get("loss_model"))
+
+    async def _restore_from(self, store: Store) -> dict[str, Any] | None:
+        """One stored file, or ``None`` if it cannot be read for any reason.
+
+        Deliberately broad. The interesting failure is a version this build
+        cannot migrate, but a half-written file after a power cut reads no
+        better and deserves the same answer — and there is no outcome here worth
+        refusing to start over, because everything this file holds is derived
+        and re-derivable.
+
+        It is logged at warning rather than swallowed. "Your loss model was
+        reset" is a thing an owner may notice in their verdict a day later, and
+        the log is the only place that will connect the two.
+        """
+        try:
+            return await store.async_load()
+        except Exception:
+            _LOGGER.warning(
+                "Could not read %s; continuing without a stored loss model, "
+                "which will be refitted from data within a day",
+                store.key,
+                exc_info=True,
+            )
+            return None
 
     # -- reporting ----------------------------------------------------------
 
