@@ -323,7 +323,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             status=Status.INSUFFICIENT_DATA,
             reason=regime.note_for(
                 change,
-                spec.friendly_name if spec is not None else change.channel_key,
+                spec.role if spec is not None else Role.PV,
                 len(days),
                 VERDICT_WINDOW,
             ),

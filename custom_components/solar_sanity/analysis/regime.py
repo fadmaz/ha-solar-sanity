@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from .linalg import median
-from .model import ChannelSpec
+from .model import ChannelSpec, Role
 from .residual import DayResidual
 
 #: Days required on each side before a split is considered at all.
@@ -161,13 +161,40 @@ def find_latest_change(
     return best
 
 
-def note_for(change: RegimeChange, name: str, days_since: int, window: int) -> str:
+#: What to call each role in a sentence.
+#:
+#: The same words the setup screen used, so the vocabulary somebody learned when
+#: they mapped their sensors is the vocabulary they meet again here.
+#:
+#: Deliberately the *role*, never the channel's friendly name, and the first
+#: version of this got that wrong in a way only production showed.
+#: ``_friendly_name`` falls back to the entity id when a state carries no
+#: ``friendly_name`` attribute, which is ordinary on an MQTT-bridged inverter —
+#: the reference installation was told "your
+#: sensor.siseli_inverter_1_..._battery_charge_energy started moving roughly 6
+#: times more energy per day". Worse, diagnostics do not carry friendly names at
+#: all, so a note built from one cannot survive a replay, and the replay
+#: reproducing the verdict *including its notes* is the only non-synthetic test
+#: this project owns. ``_generation_name`` in ``engine.py`` had already written
+#: that down; this did not read it.
+_ROLE_NAMES = {
+    Role.PV: "solar generation",
+    Role.LOAD: "house consumption",
+    Role.GRID_IMPORT: "grid import",
+    Role.GRID_EXPORT: "grid export",
+    Role.BATTERY_CHARGE: "battery charging",
+    Role.BATTERY_DISCHARGE: "battery discharging",
+}
+
+
+def note_for(change: RegimeChange, role: Role, days_since: int, window: int) -> str:
     """What the user is told. One sentence of fact, one of consequence.
 
-    Names the channel and the date because "something changed" is not something
+    Names what changed and when, because "something changed" is not something
     anybody can check, and the owner almost always knows what they did — at
     which point this stops being a warning and becomes a confirmation.
     """
+    name = _ROLE_NAMES.get(role, role.key.replace("_", " "))
     direction = f"roughly {change.factor:.0f} times more"
     if change.factor < 1.0:
         direction = f"roughly {1.0 / change.factor:.0f} times less"

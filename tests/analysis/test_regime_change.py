@@ -14,7 +14,7 @@ that simply has busy days and quiet ones.
 from __future__ import annotations
 
 import pytest
-from analysis.model import Answer, DeclaredTopology, LossModel
+from analysis.model import Answer, DeclaredTopology, LossModel, Role
 from analysis.regime import MIN_REGIME_DAYS, STEP_RATIO, find_latest_change, note_for
 from analysis.residual import build_days
 
@@ -167,12 +167,37 @@ class TestWhatTheUserIsTold:
         change = find_latest_change(days, specs)
         assert change is not None
 
-        note = note_for(change, "Battery charge", days_since=11, window=14)
+        note = note_for(change, Role.BATTERY_CHARGE, days_since=11, window=14)
 
-        assert "Battery charge" in note
+        assert "battery charging" in note
         assert f"{change.day.day}" in note
         assert "3 days" in note
         assert "settings change" in note
+
+    def test_it_names_the_role_and_never_an_entity_id(self) -> None:
+        """The first version passed `spec.friendly_name`, and on the reference
+        installation that produced "your
+        sensor.siseli_inverter_1_..._battery_charge_energy started moving
+        roughly 6 times more energy per day" -- `_friendly_name` falls back to
+        the entity id when a state carries no friendly_name attribute, which is
+        ordinary on an MQTT-bridged inverter.
+
+        Diagnostics do not carry friendly names at all, so a note built from one
+        cannot survive a replay either, and the replay reproducing the verdict
+        *including its notes* is the only non-synthetic test this project owns.
+        `_generation_name` in engine.py had already written that down.
+        """
+        series = _scale_after(
+            house.build(days=30, seed=9), 19, 5.0, "battery_charge", "battery_discharge"
+        )
+        days, specs = _days(series)
+        change = find_latest_change(days, specs)
+        assert change is not None
+
+        note = note_for(change, Role.BATTERY_CHARGE, days_since=11, window=14)
+
+        assert "sensor." not in note
+        assert "battery charging" in note
 
     def test_it_does_not_promise_a_verdict_that_has_already_arrived(self) -> None:
         series = _scale_after(
@@ -182,7 +207,7 @@ class TestWhatTheUserIsTold:
         change = find_latest_change(days, specs)
         assert change is not None
 
-        assert "tomorrow" in note_for(change, "Battery", days_since=14, window=14)
+        assert "tomorrow" in note_for(change, Role.BATTERY_CHARGE, days_since=14, window=14)
 
 
 class TestTheEngineActsOnIt:
