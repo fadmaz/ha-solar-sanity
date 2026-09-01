@@ -17,7 +17,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.config_flow import _readable
-from custom_components.solar_sanity.const import DOMAIN, OPT_SUPPRESSED
+from custom_components.solar_sanity.const import DOMAIN, OPT_BATTERY_SOC, OPT_SUPPRESSED
 
 
 async def _loaded(hass: HomeAssistant, entry: MockConfigEntry):
@@ -101,3 +101,44 @@ def test_the_labels_are_sentences_rather_than_symbols() -> None:
     read well. Turning them over for display costs nothing."""
     assert _readable("signed_net_in_dedicated_slot") == "Signed net in dedicated slot"
     assert _readable("missing_export_channel") == "Missing export channel"
+
+
+async def test_a_battery_charge_level_can_be_mapped_and_survives(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry: MockConfigEntry,
+) -> None:
+    """The one option that is not about the balance at all.
+
+    State of charge takes no part in the arithmetic — it exists so that when a
+    battery meter's reported throughput steps, something outside that meter can
+    say whether the battery changed or the meter did. Round-tripped through the
+    real options flow rather than written directly, because writing it directly
+    is exactly what a user cannot do.
+    """
+    await _loaded(hass, entry)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    assert OPT_BATTERY_SOC in str(result["data_schema"].schema)
+
+    done = await hass.config_entries.options.async_configure(
+        result["flow_id"], {OPT_BATTERY_SOC: "sensor.battery_level"}
+    )
+    await hass.async_block_till_done()
+
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[OPT_BATTERY_SOC] == "sensor.battery_level"
+
+
+async def test_no_charge_level_mapped_means_no_swing_and_no_error(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry: MockConfigEntry,
+) -> None:
+    """The overwhelmingly common case. It must be silent, not merely survivable —
+    the report then names both causes, which is what shipped before this."""
+    entry = await _loaded(hass, entry)
+    coordinator = entry.runtime_data.coordinator
+
+    assert await coordinator._async_soc_swing() == {}

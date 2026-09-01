@@ -29,6 +29,10 @@ CONF_GUARANTEED_ANNUAL_KWH: Final = "guaranteed_annual_kwh"
 
 OPT_CORRECTIONS: Final = "corrections"
 OPT_SUPPRESSED: Final = "suppressed_codes"
+#: Entity id of a battery state-of-charge sensor. Optional, and not a channel:
+#: it is a level in percent rather than a flow in watt-hours, and its value is
+#: that it sits outside the energy balance entirely.
+OPT_BATTERY_SOC: Final = "battery_soc_entity"
 
 # --- storage ---------------------------------------------------------------
 STORAGE_VERSION: Final = 1

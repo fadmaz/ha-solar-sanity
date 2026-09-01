@@ -337,6 +337,19 @@ class AnalysisRequest:
     #: every daily asymmetry test. This is user configuration, not a clock,
     #: so the engine stays pure.
     utc_offset_hours: float = 0.0
+    #: Peak-to-trough battery state of charge per local day, in percent.
+    #:
+    #: Deliberately not a channel and not in ``buckets``. State of charge is a
+    #: level rather than a flow, it is measured in percent rather than watt-hours,
+    #: and its whole value here is that it sits *outside* the energy balance —
+    #: it comes from the battery management system, so a charge meter that
+    #: under-reports by a factor of five leaves it untouched. Empty when the user
+    #: has not mapped one, which is the common case.
+    soc_daily_swing: tuple[tuple[date, float], ...] = ()
+
+    @property
+    def soc_by_day(self) -> dict[date, float]:
+        return dict(self.soc_daily_swing)
 
     def spec(self, key: str) -> ChannelSpec | None:
         for s in self.specs:

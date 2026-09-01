@@ -35,8 +35,10 @@ ignored. What passes is a step: 4.9-7.4 against 23.4-36.5, disjoint by 3.2x.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
+from enum import Enum
 
 from .linalg import median
 from .model import ChannelSpec, Role
@@ -161,6 +163,99 @@ def find_latest_change(
     return best
 
 
+class Cause(Enum):
+    """Why a channel's throughput stepped.
+
+    A sensor that starts telling the truth and a machine that starts doing
+    something different are indistinguishable inside the energy balance. Both are
+    a jump in one column with nothing else moving, and no amount of arithmetic on
+    the other columns separates them — the balance is precisely where a
+    mis-reporting meter hides, because whatever it fails to report is still
+    conserved and simply turns up as residual.
+
+    State of charge settles it, because it is not in the balance. It comes from
+    the battery management system rather than from the energy meters, so a meter
+    that under-reports by a factor of five leaves it completely unmoved. Compare
+    the daily state-of-charge swing either side of the step and the question
+    answers itself: unchanged means the battery was always doing this work and
+    only its reporting changed; changed means the equipment did.
+
+    An earlier attempt did this from the residual instead and was withdrawn. The
+    quantity it compared reduced algebraically to ``pv + import - load - export``
+    — the battery terms cancelled — so it was blind to the very thing it claimed
+    to measure, and on a house with any unmetered path it called a genuine
+    equipment change a reporting one. That is the failure this design cannot
+    have: state of charge is an observation of the battery itself.
+    """
+
+    #: No state of charge mapped, not a storage channel, or too few days.
+    UNDETERMINED = "undetermined"
+    #: The meter changed what it says. The *older* figures were the wrong ones.
+    REPORTING = "reporting"
+    #: The equipment changed what it does.
+    BEHAVIOUR = "behaviour"
+
+
+#: How close the daily state-of-charge swing must be, either side, to count as
+#: unchanged.
+#:
+#: A third. Not tighter: a battery's daily depth varies with weather and use, and
+#: the reference installation's own swing ranges from 17% to 65% within a single
+#: unchanged regime. Demanding agreement to a few percent would be reading noise.
+SAME_WITHIN = 1.33
+
+#: How far apart before the equipment is blamed instead.
+#:
+#: Deliberately a wide gap from ``SAME_WITHIN``: anything landing between them is
+#: UNDETERMINED and the note falls back to offering both causes. Half the value
+#: of this is knowing when not to answer.
+DIFFERENT_BEYOND = 2.0
+
+
+def attribute(
+    days: tuple[DayResidual, ...],
+    change: RegimeChange,
+    specs: tuple[ChannelSpec, ...],
+    soc_daily_swing: Mapping[date, float],
+) -> Cause:
+    """Whether the meter changed or the battery did.
+
+    ``soc_daily_swing`` is peak-to-trough state of charge per local day, in
+    percent, taken from a sensor that is deliberately outside the energy balance.
+    Empty when the user has not mapped one, which is the common case and returns
+    ``UNDETERMINED`` immediately.
+
+    Refuses freely: a step in something that is not storage, fewer than
+    ``MIN_REGIME_DAYS`` of state of charge either side, and any ratio that does
+    not land clearly. An unanswered question is better than a guessed one.
+    """
+    if not soc_daily_swing:
+        return Cause.UNDETERMINED
+
+    stepped = next((s.role for s in specs if s.key == change.channel_key), None)
+    if stepped not in (Role.BATTERY_CHARGE, Role.BATTERY_DISCHARGE):
+        return Cause.UNDETERMINED
+
+    def swings(wanted) -> list[float]:
+        return [soc_daily_swing[d.day] for d in days if wanted(d.day) and d.day in soc_daily_swing]
+
+    before = swings(lambda day: day < change.day)
+    after = swings(lambda day: day >= change.day)
+    if len(before) < MIN_REGIME_DAYS or len(after) < MIN_REGIME_DAYS:
+        return Cause.UNDETERMINED
+
+    was, now = median(before), median(after)
+    if not was or not now:
+        return Cause.UNDETERMINED
+
+    ratio = now / was
+    if 1.0 / SAME_WITHIN <= ratio <= SAME_WITHIN:
+        return Cause.REPORTING
+    if ratio >= DIFFERENT_BEYOND or ratio <= 1.0 / DIFFERENT_BEYOND:
+        return Cause.BEHAVIOUR
+    return Cause.UNDETERMINED
+
+
 #: What to call each role in a sentence.
 #:
 #: The same words the setup screen used, so the vocabulary somebody learned when
@@ -187,7 +282,13 @@ _ROLE_NAMES = {
 }
 
 
-def note_for(change: RegimeChange, role: Role, days_since: int, window: int) -> str:
+def note_for(
+    change: RegimeChange,
+    role: Role,
+    days_since: int,
+    window: int,
+    cause: Cause = Cause.UNDETERMINED,
+) -> str:
     """What the user is told. One sentence of fact, one of consequence.
 
     Names what changed and when, because "something changed" is not something
@@ -217,13 +318,32 @@ def note_for(change: RegimeChange, role: Role, days_since: int, window: int) -> 
     # A sensor that starts telling the truth and a setting that gets changed look
     # identical from inside the window. What separates them is state of charge,
     # which this integration does not read and the owner can see in one click.
+    if cause is Cause.REPORTING:
+        middle = (
+            "though your battery carried on doing the same work — its charge level swung "
+            "about as far each day before as it does now, and that reading comes from the "
+            "battery itself rather than from the meter. So the meter started reporting "
+            "what was already happening, and it is the figures from before that were "
+            "wrong, not these"
+        )
+    elif cause is Cause.BEHAVIOUR:
+        middle = (
+            "and your battery really is doing different work — its charge level swings a "
+            "different amount each day now, measured from the battery itself rather than "
+            "from the meter. Something altered how it runs, not how it reports"
+        )
+    else:
+        middle = (
+            "while everything else stayed where it was. Either the equipment changed how it "
+            "runs, or its sensor changed what it reports — mapping your battery's charge "
+            "level in the options lets Solar Sanity tell you which, because that reading "
+            "comes from the battery rather than from the meter that changed"
+        )
+
     return (
         f"On {when_changed} your {name} started moving {direction} energy per day "
         f"({change.before_wh / 1000:.1f} kWh before, {change.after_wh / 1000:.1f} kWh after), "
-        f"while everything else stayed where it was. Either the equipment changed how it "
-        f"runs, or its sensor changed what it reports — your battery's state-of-charge "
-        f"history will tell you which, and it is worth knowing, because in the second case "
-        f"the older figures were the wrong ones. Everything here is measured over the "
+        f"{middle}. Everything here is measured over the "
         f"{days_since} days since, because an average across that change would describe "
         f"neither side of it — which means a full verdict {when}."
     )

@@ -83,11 +83,13 @@
         "title": "Solar Sanity settings",
         "data": {
           "guaranteed_annual_kwh": "Guaranteed annual production (kWh)",
-          "suppressed_codes": "Findings to stop reporting"
+          "suppressed_codes": "Findings to stop reporting",
+          "battery_soc_entity": "Battery charge level"
         },
         "data_description": {
           "guaranteed_annual_kwh": "The yearly figure your installer promised, if you have it. Compared against what you actually produced, once there is a full year of history to compare.",
-          "suppressed_codes": "Anything ticked here will not be raised again. Only findings this installation has actually been given are listed, and a dismissal can be undone by unticking it."
+          "suppressed_codes": "Anything ticked here will not be raised again. Only findings this installation has actually been given are listed, and a dismissal can be undone by unticking it.",
+          "battery_soc_entity": "Optional. Your battery's state of charge, as a percentage. It takes no part in the energy arithmetic — it is there for one job: if your battery's charge or discharge readings ever change abruptly, this is the only sensor that can say whether the battery changed or just the meter reporting it."
         }
       }
     }

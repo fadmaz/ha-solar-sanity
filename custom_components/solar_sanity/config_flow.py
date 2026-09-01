@@ -46,6 +46,7 @@ from .const import (
     CONF_ORIGIN,
     CONF_ROLE,
     DOMAIN,
+    OPT_BATTERY_SOC,
     OPT_SUPPRESSED,
 )
 from .discovery import Discovery, async_discover
@@ -424,6 +425,15 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
                 )
             ),
         }
+
+        # Optional, and offered here rather than at setup because it buys one
+        # narrow thing rather than being part of the balance: when a battery
+        # meter's reported throughput steps, this is what says whether the
+        # battery changed or the meter did. Filtered to battery-percentage
+        # sensors, which is what a BMS publishes.
+        fields[vol.Optional(OPT_BATTERY_SOC)] = selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class="battery")
+        )
 
         dismissible = self._dismissible_codes()
         if dismissible:
