@@ -2,6 +2,18 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.25.1] - 2026-09-01
+
+### Fixed
+
+- **The battery charge level is now offered during setup, not only afterwards in
+  the options.** It is the last field of the sensor-mapping step, right below the
+  two battery channels — which is where you would look for it, and where 0.25.0
+  failed to put it.
+
+  Reconfigure offers it too, pre-filled with whatever you already chose, and
+  clearing it now genuinely clears it.
+
 ## [0.25.0] - 2026-09-01
 
 ### Added
