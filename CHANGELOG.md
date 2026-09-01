@@ -2,6 +2,29 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.25.0] - 2026-09-01
+
+### Added
+
+- **When your installation changes, Solar Sanity now works out whether it was the
+  equipment or the sensor** — and where it can tell, it says which instead of
+  offering you both.
+
+  Energy a battery moves without reporting it does not disappear from the
+  arithmetic. It leaves the measured system while the battery charges and comes
+  back when it discharges, which shows up as a day-to-night swing in the residual
+  that cancels out over twenty-four hours. Credit that swing back to the battery
+  and you get what it was actually doing, rather than what it admitted to.
+
+  If that corrected figure is the same either side of the change, the battery was
+  always doing the same work and only its sensor changed — which means **your
+  older readings were the wrong ones, not your new ones**. If the corrected figure
+  changed too, the equipment really did change.
+
+  It declines to answer whenever the step is in something other than a battery,
+  when there are fewer than five days either side, or when the result does not
+  land clearly. In those cases the note offers both explanations as before.
+
 ## [0.24.2] - 2026-09-01
 
 ### Fixed

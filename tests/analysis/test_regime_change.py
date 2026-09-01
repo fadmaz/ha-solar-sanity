@@ -15,7 +15,15 @@ from __future__ import annotations
 
 import pytest
 from analysis.model import Answer, DeclaredTopology, LossModel, Role
-from analysis.regime import MIN_REGIME_DAYS, STEP_RATIO, find_latest_change, note_for
+from analysis.regime import (
+    MIN_REGIME_DAYS,
+    STEP_RATIO,
+    Cause,
+    RegimeChange,
+    attribute,
+    find_latest_change,
+    note_for,
+)
 from analysis.residual import build_days
 
 from tests.synth import house
@@ -281,3 +289,108 @@ class TestTheEngineActsOnIt:
         report = self._report(house.build(days=30, seed=13))
 
         assert report.status is not Status.INSUFFICIENT_DATA
+
+
+class TestWhichCause:
+    """Telling a sensor that started reporting from equipment that started doing.
+
+    The reference installation is where the question came from and it cannot
+    answer it: n=1, and the owner's own account is the only external evidence.
+    So both answers are built here from houses whose truth is known by
+    construction, and the real installation is only checked afterwards to see
+    which side it lands on.
+    """
+
+    def _reporting_change(self, seed: int):
+        """A battery that always worked, whose meter under-reported it at first.
+
+        Only the two battery columns are touched, and nothing is rebalanced --
+        which is the whole point. The energy the meter stops admitting to does
+        not leave the house, so it turns up in the residual as a day-to-night
+        oscillation, exactly as it does on the real installation.
+        """
+        series = house.build(days=30, seed=seed, battery_wh=12000.0)
+        cut = 19 * 24
+        shrunk = {
+            key: [v * 0.2 if i < cut else v for i, v in enumerate(series.data[key])]
+            for key in ("battery_charge", "battery_discharge")
+        }
+        return series.copy_with(**shrunk)
+
+    def _behaviour_change(self, seed: int):
+        """A small battery replaced by a big one, both halves balanced exactly.
+
+        Spliced from two independently generated houses, so each side closes on
+        its own and there is no residual anywhere for the correction to credit
+        back. That is what makes it the opposite case rather than a variant.
+        """
+        small = house.build(days=30, seed=seed, battery_wh=2500.0)
+        large = house.build(days=30, seed=seed, battery_wh=16000.0)
+        cut = 19 * 24
+        return small.copy_with(**{k: small.data[k][:cut] + large.data[k][cut:] for k in small.data})
+
+    @pytest.mark.parametrize("seed", range(4))
+    def test_an_under_reporting_meter_is_named_as_reporting(self, seed: int) -> None:
+        days, specs = _days(self._reporting_change(seed))
+        change = find_latest_change(days, specs)
+        assert change is not None, "the step itself was not even seen"
+
+        assert attribute(days, change, specs) is Cause.REPORTING
+
+    @pytest.mark.parametrize("seed", range(4))
+    def test_a_bigger_battery_is_named_as_behaviour(self, seed: int) -> None:
+        days, specs = _days(self._behaviour_change(seed))
+        change = find_latest_change(days, specs)
+        assert change is not None, "the step itself was not even seen"
+
+        assert attribute(days, change, specs) is Cause.BEHAVIOUR
+
+    def test_a_step_in_something_that_is_not_storage_is_not_guessed_at(self) -> None:
+        """The correction credits the residual to the battery. Applying that
+        reasoning to a step in generation would be arithmetic about the wrong
+        thing, so it declines instead.
+
+        The change is constructed rather than detected. An earlier version built
+        a house with a grid_import step and skipped when the detector did not
+        produce one -- which it often did not, because import is zero on many
+        days and a ratio test cannot separate zero from zero. A test that skips
+        is a test that proves nothing.
+        """
+        days, specs = _days(self._reporting_change(3))
+        forged = RegimeChange(day=days[19].day, channel_key="pv", before_wh=1000.0, after_wh=9000.0)
+
+        assert attribute(days, forged, specs) is Cause.UNDETERMINED
+
+    def test_too_few_days_on_one_side_is_not_answered_either(self) -> None:
+        """Five days is the floor for the step itself; it is the floor here too,
+        and for a stronger reason -- this compares two averages."""
+        days, specs = _days(self._reporting_change(3))
+        forged = RegimeChange(
+            day=days[-2].day, channel_key="battery_charge", before_wh=1000.0, after_wh=9000.0
+        )
+
+        assert attribute(days, forged, specs) is Cause.UNDETERMINED
+
+    def test_the_note_says_which_and_which_way_it_matters(self) -> None:
+        days, specs = _days(self._reporting_change(1))
+        change = find_latest_change(days, specs)
+        assert change is not None
+
+        note = note_for(change, Role.BATTERY_CHARGE, 11, 14, Cause.REPORTING)
+
+        assert "same work" in note
+        # The consequence is the part a reader can act on: their old numbers
+        # were wrong, not their new ones.
+        assert "before that were wrong" in note
+        assert "Either" not in note
+
+    def test_an_undetermined_cause_still_offers_both(self) -> None:
+        """The fallback has to survive, because most steps will land here."""
+        days, specs = _days(self._reporting_change(2))
+        change = find_latest_change(days, specs)
+        assert change is not None
+
+        note = note_for(change, Role.BATTERY_CHARGE, 11, 14, Cause.UNDETERMINED)
+
+        assert "Either" in note
+        assert "state-of-charge" in note

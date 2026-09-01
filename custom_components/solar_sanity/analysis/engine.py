@@ -303,7 +303,10 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
     # Before the loss fit, because the loss fit is the first thing a pooled
     # window ruins.
     change = regime.find_latest_change(provisional, specs)
+    cause = regime.Cause.UNDETERMINED
     if change is not None:
+        # Before the truncation, because the comparison needs both sides.
+        cause = regime.attribute(provisional, change, specs)
         provisional = tuple(day for day in provisional if day.day >= change.day)
 
     loss = topology.fit_loss_model(provisional, specs, request.loss_model)
@@ -326,6 +329,7 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
                 spec.role if spec is not None else Role.PV,
                 len(days),
                 VERDICT_WINDOW,
+                cause,
             ),
             topology=estimate,
             loss_model=loss,
