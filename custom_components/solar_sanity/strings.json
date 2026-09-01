@@ -11,7 +11,8 @@
           "grid_import": "Grid import",
           "grid_export": "Grid export",
           "battery_charge": "Battery charging",
-          "battery_discharge": "Battery discharging"
+          "battery_discharge": "Battery discharging",
+          "battery_soc_entity": "Battery charge level (optional)"
         },
         "data_description": {
           "pv": "Power or energy produced by your panels.",
@@ -19,7 +20,8 @@
           "grid_import": "Power or energy drawn from the grid. If you have one sensor that goes negative when exporting, put it here and leave export empty.",
           "grid_export": "Power or energy sent to the grid.",
           "battery_charge": "Energy going into the battery.",
-          "battery_discharge": "Energy coming out of the battery."
+          "battery_discharge": "Energy coming out of the battery.",
+          "battery_soc_entity": "Your battery's charge percentage, if you have it. It takes no part in the arithmetic. It is here for one job: if your battery's charge or discharge readings ever change abruptly, this is the only sensor that can say whether the battery changed or just the meter reporting it."
         }
       },
       "topology": {
@@ -45,7 +47,11 @@
           "grid_import": "Grid import",
           "grid_export": "Grid export",
           "battery_charge": "Battery charging",
-          "battery_discharge": "Battery discharging"
+          "battery_discharge": "Battery discharging",
+          "battery_soc_entity": "Battery charge level (optional)"
+        },
+        "data_description": {
+          "battery_soc_entity": "Your battery's charge percentage, if you have it. It takes no part in the arithmetic. It is here for one job: if your battery's charge or discharge readings ever change abruptly, this is the only sensor that can say whether the battery changed or just the meter reporting it."
         }
       },
       "reconfigure_topology": {
