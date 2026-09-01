@@ -2,6 +2,23 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.24.2] - 2026-09-01
+
+### Fixed
+
+- **The note about a changed installation no longer guesses why.** It used to say
+  the change "is usually a settings change rather than a fault". That was a guess
+  presented as a fact, and on the first real installation to see it, it was the
+  wrong guess — the owner had changed nothing.
+
+  It now names both possibilities and asserts neither: either the equipment
+  changed how it runs, or its sensor changed what it reports. From inside a
+  window of energy readings those look identical. What separates them is your
+  battery's state-of-charge history, which the note now points you at.
+
+  Worth the distinction: if the sensor started reporting differently, it is the
+  **older** figures that were wrong, not the new ones.
+
 ## [0.24.1] - 2026-09-01
 
 ### Fixed
