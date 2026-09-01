@@ -2,6 +2,20 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.24.1] - 2026-09-01
+
+### Fixed
+
+- **The note about a changed installation no longer quotes a raw entity id.**
+  It said "your sensor.your_inverter_..._battery_charge_energy started moving
+  roughly 6 times more energy per day". It now says "your battery charging",
+  using the same words the setup screen used when you mapped that sensor.
+
+  The name came from Home Assistant's `friendly_name` attribute, which not every
+  sensor has — on an MQTT-bridged inverter it is often absent, and the fallback
+  is the entity id. Diagnostics downloads do not carry friendly names at all, so
+  the sentence could not be reproduced by replaying one either.
+
 ## [0.24.0] - 2026-09-01
 
 ### Added
