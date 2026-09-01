@@ -205,11 +205,25 @@ def note_for(change: RegimeChange, role: Role, days_since: int, window: int) -> 
     # `%-d` is glibc-only and raises on Windows, where the pure suite runs.
     when_changed = f"{change.day.day} {change.day:%B}"
 
+    # Two causes offered and neither asserted, which is the whole point.
+    #
+    # The first version said "that is usually a settings change rather than a
+    # fault". It is a guess dressed as a fact, and on the only real installation
+    # this project has it appears to be the wrong one: the owner changed nothing,
+    # and the balance says the battery had been cycling all along while its
+    # sensor under-reported — the day/night residual swing that used to be there
+    # collapsed on the same day the reported throughput jumped.
+    #
+    # A sensor that starts telling the truth and a setting that gets changed look
+    # identical from inside the window. What separates them is state of charge,
+    # which this integration does not read and the owner can see in one click.
     return (
         f"On {when_changed} your {name} started moving {direction} energy per day "
         f"({change.before_wh / 1000:.1f} kWh before, {change.after_wh / 1000:.1f} kWh after), "
-        f"and nothing else changed with it. That is usually a settings change rather than a "
-        f"fault. Everything here is measured over the {days_since} days since, because an "
-        f"average across that change would describe neither side of it — which means a full "
-        f"verdict {when}."
+        f"while everything else stayed where it was. Either the equipment changed how it "
+        f"runs, or its sensor changed what it reports — your battery's state-of-charge "
+        f"history will tell you which, and it is worth knowing, because in the second case "
+        f"the older figures were the wrong ones. Everything here is measured over the "
+        f"{days_since} days since, because an average across that change would describe "
+        f"neither side of it — which means a full verdict {when}."
     )

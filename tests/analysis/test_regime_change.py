@@ -172,7 +172,33 @@ class TestWhatTheUserIsTold:
         assert "battery charging" in note
         assert f"{change.day.day}" in note
         assert "3 days" in note
-        assert "settings change" in note
+
+    def test_it_offers_both_causes_and_asserts_neither(self) -> None:
+        """The first version said "that is usually a settings change rather than
+        a fault". That is a guess dressed as a fact, and on the only real
+        installation this project has it looks like the wrong one: the owner
+        changed nothing, and the balance says the battery had been cycling all
+        along while its sensor under-reported it -- the day/night residual swing
+        that used to be there collapsed on the very day the reported throughput
+        jumped.
+
+        A sensor that starts telling the truth and a setting that gets changed
+        are indistinguishable from inside this window. Saying so is the honest
+        move, and naming state of charge gives the reader the one check that
+        separates them.
+        """
+        series = _scale_after(
+            house.build(days=30, seed=10), 19, 5.0, "battery_charge", "battery_discharge"
+        )
+        days, specs = _days(series)
+        change = find_latest_change(days, specs)
+        assert change is not None
+
+        note = note_for(change, Role.BATTERY_CHARGE, days_since=11, window=14)
+
+        assert "usually" not in note
+        assert "state-of-charge" in note
+        assert "Either" in note
 
     def test_it_names_the_role_and_never_an_entity_id(self) -> None:
         """The first version passed `spec.friendly_name`, and on the reference
@@ -233,7 +259,8 @@ class TestTheEngineActsOnIt:
 
         assert report.status is Status.INSUFFICIENT_DATA
         assert report.finding is None
-        assert "settings change" in report.reason
+        assert "battery charging" in report.reason
+        assert "verdict" in report.reason
 
     def test_the_residual_is_measured_over_the_new_regime_only(self) -> None:
         """An average across the change describes neither side of it."""
