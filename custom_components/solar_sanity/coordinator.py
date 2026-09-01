@@ -69,6 +69,7 @@ from .const import (
     DOMAIN,
     ENERGY_MAX_AGE_SECONDS,
     LIVE_MAX_AGE_SECONDS,
+    OPT_BATTERY_SOC,
     OPT_CORRECTIONS,
     OPT_SUPPRESSED,
     POWER_GAP_TOLERANCE_SECONDS,
@@ -77,6 +78,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .statistics_source import (
+    async_daily_soc_swing,
     async_forecast_series,
     async_get_solar_forecasts,
     async_record_forecast,
@@ -836,6 +838,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             loss_model=self._loss_model,
             unrecorded_keys=self._unrecorded_keys(),
             utc_offset_hours=self._utc_offset_hours(),
+            soc_daily_swing=tuple(sorted((await self._async_soc_swing()).items())),
         )
 
         report = await self.hass.async_add_executor_job(analyse, request)
@@ -861,6 +864,34 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             self.yield_note = await async_yield_against_promise(self.hass, self)
         except Exception:
             _LOGGER.debug("yield against promise failed", exc_info=True)
+
+    async def _async_soc_swing(self) -> dict[Any, float]:
+        """How far the battery's charge level moved on each local day.
+
+        Optional, and empty unless the user has mapped a state-of-charge sensor
+        in the options. It exists to answer one question the energy balance
+        cannot: when a battery meter's reported throughput steps, did the battery
+        change or did the meter? State of charge comes from the battery rather
+        than from the meter, so it is the only reading in the system that a
+        mis-reporting meter cannot move.
+
+        Swallowed on failure. Without it the report says "either" and names both
+        causes, which is exactly what it did before this existed.
+        """
+        entity_id = self.entry.options.get(OPT_BATTERY_SOC)
+        if not entity_id or not self._buckets:
+            return {}
+        try:
+            return await async_daily_soc_swing(
+                self.hass,
+                entity_id,
+                self._buckets[0].start_utc,
+                self._buckets[-1].start_utc + timedelta(hours=1),
+                self._utc_offset_hours(),
+            )
+        except Exception:
+            _LOGGER.debug("state-of-charge swing failed", exc_info=True)
+            return {}
 
     async def _async_score_forecasts(self) -> None:
         """Score each configured provider, on the same tick as the analysis.

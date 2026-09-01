@@ -16,7 +16,7 @@ indexed, never purged, visible in Developer Tools, and it costs no boot time.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -600,3 +600,65 @@ async def async_forecast_providers(hass: HomeAssistant) -> list[tuple[str, str]]
             label = provider_label(product, entry.title)
             providers.append((entry.entry_id, label))
     return providers
+
+
+async def async_daily_soc_swing(
+    hass: HomeAssistant,
+    entity_id: str,
+    start: datetime,
+    end: datetime,
+    utc_offset_hours: float,
+) -> dict[date, float]:
+    """Peak-to-trough battery state of charge per local day, in percent.
+
+    Read from the recorder's hourly ``min`` and ``max`` rather than ``mean``,
+    because the question is how far the battery swung and a mean is exactly the
+    wrong statistic for that — a battery cycling 35% to 95% and one sitting at
+    65% have the same mean and nothing else in common.
+
+    Grouped by *local* day for the same reason the buckets are: a swing that
+    straddles midnight UTC is one cycle, not two halves.
+
+    Returns an empty mapping on any failure. A missing answer here degrades the
+    cause to "undetermined" and the note falls back to offering both, which is
+    the behaviour without this sensor at all.
+    """
+    if not recorder_available(hass) or not entity_id:
+        return {}
+
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.statistics import statistics_during_period
+
+    try:
+        rows = await get_instance(hass).async_add_executor_job(
+            statistics_during_period,
+            hass,
+            start,
+            end,
+            {entity_id},
+            "hour",
+            None,
+            # A fresh set every call: `statistics_during_period` mutates the one
+            # it is given, and a module-level constant would be emptied by the
+            # first call and silently return nothing ever after.
+            {"min", "max"},
+        )
+    except Exception:
+        _LOGGER.debug("state-of-charge statistics failed for %s", entity_id, exc_info=True)
+        return {}
+
+    offset = timedelta(hours=utc_offset_hours)
+    lo: dict[date, float] = {}
+    hi: dict[date, float] = {}
+    for row in (rows or {}).get(entity_id, []):
+        started = row.get("start")
+        low, high = row.get("min"), row.get("max")
+        if started is None or low is None or high is None:
+            continue
+        if not isinstance(started, datetime):
+            started = dt_util.utc_from_timestamp(started)
+        day = (started + offset).date()
+        lo[day] = min(lo.get(day, low), low)
+        hi[day] = max(hi.get(day, high), high)
+
+    return {day: hi[day] - lo[day] for day in lo if day in hi}

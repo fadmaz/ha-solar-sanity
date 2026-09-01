@@ -2,6 +2,34 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.25.0] - 2026-09-01
+
+### Added
+
+- **You can now map your battery's charge level, and Solar Sanity will tell you
+  whether a change was your equipment or your sensor.** Optional, in the
+  integration's options, and it takes no part in the energy arithmetic.
+
+  When a battery meter's reported throughput suddenly steps, the energy figures
+  alone cannot say why. A meter that under-reports is exactly the case where the
+  energy it fails to mention is still there and simply turns up as an unexplained
+  residual — so every reading is implicated and none of them settles it.
+
+  Your battery's charge level does settle it, because it comes from the battery
+  rather than from the meter. A charge sensor reading a fifth of the truth leaves
+  it completely unmoved. If the daily swing is the same either side of the change,
+  the battery was always doing that work and only its reporting changed — which
+  means **your older figures were the wrong ones, not your new ones**. If the
+  swing changed too, the equipment really did change.
+
+  Found on a real installation whose battery meter began reporting five times more
+  throughput on one day. Its charge level had been swinging 42% a day before and
+  49% after: the battery had been doing the same work all along, and three weeks
+  of energy history had been understating it by about 13 kWh a day.
+
+  Without the sensor mapped, nothing changes — the note names both causes and
+  asserts neither, exactly as in 0.24.2.
+
 ## [0.24.2] - 2026-09-01
 
 ### Fixed

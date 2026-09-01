@@ -15,7 +15,15 @@ from __future__ import annotations
 
 import pytest
 from analysis.model import Answer, DeclaredTopology, LossModel, Role
-from analysis.regime import MIN_REGIME_DAYS, STEP_RATIO, find_latest_change, note_for
+from analysis.regime import (
+    MIN_REGIME_DAYS,
+    STEP_RATIO,
+    Cause,
+    RegimeChange,
+    attribute,
+    find_latest_change,
+    note_for,
+)
 from analysis.residual import build_days
 
 from tests.synth import house
@@ -197,8 +205,10 @@ class TestWhatTheUserIsTold:
         note = note_for(change, Role.BATTERY_CHARGE, days_since=11, window=14)
 
         assert "usually" not in note
-        assert "state-of-charge" in note
         assert "Either" in note
+        # And it points at the one reading that can settle it, which comes from
+        # the battery rather than from the meter that changed.
+        assert "charge level" in note
 
     def test_it_names_the_role_and_never_an_entity_id(self) -> None:
         """The first version passed `spec.friendly_name`, and on the reference
@@ -281,3 +291,126 @@ class TestTheEngineActsOnIt:
         report = self._report(house.build(days=30, seed=13))
 
         assert report.status is not Status.INSUFFICIENT_DATA
+
+
+class TestWhichCause:
+    """Telling a meter that started reporting from equipment that started doing.
+
+    The energy balance cannot do this. A meter that under-reports is exactly the
+    case where whatever it fails to say is still conserved and simply turns up as
+    residual, so every column is implicated and none is decisive. An earlier
+    attempt tried anyway and was withdrawn: the quantity it compared reduced
+    algebraically to ``pv + import - load - export``, blind to the battery it
+    claimed to measure.
+
+    State of charge settles it because it is not in the balance. It comes from
+    the battery management system, so a charge meter reading a fifth of the truth
+    leaves it completely unmoved. These tests are all about that one property.
+    """
+
+    def _setup(self, seed: int = 1):
+        series = _scale_after(
+            house.build(days=30, seed=seed), 19, 5.0, "battery_charge", "battery_discharge"
+        )
+        days, specs = _days(series)
+        change = find_latest_change(days, specs)
+        assert change is not None, "the step itself was not seen"
+        return days, specs, change
+
+    def _soc(self, days, change, before: list[float], after: list[float]):
+        """Daily swing percentages, cycled over each side of the boundary."""
+        out = {}
+        b = a = 0
+        for day in days:
+            if day.day < change.day:
+                out[day.day] = before[b % len(before)]
+                b += 1
+            else:
+                out[day.day] = after[a % len(after)]
+                a += 1
+        return out
+
+    def test_an_unchanged_charge_level_means_the_meter_changed(self) -> None:
+        """The reference installation's shape. Its meter's reported throughput
+        stepped 5.4x on one day while its charge level went on swinging 42% a day
+        before and 49% after -- so the battery was always doing this work."""
+        days, specs, change = self._setup()
+        soc = self._soc(days, change, [41.8], [49.0])
+
+        assert attribute(days, change, specs, soc) is Cause.REPORTING
+
+    def test_even_when_the_daily_swing_is_noisy(self) -> None:
+        """A real battery's depth varies with weather and use. The reference
+        installation ranges 17% to 65% within one unchanged regime, so a test
+        built on tidy constants would prove nothing about it."""
+        days, specs, change = self._setup(2)
+        soc = self._soc(
+            days, change, [17.2, 64.5, 41.8, 28.5, 59.4, 44.1], [33.5, 65.0, 47.0, 55.0, 39.0]
+        )
+
+        assert attribute(days, change, specs, soc) is Cause.REPORTING
+
+    def test_a_charge_level_that_starts_swinging_means_the_battery_changed(self) -> None:
+        """The opposite case, and the one the withdrawn version got wrong: a
+        battery that genuinely begins cycling."""
+        days, specs, change = self._setup(3)
+        soc = self._soc(days, change, [4.0, 6.0, 5.0], [48.0, 55.0, 41.0])
+
+        assert attribute(days, change, specs, soc) is Cause.BEHAVIOUR
+
+    def test_and_one_that_stops(self) -> None:
+        days, specs, change = self._setup(4)
+        soc = self._soc(days, change, [50.0, 60.0, 45.0], [5.0, 4.0, 6.0])
+
+        assert attribute(days, change, specs, soc) is Cause.BEHAVIOUR
+
+    def test_without_a_charge_level_sensor_it_declines(self) -> None:
+        """The common case: nobody has mapped one. The note then offers both
+        causes, which is what shipped in 0.24.2."""
+        days, specs, change = self._setup(5)
+
+        assert attribute(days, change, specs, {}) is Cause.UNDETERMINED
+
+    def test_an_ambiguous_ratio_is_left_alone(self) -> None:
+        """Between "the same" and "different" there is a deliberate gap, and
+        landing in it is an answer of its own."""
+        days, specs, change = self._setup(6)
+        soc = self._soc(days, change, [30.0], [50.0])  # 1.67x
+
+        assert attribute(days, change, specs, soc) is Cause.UNDETERMINED
+
+    def test_a_step_in_something_that_is_not_storage_is_not_guessed_at(self) -> None:
+        """Charge level says nothing about a generation or grid channel."""
+        days, specs, change = self._setup(7)
+        forged = RegimeChange(day=change.day, channel_key="pv", before_wh=1000.0, after_wh=9000.0)
+        soc = self._soc(days, forged, [41.8], [49.0])
+
+        assert attribute(days, forged, specs, soc) is Cause.UNDETERMINED
+
+    def test_too_few_days_of_charge_level_is_not_answered(self) -> None:
+        """Partial coverage is ordinary -- a sensor added last week has history
+        only from last week -- and two days a side is not a comparison."""
+        days, specs, change = self._setup(8)
+        full = self._soc(days, change, [41.8], [49.0])
+        sparse = {d.day: v for d, v in ((d, full[d.day]) for d in days) if d.day >= change.day}
+
+        assert attribute(days, change, specs, sparse) is Cause.UNDETERMINED
+
+    def test_the_note_says_which_and_which_way_it_matters(self) -> None:
+        _, _, change = self._setup(9)
+
+        note = note_for(change, Role.BATTERY_CHARGE, 11, 14, Cause.REPORTING)
+
+        assert "same work" in note
+        assert "before that were wrong" in note
+        # Says where the reading came from, because that is the whole argument.
+        assert "from the battery itself" in note
+        assert "Either" not in note
+
+    def test_and_the_other_way_round(self) -> None:
+        _, _, change = self._setup(10)
+
+        note = note_for(change, Role.BATTERY_CHARGE, 11, 14, Cause.BEHAVIOUR)
+
+        assert "different work" in note
+        assert "not how it reports" in note
