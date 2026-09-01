@@ -388,8 +388,21 @@ def fit_loss_model(
         # into generation, which the window accepts. That spurious 2.6% was
         # enough to break a tie and call the two banks a duplicate pair. Refit
         # without them and generation comes back at -0.068, refused as it should
-        # be. A house whose inverter really is metered on the DC side is
-        # unaffected: 0.0400 and 0.1000 both ways, to four decimals.
+        # be.
+        #
+        # The safety property is that a genuinely DC-metered inverter reads the
+        # same both ways — 0.0400 either side, on a house whose battery is
+        # lossless and whose pair is therefore refused, which is the only shape
+        # in which this branch runs at all. That claim used to sit here as prose
+        # checked once by hand; it is now `tests/analysis/test_loss_refit.py`,
+        # along with the trap above.
+        #
+        # Read that file before concluding this branch has broken something. A
+        # real installation was reported as its victim — +0.0403 with the columns
+        # and -0.0742 without — and the pattern is not the clean one (+0.0400
+        # both ways) but the contaminated one (+0.0323 then -0.0631). The
+        # accusation assumed the likeable number was the true one. Divergence
+        # here is the symptom this exists to find, not evidence against it.
         joint = joint_loss_fit(days, specs, with_battery=False) or joint
 
     def accepted(term: str, ceiling: float) -> float:
