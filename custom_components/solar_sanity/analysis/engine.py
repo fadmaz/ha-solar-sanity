@@ -12,7 +12,7 @@ only then — attribution.
 
 from __future__ import annotations
 
-from . import faults, hypotheses, screen, topology
+from . import faults, hypotheses, regime, screen, topology
 from .faults import Code
 from .hypotheses import MIN_HOURS_FOR_SNAP, Hypothesis
 from .linalg import median, pearson, sum_squares
@@ -292,10 +292,45 @@ def analyse(request: AnalysisRequest) -> AnalysisReport:
             residual=_summarise(provisional),
         )
 
+    # --- Is this still the same installation? --------------------------------
+    # Everything below assumes the window describes one system, and that
+    # assumption is invisible until it breaks. On the reference installation the
+    # battery's daily throughput stepped five-fold on one day; pooled across
+    # that, the joint loss fit returns 0.3125 and is refused, and fitted on the
+    # days after it alone returns 0.0400 — a 96% inverter, which is what that
+    # house is. See `regime.py`, which carries the numbers.
+    #
+    # Before the loss fit, because the loss fit is the first thing a pooled
+    # window ruins.
+    change = regime.find_latest_change(provisional, specs)
+    if change is not None:
+        provisional = tuple(day for day in provisional if day.day >= change.day)
+
     loss = topology.fit_loss_model(provisional, specs, request.loss_model)
     days = build_days(buckets, specs, loss, request.utc_offset_hours)
+    if change is not None:
+        days = tuple(day for day in days if day.day >= change.day)
     estimate = topology.infer(days, specs, request.declared, loss)
     summary = _summarise(days)
+
+    # A verdict needs a fortnight, and there is no way to have a fortnight of
+    # evidence about a system that is eleven days old. Saying so costs the user
+    # a wait; the alternative costs them an answer about a house that no longer
+    # exists, which is what shipped before this.
+    if change is not None and len(days) < VERDICT_WINDOW:
+        spec = request.spec(change.channel_key)
+        return AnalysisReport(
+            status=Status.INSUFFICIENT_DATA,
+            reason=regime.note_for(
+                change,
+                spec.friendly_name if spec is not None else change.channel_key,
+                len(days),
+                VERDICT_WINDOW,
+            ),
+            topology=estimate,
+            loss_model=loss,
+            residual=summary,
+        )
 
     if len(days) < MIN_DAYS_OF_DATA:
         return AnalysisReport(

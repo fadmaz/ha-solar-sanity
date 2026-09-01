@@ -2,6 +2,34 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.24.0] - 2026-09-01
+
+### Added
+
+- **Solar Sanity now notices when your installation stops being the same
+  installation.** If a channel's daily throughput steps up or down sharply and
+  stays there — the usual cause is a settings change, such as starting to charge
+  the battery from the grid overnight — everything is measured from that day
+  onwards instead of being averaged across it.
+
+  While the new arrangement is younger than a fortnight you will get a note
+  saying what changed, when, and how long until a full verdict, rather than a
+  verdict. That is a real wait, and it is the honest answer: there is no way to
+  have fourteen days of evidence about a system that is eleven days old.
+
+  Found on a real installation, where it mattered twice. Averaged across the
+  change, the loss model could not fit the inverter at all — the coefficient
+  came out at 0.31, which no window accepts. Measured on the days after it, the
+  same model returns 0.04, an ordinary 96%-efficient inverter. And the report
+  had been saying "nearly all of it cancels out by the end of each day", which
+  was true of the month as a whole and much less true of how that house had
+  actually been running for the previous eleven days.
+
+  Deliberately hard to trigger: every day on one side of the change has to be
+  clear of every day on the other by a factor of two. Seasonal drift does not
+  qualify, and neither does a busy week. All 3,000 synthetic installations in
+  the test corpus are unaffected.
+
 ## [0.23.0] - 2026-08-31
 
 ### Added
