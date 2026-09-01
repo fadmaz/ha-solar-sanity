@@ -104,6 +104,22 @@ def _channel_schema(discovery: Discovery, current: dict[str, str]) -> vol.Schema
         default = current.get(role.key) or discovery.suggestion(role)
         key = vol.Optional(role.key, description={"suggested_value": default})
         fields[key] = _entity_selector()
+
+    # State of charge, last and optional, but *here* rather than only in the
+    # options. It shipped in the options alone and the first person to use it
+    # went looking in the wizard, beside the two battery channels, which is
+    # where somebody mapping a battery obviously expects to be asked about it.
+    # Being reachable only after setup made it something you had to already know
+    # existed.
+    #
+    # Not a channel and never in `CONF_CHANNELS`: it is a level in percent
+    # rather than a flow in watt-hours, and it takes no part in the balance. It
+    # is stored in options, which is also where reconfigure keeps it.
+    fields[
+        vol.Optional(OPT_BATTERY_SOC, description={"suggested_value": current.get(OPT_BATTERY_SOC)})
+    ] = selector.EntitySelector(
+        selector.EntitySelectorConfig(domain="sensor", device_class="battery")
+    )
     return vol.Schema(fields)
 
 
@@ -221,6 +237,7 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
         self._channels: dict[str, str] = {}
         self._suggested: dict[str, str] = {}
         self._overlap: Overlap | None = None
+        self._battery_soc: str | None = None
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Map channels, pre-filled from the Energy Dashboard where possible."""
@@ -231,7 +248,10 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            self._channels = {key: value for key, value in user_input.items() if value}
+            self._channels = {
+                key: value for key, value in user_input.items() if value and key != OPT_BATTERY_SOC
+            }
+            self._battery_soc = user_input.get(OPT_BATTERY_SOC) or None
             duplicate = _duplicate_entity(self._channels)
             if Role.LOAD.key not in self._channels:
                 # Without consumption the identity closes by definition and the
@@ -305,6 +325,11 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                     ],
                     **_topology_values(user_input, self._channels),
                 },
+                options=(
+                    # Options, not data: it is not a channel and reconfigure
+                    # must be able to change it without rewriting the mapping.
+                    {OPT_BATTERY_SOC: self._battery_soc} if self._battery_soc else {}
+                ),
             )
 
         providers = await async_forecast_providers(self.hass)
@@ -326,9 +351,19 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
             channel[CONF_ROLE]: channel[CONF_ENTITY_ID]
             for channel in entry.data.get(CONF_CHANNELS, [])
         }
+        # So the field arrives pre-filled rather than looking unset.
+        if soc := entry.options.get(OPT_BATTERY_SOC):
+            current[OPT_BATTERY_SOC] = soc
 
         if user_input is not None:
-            channels = {key: value for key, value in user_input.items() if value}
+            # Kept out of the channels: it is not a role, and letting it through
+            # would write `battery_soc_entity` into CONF_CHANNELS as though it
+            # were one, where `_channel_records` would then look up a Role that
+            # does not exist.
+            channels = {
+                key: value for key, value in user_input.items() if value and key != OPT_BATTERY_SOC
+            }
+            self._battery_soc = user_input.get(OPT_BATTERY_SOC) or None
             error = None
             if Role.LOAD.key not in channels:
                 error = "load_required"
@@ -374,6 +409,16 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reconfigure_entry()
 
         if user_input is not None:
+            # `options` REPLACES rather than merges, and there is no
+            # `options_updates` — checked against the 2026.2.3 source after
+            # writing one that does not exist. Every local test still passed,
+            # because the integration suite needs Home Assistant and does not
+            # run here. So the merge happens explicitly, and clearing the field
+            # genuinely clears it rather than being quietly ignored.
+            options = {k: v for k, v in entry.options.items() if k != OPT_BATTERY_SOC}
+            if self._battery_soc:
+                options[OPT_BATTERY_SOC] = self._battery_soc
+
             return self.async_update_reload_and_abort(
                 entry,
                 data_updates={
@@ -382,6 +427,7 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                     ),
                     **_topology_values(user_input, self._channels),
                 },
+                options=options,
             )
 
         providers = await async_forecast_providers(self.hass)

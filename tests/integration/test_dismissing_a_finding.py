@@ -12,12 +12,20 @@ capability the code implies and the user cannot reach.
 
 from __future__ import annotations
 
+from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.config_flow import _readable
-from custom_components.solar_sanity.const import DOMAIN, OPT_BATTERY_SOC, OPT_SUPPRESSED
+from custom_components.solar_sanity.const import (
+    CONF_CHANNELS,
+    CONF_ENTITY_ID,
+    CONF_ROLE,
+    DOMAIN,
+    OPT_BATTERY_SOC,
+    OPT_SUPPRESSED,
+)
 
 
 async def _loaded(hass: HomeAssistant, entry: MockConfigEntry):
@@ -142,3 +150,55 @@ async def test_no_charge_level_mapped_means_no_swing_and_no_error(
     coordinator = entry.runtime_data.coordinator
 
     assert await coordinator._async_soc_swing() == {}
+
+
+async def test_the_wizard_offers_the_charge_level_not_only_the_options(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+) -> None:
+    """It shipped in the options alone and the first person to use it went
+    looking in the wizard, beside the two battery channels — which is where
+    somebody mapping a battery expects to be asked. Reachable only afterwards
+    made it something you had to already know existed."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert OPT_BATTERY_SOC in str(result["data_schema"].schema)
+
+
+async def test_reconfigure_keeps_it_out_of_the_channels(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry: MockConfigEntry,
+) -> None:
+    """It is not a role. Letting it through would write `battery_soc_entity`
+    into the channel list as though it were one, and `_channel_records` would
+    then look up a Role that does not exist.
+
+    This also covers the write itself: `async_update_reload_and_abort` takes
+    `options`, which REPLACES, and has no `options_updates` — the first version
+    called one that does not exist and every test still passed, because none of
+    them went down this path.
+    """
+    entry = await _loaded(hass, entry)
+    before = {c[CONF_ROLE] for c in entry.data[CONF_CHANNELS]}
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    assert OPT_BATTERY_SOC in str(result["data_schema"].schema)
+
+    channels = {c[CONF_ROLE]: c[CONF_ENTITY_ID] for c in entry.data[CONF_CHANNELS]}
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {**channels, OPT_BATTERY_SOC: "sensor.battery_level"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+
+    assert entry.options[OPT_BATTERY_SOC] == "sensor.battery_level"
+    assert {c[CONF_ROLE] for c in entry.data[CONF_CHANNELS]} == before
