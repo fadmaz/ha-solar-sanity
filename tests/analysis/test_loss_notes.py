@@ -5,9 +5,10 @@ it away on the one verdict most people ever see. A healthy installation got the
 word OK and nothing else, while the analysis behind it had measured a continuous
 draw nobody's sensors account for.
 
-Only the standby term is spoken. Copy exists for the two DC terms as well and is
-deliberately still silent — see `TestTheDcNotesStaySilent` for the measurements
-that decided it.
+All three terms are spoken. The two DC notes were held back while the fit could
+not tell a conversion loss from a continuous draw it would have been reassuring
+about; separating the two directions of the battery settled that, and
+`TestTheDcNotesAreSpokenNow` holds the measurements that decided it.
 """
 
 from __future__ import annotations
