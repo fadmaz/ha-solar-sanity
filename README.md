@@ -88,11 +88,14 @@ in the house accounts for. If there is one you are told — *"About 35 W flows
 continuously that nothing measures"* — and the figures behind every verdict,
 including `ok`, are in the diagnostics download.
 
-The two conversion-loss notes are written and deliberately still silent. Their
-wording says a few per cent of loss is normal and there is nothing to fix, and
-the fit cannot yet tell that apart from a continuous draw you are paying for —
-so on the present evidence they would sometimes be reassurance about a real
-problem, and silence is the safer half of that trade.
+**And it says what it assumed.** The loss model subtracts three things before any
+test runs — a generation sensor reading before the inverter, a battery metered on
+its DC side, a continuous unmetered draw — and each one is a note saying what was
+taken and what it was taken to mean. Quiet absorption was never the cautious
+option; it is the one where a wrong assumption never surfaces. The generation
+note gives the figure both ways round, because a sensor a twentieth of whose
+reading never arrives is a sensor reading a nineteenth high, and nothing in the
+data can tell those apart.
 
 **Five honest answers, not two:** `ok`, `insufficient_data`, `not_checkable`,
 `investigating`, `fault_found`. Most systems are `insufficient_data` on day one
@@ -157,13 +160,21 @@ a nowcast. Scoring that would flatter every provider equally and mean nothing.
 Capture starts the moment you install the integration. It is the one thing in
 the product that cannot be backfilled later.
 
-**Scoring is not shipped yet.** The engine that decides whether a bias figure has
-been earned is written and tested, and its default answer is no: twenty-one
-comparable days across at least twenty-eight, spread across the window, stable
-under a split-half test, uncorrelated with the size of the day and not drifting.
-Only then a magnitude gate — and every threshold widens by 1.6 when generation
-comes from hourly means, so some installations will never qualify. That is the
-correct outcome rather than a reason to lower a constant.
+**Scoring ships, and it usually says nothing.** Each configured provider gets an
+accuracy sensor comparing what it said the day before against what your roof then
+produced — signed the way you would read it, so negative means the system produced
+less than promised. A second sensor moves tomorrow's figure by that bias once
+there is a correction worth applying, and a `rescore_forecasts` service answers on
+demand rather than at the next six-hour cycle.
+
+The default answer is still no. Twenty-one comparable days across at least
+twenty-eight, spread across the window, stable under a split-half test,
+uncorrelated with the size of the day and not drifting. Only then a magnitude
+gate — and every threshold widens by 1.6 when generation comes from hourly means,
+so some installations will never qualify. Until it is earned the sensor reads
+unknown and its `reason` says which of those it is waiting for. A figure it will
+not stand behind is not shown at all, and that is the correct outcome rather than
+a reason to lower a constant.
 
 ---
 
@@ -280,9 +291,11 @@ They exist because one uncorrected fault masks every other one.
 | --- | --- |
 | `sensor.*_status` | One of the five outcomes. Never a percentage. Its attributes carry the reason, the finding, and any notes |
 | `binary_sensor.*_data_problem` | On when something needs attention — including when the identity provably fails but no single sensor can be blamed |
-| `sensor.*_expected_tomorrow` | Tomorrow's forecast — with a `state_class`, so it is actually recorded |
+| `sensor.*_forecast_tomorrow` | Tomorrow's forecast — with a `state_class`, so it is actually recorded |
+| `sensor.*_expected_tomorrow_corrected` | The same figure moved by the bias measured against your own roof. Empty until there is a correction worth applying |
+| `sensor.*_<provider>_accuracy` | One per configured provider: how close it has been, signed so negative means less than promised. Unknown until it is earned |
 | `sensor.*_data_completeness` | How much of the picture exists right now |
-| `sensor.*_corrections_active` | Diagnostic overrides in effect |
+| `sensor.*_corrections_in_effect` | Diagnostic overrides in effect |
 | `sensor.*_live_residual` | Instantaneous imbalance, in watts. Only created when every channel reports a rate |
 
 **Download diagnostics** on the device page is the fastest way to understand a
@@ -302,12 +315,16 @@ export meter states the one thing nobody can know without one.
 ## Development
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest tests -q       # 887 tests
+pip install -r requirements-dev.txt   # Python 3.13; without it the Home Assistant tier is skipped
 npm ci
-npm test                        # 104 card tests
-npm run build
+python scripts/check.py               # every gate in the order CI needs them
 ```
+
+That one command runs ruff, the TypeScript typecheck, the Python suite, the card
+build, the card tests and the bundle size budget, and stops at the first failure.
+`--slow` adds the full corpus. The pieces are `python -m pytest tests -q` (1,791
+tests locally, 2,028 on CI where Home Assistant is installed), `npm test` (130
+card tests) and `npm run build`.
 
 The analysis engine imports nothing from Home Assistant and is tested with
 plain pytest. That is enforced structurally rather than by convention — an AST
@@ -316,9 +333,12 @@ imports, on currency language in user-facing copy, on `or 0` fallbacks, and on
 anything non-deterministic. The currency check covers the cards and the
 translations too, not only the Python.
 
-The clean-house suite is a **gate, not a test**: 98 healthy scenarios across
-topologies, noise levels and seasons, every one asserting silence. It must be
-green before any threshold anywhere is changed.
+The clean-house suite is a **gate, not a test**: healthy scenarios across
+topologies, loss profiles, noise levels, seasons and dropouts, every one
+asserting silence. 600 of them run on every push; the full 3,000 run on main and
+on the weekly schedule, and that is the run which catches a false accusation only
+one seed in ten produces. It must be green before any threshold anywhere is
+changed.
 
 ## Brand assets
 
