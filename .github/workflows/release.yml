@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      EVENT: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -30,13 +31,29 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Stamp the version
+      - name: Check the tag against the committed manifest, and stamp
         run: |
           python - <<'PY'
-          import json, os, pathlib
+          import json, os, pathlib, sys
+          # The release pull request bumps the manifest itself and
+          # tests/test_release_contract.py fails it when that is skipped, so on
+          # a tag cut from current main these never differ. When they do, the
+          # tag and the repository disagree about what was released and the zip
+          # would be the only correct copy — which is exactly how the drift from
+          # v0.22.0 to v0.25.1 ran unnoticed. A published release is therefore a
+          # hard stop, at the one place a typed tag can ever be checked.
+          #
+          # A workflow_dispatch retry is not, because re-running one of those
+          # seven drift-era tags legitimately finds 0.21.1 in its tree.
           tag = os.environ["TAG"].lstrip("v")
           path = pathlib.Path("custom_components/solar_sanity/manifest.json")
           manifest = json.loads(path.read_text())
+          committed = manifest["version"]
+          if committed != tag:
+              print(f"::error::committed manifest says {committed}, tag says {tag}")
+              if os.environ["EVENT"] == "release":
+                  sys.exit(1)
+              print("::warning::stamping anyway for a workflow_dispatch retry")
           manifest["version"] = tag
           path.write_text(json.dumps(manifest, indent=2) + "\n")
           print(f"stamped manifest version {tag}")
@@ -46,11 +63,11 @@ jobs:
         run: |
           # Ordered deliberately. `__SS_VERSION__` is replaced at build time
           # from the manifest, so building first produced a card stamped with
-          # whatever the *previous* release said. Every release so far has been
-          # correct only because the release commit happens to bump the
-          # manifest by hand before the tag is pushed — a tag without that
-          # commit would have shipped a card lying about its own version, and
-          # the lie would be visible to users and to nobody testing.
+          # whatever the *previous* release said. Correct until v0.22.0 because
+          # the release commit bumped the manifest by hand, and from v0.22.0 to
+          # v0.25.1 only because the previous step overwrote it first. The hand
+          # bump is back, guarded at pull-request time and again above, so the
+          # version this build reads is the version on the tag.
           npm ci
           npm run build
 

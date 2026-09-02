@@ -28,7 +28,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .analysis.model import Role
-from .const import CONF_GUARANTEED_ANNUAL_KWH
+from .const import OPT_GUARANTEED_ANNUAL_KWH
 from .statistics_source import async_energy_between
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,8 +77,13 @@ async def async_yield_against_promise(
     question that cannot be answered rather than an answer of nought, and the
     difference matters here more than usual — the wrong one is a number somebody
     telephones an installer about.
+
+    Read from ``entry.options``, which is where the options flow writes and
+    therefore the only place a user can put it. This read was ``entry.data``
+    from the day the check shipped, so it answered ``None`` for everybody and
+    ``None`` was indistinguishable from having configured nothing.
     """
-    promised = coordinator.entry.data.get(CONF_GUARANTEED_ANNUAL_KWH)
+    promised = coordinator.entry.options.get(OPT_GUARANTEED_ANNUAL_KWH)
     if not isinstance(promised, (int, float)) or promised <= 0:
         return None
 

@@ -2,6 +2,56 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.26.0] - 2026-09-02
+
+### Changed
+
+- **Home Assistant 2025.11 or newer is now required.** The declared minimum was
+  2025.1, and the integration could never have run there. Two things stop it: the
+  options page is built on a class Home Assistant added in 2025.8, so below that
+  the integration fails to load at all; and the forecast archive is written with
+  metadata the recorder had no column for until 2025.11, so on anything older the
+  first write of each provider's series raises inside the recorder and the archive
+  is silently never created.
+
+  That archive is the one record this integration cannot rebuild later, which is
+  why the floor moves to where it always actually was rather than to where the
+  first failure happens. HACS will no longer offer the integration below 2025.11,
+  and CI now runs the whole suite against that version as well as the newest — the
+  declared minimum had never been executed once.
+
+### Fixed
+
+- **The guaranteed annual production figure never reached the check.** It was
+  saved where the settings page puts it and looked for somewhere else, so a figure
+  you typed in did nothing, and said nothing about doing nothing. Anything already
+  typed in starts working on upgrade; there is nothing to do.
+
+- **A figure typed into settings by mistake can now be taken back.** Clearing a
+  field on the settings page put the old value straight back. This affected the
+  battery charge level too, which the setup wizard already handled correctly and
+  the settings page did not.
+
+### Removed
+
+- **Two editor fields that did nothing.** The status card's editor offered a
+  Title and a "Show the numbers behind the verdict" switch, and the card has never
+  read either. There is no heading for a title to go in, because the headline is
+  the verdict, and the status entity publishes no measured figures to show: what
+  it carries is the verdict, its explanation and the notes beside it. The numbers
+  are on the other sensors and the full workings are in the diagnostics download.
+
+  A dashboard whose YAML already carries either key is unaffected. The card
+  ignored them before and ignores them now.
+
+### Internal
+
+- The committed version is bumped in the release pull request again, and two
+  tests hold it there: one fails the pull request when the manifest and the newest
+  changelog entry disagree, one fails the release when the manifest and the tag
+  disagree. From 0.22.0 to 0.25.1 the committed version sat four releases behind
+  and was correct only inside the released zips.
+
 ## [0.25.1] - 2026-09-01
 
 ### Fixed

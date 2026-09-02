@@ -40,13 +40,13 @@ from .const import (
     CONF_ENTITY_ID,
     CONF_FORECAST_ENTRIES,
     CONF_GRID_IS_NET,
-    CONF_GUARANTEED_ANNUAL_KWH,
     CONF_HAS_BATTERY,
     CONF_LOAD_WHOLE_HOUSE,
     CONF_ORIGIN,
     CONF_ROLE,
     DOMAIN,
     OPT_BATTERY_SOC,
+    OPT_GUARANTEED_ANNUAL_KWH,
     OPT_SUPPRESSED,
 )
 from .discovery import Discovery, async_discover
@@ -457,11 +457,39 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
     """Options. No ``__init__``, and ``config_entry`` is read-only now."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if user_input is not None:
-            return self.async_create_entry(data={**self.config_entry.options, **user_input})
+        fields = self._fields()
 
+        if user_input is not None:
+            # Merge, then drop what was offered and left blank. `vol.Optional`
+            # omits a cleared field rather than sending an empty one, so a plain
+            # `{**options, **user_input}` puts the old value straight back and a
+            # figure typed by mistake could never be removed — the same trap
+            # reconfigure escapes by dropping the key first.
+            #
+            # Only keys this form actually rendered are touched. `corrections`
+            # is written by Repairs and is never a row here, and the suppressed
+            # list is a row only on a house that has seen a finding; a naive
+            # `data=user_input` would erase both.
+            options = dict(self.config_entry.options)
+            for marker in fields:
+                name = marker.schema
+                if user_input.get(name) in (None, "", []):
+                    options.pop(name, None)
+                else:
+                    options[name] = user_input[name]
+            return self.async_create_entry(data=options)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(fields), self.config_entry.options
+            ),
+        )
+
+    def _fields(self) -> dict[Any, Any]:
+        """The rows this form offers, which is also the set it may clear."""
         fields: dict[Any, Any] = {
-            vol.Optional(CONF_GUARANTEED_ANNUAL_KWH): selector.NumberSelector(
+            vol.Optional(OPT_GUARANTEED_ANNUAL_KWH): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0,
                     max=100000,
@@ -494,12 +522,7 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
                 )
             )
 
-        return self.async_show_form(
-            step_id="init",
-            data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(fields), self.config_entry.options
-            ),
-        )
+        return fields
 
     def _dismissible_codes(self) -> list[str]:
         """Findings this installation has actually seen, plus anything already off.

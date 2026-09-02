@@ -36,6 +36,38 @@ jobs:
       - name: Run the suite
         run: python -m pytest tests -q
 
+  tests-floor:
+    name: Tests (declared floor)
+    # The version hacs.json declares, which until now was never executed once:
+    # requirements-dev.txt pins the newest harness that resolves on 3.13, which
+    # is Home Assistant 2026.2.3, so the floor was a number in a file and
+    # nothing else. It was 2025.1.0 and the integration could not start there.
+    #
+    # 0.13.294 hard-pins homeassistant==2025.11.0, with pytest 8.4.2 and
+    # pytest-asyncio 1.2.0 under it, so it is installed alone rather than on top
+    # of requirements-dev.txt, which would install a newer set and then
+    # downgrade three of them.
+    #
+    # Move this pin whenever hacs.json's floor moves; the collection guard reads
+    # that file, so the two cannot silently disagree.
+    #
+    # `pycares<5` is not ours either. Home Assistant 2025.11 brings aiodns
+    # 3.5.0, which calls `pycares.ares_query_a_result`; pycares 5 removed it, so
+    # an unconstrained install fails at `import aiohttp` before a single test
+    # runs. The newest Home Assistant escapes it only by bringing an aiodns that
+    # does not. Pinning back is what reproduces the environment a 2025.11 user
+    # actually had. Expect more of these as the floor ages: that is the cost of
+    # testing an old version, and it is cheaper than not testing it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install "pytest-homeassistant-custom-component==0.13.294" "pycares<5"
+      - name: The suite, at the minimum this repository promises
+        run: python -m pytest tests -q
+
   corpus:
     name: Clean corpus
     # The full 3,000-scenario healthy-house corpus. Not on pull requests: they
