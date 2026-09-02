@@ -205,3 +205,25 @@ def least_squares(
         total = normal[i][width] - sum(normal[i][j] * solved[j] for j in range(i + 1, width))
         solved[i] = total / normal[i][i]
     return [value / scale for value, scale in zip(solved, scales, strict=True)]
+
+
+def project_out(columns: Sequence[Sequence[float]], target: Sequence[float]) -> list[float] | None:
+    """``target`` with its least-squares projection on ``columns`` removed.
+
+    The companion to ``least_squares`` for a fit that has one parameter it cares
+    about and several it does not. Removing the nuisance columns from every
+    vector once, before the parameter of interest is looked at, gives the same
+    coefficient and the same squared error as fitting everything together —
+    exactly, not approximately.
+
+    ``None`` for the same reason ``least_squares`` returns it, and it matters
+    for the same reason: a projection that could not be computed is not a
+    projection onto nothing.
+    """
+    coefficients = least_squares(columns, target)
+    if coefficients is None:
+        return None
+    return [
+        value - sum(c * column[row] for c, column in zip(coefficients, columns, strict=True))
+        for row, value in enumerate(target)
+    ]

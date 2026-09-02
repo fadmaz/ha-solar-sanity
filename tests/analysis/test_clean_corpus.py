@@ -135,16 +135,29 @@ class TestTheBoundaryOfWhatCanBeAbsorbed:
     so that the day the boundary moves, the failure says so rather than letting
     it move unnoticed.
 
-    It has moved once already. It was at 0.91, for a reason that turned out to
-    be a defect rather than a policy: the two directions of a DC battery lose
+    It has moved twice. It was at 0.91, for a reason that turned out to be a
+    defect rather than a policy: the two directions of a DC battery lose
     different fractions, and fitting one coefficient against the sum of their
     magnitudes returned a blend of the two — always above the smaller. At 0.90
     the discharge coefficient is exactly 0.1000, exactly what the window admits,
     while the blend was 0.1057, which it does not. Fitting the directions apart
     put the boundary where the window always said it was.
+
+    It then moved from 0.90 to 0.80, and this time because the estimator changed
+    rather than because a defect was removed from the old one. The pair is one
+    parameter, not two, so it is now measured on the hours generation cannot
+    reach: charging *is* the surplus, so the dark hours contain none of it, the
+    column that made the day fit collinear is identically zero there, and there
+    are no two coefficients left to trade. What used to be a noise-to-signal
+    ratio of 1.3 is 0.10. The limit now is the acceptance band rather than the
+    estimator — at 0.75 the slope still measures the truth to four thousandths
+    and is refused because a battery below 0.80 round trip is worth telling
+    somebody about.
     """
 
-    @pytest.mark.parametrize("efficiency", [0.98, 0.96, 0.94, 0.92, 0.91, 0.90])
+    @pytest.mark.parametrize(
+        "efficiency", [0.98, 0.96, 0.94, 0.92, 0.91, 0.90, 0.89, 0.88, 0.85, 0.82]
+    )
     @pytest.mark.parametrize("seed", range(4))
     def test_down_to_here_the_loss_is_absorbed(self, efficiency: float, seed: int) -> None:
         report = _dc_battery(efficiency, seed=seed)
@@ -154,7 +167,25 @@ class TestTheBoundaryOfWhatCanBeAbsorbed:
             f"{report.residual.median_daily_abs_pct:.2f}%"
         )
 
-    @pytest.mark.parametrize("efficiency", [0.89, 0.88, 0.85])
+    @pytest.mark.parametrize("efficiency", [0.80])
+    @pytest.mark.parametrize("seed", range(4))
+    def test_at_the_very_edge_the_answer_may_go_either_way(
+        self, efficiency: float, seed: int
+    ) -> None:
+        """0.20 is the ceiling exactly, so noise decides which side a seed lands.
+
+        Clean data recovers 0.2000 and the house is answered; at 5% meter noise
+        the same house measures 0.1993 to 0.2049 and some seeds fall out of
+        band. What must hold on both sides of that coin is that nothing is
+        blamed, which is why this asserts the finding and not the status.
+        """
+        report = _dc_battery(efficiency, seed=seed)
+
+        assert report.finding is None, (
+            f"eff={efficiency} seed={seed}: a healthy DC battery was blamed — {report.finding.code}"
+        )
+
+    @pytest.mark.parametrize("efficiency", [0.78, 0.75])
     @pytest.mark.parametrize("seed", range(4))
     def test_below_it_a_healthy_house_gets_no_verdict(self, efficiency: float, seed: int) -> None:
         """A known limitation, pinned. **This failing is good news.**
@@ -164,6 +195,10 @@ class TestTheBoundaryOfWhatCanBeAbsorbed:
         What must never happen is the status becoming ``FAULT_FOUND``: that
         would be the engine blaming a working installation for the efficiency
         of its own battery, which is the one outcome worse than silence.
+
+        Below 0.80 the slope is still right — it measures 0.75 to four
+        thousandths — and is refused by `DC_BATTERY_GAMMA_WINDOW` on purpose.
+        Moving this boundary again is a decision about that band, not a fix.
         """
         report = _dc_battery(efficiency, seed=seed)
 
