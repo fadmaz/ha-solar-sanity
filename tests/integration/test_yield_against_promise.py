@@ -19,9 +19,14 @@ from unittest.mock import patch
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.solar_sanity.const import CONF_GUARANTEED_ANNUAL_KWH, DOMAIN
+from custom_components.solar_sanity.const import (
+    DOMAIN,
+    OPT_CORRECTIONS,
+    OPT_GUARANTEED_ANNUAL_KWH,
+)
 from custom_components.solar_sanity.yield_check import (
     YEAR_DAYS,
     YieldAgainstPromise,
@@ -39,10 +44,15 @@ async def _coordinator(hass: HomeAssistant, entry: MockConfigEntry):
 
 
 def _entry(entry_data: dict, *, promised: float | None = PROMISED) -> MockConfigEntry:
-    data = dict(entry_data)
+    """Seeded into ``options``, which is the only store a user can write.
+
+    Seeding ``data`` is what kept this suite green while the feature could not
+    be switched on at all.
+    """
+    options: dict = {}
     if promised is not None:
-        data[CONF_GUARANTEED_ANNUAL_KWH] = promised
-    return MockConfigEntry(domain=DOMAIN, data=data)
+        options[OPT_GUARANTEED_ANNUAL_KWH] = promised
+    return MockConfigEntry(domain=DOMAIN, data=dict(entry_data), options=options)
 
 
 def _energy(*, year: float, oldest_month: float = 400.0):
@@ -153,6 +163,87 @@ class TestItRefuses:
             unanswerable,
         ):
             assert await async_yield_against_promise(hass, coordinator) is None
+
+
+class TestItReachesTheUser:
+    """The only path a user has, driven end to end.
+
+    Everything above seeds the figure into the entry directly, which is what let
+    the feature ship, be documented and be tested while nobody could switch it
+    on: the flow wrote ``entry.options`` and the check read ``entry.data``, and
+    the miss was silent because ``None`` also means "no guarantee configured".
+    """
+
+    async def test_a_figure_typed_into_the_options_is_what_gets_compared(
+        self, hass: HomeAssistant, enable_custom_integrations: None, entry_data: dict
+    ) -> None:
+        entry = MockConfigEntry(domain=DOMAIN, data=dict(entry_data))
+        coordinator = await _coordinator(hass, entry)
+        assert entry.options.get(OPT_GUARANTEED_ANNUAL_KWH) is None
+
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        done = await hass.config_entries.options.async_configure(
+            result["flow_id"], {OPT_GUARANTEED_ANNUAL_KWH: PROMISED}
+        )
+        await hass.async_block_till_done()
+
+        assert done["type"] is FlowResultType.CREATE_ENTRY
+        assert entry.options[OPT_GUARANTEED_ANNUAL_KWH] == PROMISED
+
+        with patch(
+            "custom_components.solar_sanity.yield_check.async_energy_between",
+            _energy(year=5400.0),
+        ):
+            note = await async_yield_against_promise(hass, coordinator)
+
+        assert note is not None, "the options flow is the only way in, and it did not arrive"
+        assert note.promised_kwh == pytest.approx(PROMISED)
+
+    async def test_a_figure_typed_by_mistake_can_be_taken_back(
+        self, hass: HomeAssistant, enable_custom_integrations: None, entry_data: dict
+    ) -> None:
+        """A blanked ``vol.Optional`` is absent from ``user_input``, so a plain
+        merge puts the old number back. Now that the check reads this store, a
+        mistyped figure would otherwise be a note nobody could switch off.
+        """
+        entry = MockConfigEntry(
+            domain=DOMAIN, data=dict(entry_data), options={OPT_GUARANTEED_ANNUAL_KWH: PROMISED}
+        )
+        coordinator = await _coordinator(hass, entry)
+
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        await hass.config_entries.options.async_configure(result["flow_id"], {})
+        await hass.async_block_till_done()
+
+        assert OPT_GUARANTEED_ANNUAL_KWH not in entry.options
+
+        with patch(
+            "custom_components.solar_sanity.yield_check.async_energy_between",
+            _energy(year=5400.0),
+        ):
+            assert await async_yield_against_promise(hass, coordinator) is None
+
+    async def test_clearing_a_field_leaves_settings_the_form_never_offered(
+        self, hass: HomeAssistant, enable_custom_integrations: None, entry_data: dict
+    ) -> None:
+        """``corrections`` is written by Repairs and is never a row on this form.
+        Whatever the form does with blanks, it must not reach a key it never
+        showed.
+        """
+        corrections = [{"code": "grid_export_sign", "kind": "sign_flip"}]
+        entry = MockConfigEntry(
+            domain=DOMAIN, data=dict(entry_data), options={OPT_CORRECTIONS: corrections}
+        )
+        await _coordinator(hass, entry)
+
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        await hass.config_entries.options.async_configure(
+            result["flow_id"], {OPT_GUARANTEED_ANNUAL_KWH: PROMISED}
+        )
+        await hass.async_block_till_done()
+
+        assert entry.options[OPT_CORRECTIONS] == corrections
+        assert entry.options[OPT_GUARANTEED_ANNUAL_KWH] == PROMISED
 
 
 class TestItReachesTheCard:

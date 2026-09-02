@@ -25,10 +25,19 @@ CONF_GRID_IS_NET: Final = "grid_is_net"
 CONF_LOAD_WHOLE_HOUSE: Final = "load_whole_house"
 
 CONF_FORECAST_ENTRIES: Final = "forecast_entries"
-CONF_GUARANTEED_ANNUAL_KWH: Final = "guaranteed_annual_kwh"
 
 OPT_CORRECTIONS: Final = "corrections"
 OPT_SUPPRESSED: Final = "suppressed_codes"
+#: The annual figure the installer promised, compared against a full year of
+#: production. An option rather than configuration: it is typed after setup,
+#: changed at any time, and takes no part in the mapping.
+#:
+#: It was named ``CONF_`` and read from ``entry.data`` while the only thing that
+#: could write it was the options flow, which writes ``entry.options``. So the
+#: check returned ``None`` for every real installation, and ``None`` is also
+#: what "no guarantee configured" returns. The prefix is not decoration here,
+#: it is the store.
+OPT_GUARANTEED_ANNUAL_KWH: Final = "guaranteed_annual_kwh"
 #: Entity id of a battery state-of-charge sensor. Optional, and not a channel:
 #: it is a level in percent rather than a flow in watt-hours, and its value is
 #: that it sits outside the energy balance entirely.

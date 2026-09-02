@@ -90,26 +90,29 @@ class TestConfigFlowSchemas:
             selector.selector({"config_entry": {"multiple": True}})
 
     def test_options_schema_builds(self) -> None:
-        """The options flow has never been exercised by a user."""
+        """The real form, not a copy of it.
+
+        This test used to rebuild the schema inside itself and assert the key was
+        in the copy, which is true however the flow is written. The flow wrote the
+        guarantee to ``entry.options`` while the check read ``entry.data``, and a
+        test shaped like that cannot see it. It now builds what the flow builds.
+        """
+        from types import SimpleNamespace
+
         import voluptuous as vol
-        from homeassistant.helpers import selector
 
-        from custom_components.solar_sanity.const import CONF_GUARANTEED_ANNUAL_KWH
-
-        schema = vol.Schema(
-            {
-                vol.Optional(CONF_GUARANTEED_ANNUAL_KWH): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        max=100000,
-                        step=1,
-                        mode=selector.NumberSelectorMode.BOX,
-                        unit_of_measurement="kWh",
-                    )
-                ),
-            }
+        from custom_components.solar_sanity.config_flow import SolarSanityOptionsFlow
+        from custom_components.solar_sanity.const import (
+            OPT_BATTERY_SOC,
+            OPT_GUARANTEED_ANNUAL_KWH,
         )
-        assert CONF_GUARANTEED_ANNUAL_KWH in _schema_keys(schema)
+
+        stub = SimpleNamespace(config_entry=SimpleNamespace(options={}, runtime_data=None))
+        schema = vol.Schema(SolarSanityOptionsFlow._fields(stub))
+
+        keys = _schema_keys(schema)
+        assert OPT_GUARANTEED_ANNUAL_KWH in keys
+        assert OPT_BATTERY_SOC in keys
 
 
 class TestIntegrationImports:
