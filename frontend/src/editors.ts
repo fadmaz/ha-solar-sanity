@@ -77,16 +77,12 @@ function pruned(data: Record<string, unknown>): Record<string, unknown> {
 const LABELS: (row: FormRow) => string = (row) =>
   ({
     entity: "Installation",
-    name: "Title",
-    show_evidence: "Show the numbers behind the verdict",
     provider: "Forecast provider",
   })[row.name] ?? row.name;
 
 const HELPERS: (row: FormRow) => string | undefined = (row) =>
   ({
     entity: "Leave empty to use the only one you have.",
-    name: "Replaces the integration's name in the card heading.",
-    show_evidence: "Adds a line of measured figures under the verdict.",
     provider: "Leave empty to show every provider you have configured.",
   })[row.name];
 
@@ -139,8 +135,6 @@ export class SolarSanityCardEditor extends LitElement {
         // them so you can choose one of two is a worse answer than no picker.
         selector: { entity: { include_entities: this._candidates } },
       },
-      { name: "name", selector: { text: {} } },
-      { name: "show_evidence", selector: { boolean: {} } },
     ];
   }
 

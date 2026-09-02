@@ -173,10 +173,21 @@ describe("the status card editor", () => {
     const editor = make({ ...base, entity: "sensor.a_status" }, hassWith([ours("sensor.a_status")]));
     await form(editor);
 
-    const emitted = change(editor, { entity: undefined, name: "" });
+    const emitted = change(editor, { entity: undefined, entity_id: "" });
 
     expect(emitted).toEqual({ type: "custom:solar-sanity-card" });
     expect("entity" in emitted).toBe(false);
+    expect("entity_id" in emitted).toBe(false);
+  });
+
+  it("offers nothing the card does not read", async () => {
+    // The editor carried a Title row and a "Show the numbers behind the
+    // verdict" switch for three releases, and the card read neither. Every
+    // other test here reaches for one row with `.find`, so none of them could
+    // see a row that should not exist. This compares the whole list.
+    const rendered = await form(make(base, hassWith([ours("sensor.a_status")])));
+
+    expect(rendered.schema!.map((row) => row.name)).toEqual(["entity"]);
   });
 });
 

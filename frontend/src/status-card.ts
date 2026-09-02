@@ -60,8 +60,6 @@ export function isStatusEntity(entity: HassEntity | undefined): boolean {
 
 interface StatusCardConfig extends LovelaceCardConfig {
   entity?: string;
-  name?: string;
-  show_evidence?: boolean;
 }
 
 /**
