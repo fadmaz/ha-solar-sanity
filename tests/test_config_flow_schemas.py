@@ -107,7 +107,11 @@ class TestConfigFlowSchemas:
             OPT_GUARANTEED_ANNUAL_KWH,
         )
 
+        # The real `_dismissible_codes` too, bound to the same stand-in, so the
+        # conditional row is decided by the code rather than by the stub.
         stub = SimpleNamespace(config_entry=SimpleNamespace(options={}, runtime_data=None))
+        stub._dismissible_codes = lambda: SolarSanityOptionsFlow._dismissible_codes(stub)
+
         schema = vol.Schema(SolarSanityOptionsFlow._fields(stub))
 
         keys = _schema_keys(schema)
