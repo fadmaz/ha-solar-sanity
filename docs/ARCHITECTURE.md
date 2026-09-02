@@ -5,10 +5,10 @@ top-level folder is for, how the integration runs inside Home Assistant, how the
 persistent store is provisioned, how build, test, lint and release work, and the
 ten biggest risks or half-finished areas.
 
-Surveyed on 2026-09-02 at commit `80429b4` (tag `v0.25.1`). Line numbers refer
-to that commit and will drift. Nothing in the tree was changed to produce this
-document. Every claim below was read from source, CI configuration or git
-history, and the ones that matter most were checked twice.
+Surveyed on 2026-09-02 at commit `80429b4` (tag `v0.25.1`), and revised for
+0.26.0, which resolved risks 2 and 4 and half of risk 3. Line numbers refer to
+the surveyed commit and will drift. Every claim below was read from source, CI
+configuration or git history, and the ones that matter most were checked twice.
 
 Repository identity: the GitHub remote is `fadmaz/ha-solar-sanity`, the
 integration domain is `solar_sanity`, and the local directory name
@@ -59,11 +59,11 @@ draw a power-flow diagram.
 | `frontend/src/` | TypeScript source of the card bundle: two cards, two editors, a dashboard strategy, a chart helper, hand-vendored HA types. | Tests sit beside the code as `*.test.ts`. |
 | `tests/` | Three tiers: pure engine tests in `tests/analysis/` and `tests/unit/`, Home Assistant integration tests in `tests/integration/`, and top-level meta-tests that check the repository itself. | `tests/synth/` is a synthetic-house generator and a diagnostics replayer, not a test tier. |
 | `scripts/` | `check.py` (runs every gate in CI order and stops at the first failure), `check_size.py` (gzip budget for the bundle, 90 kB) and `make_brand_assets.py` (regenerates `brand/*.png`, needs Pillow). | None is a dependency of the product. |
-| `.github/` | `workflows/validate.yml` (seven jobs), `workflows/release.yml`, `dependabot.yml`. | See section 7. |
+| `.github/` | `workflows/validate.yml` (eight jobs), `workflows/release.yml`, `dependabot.yml`. | See section 7. |
 | `pyproject.toml` | pytest and ruff configuration only. The `[project]` table (`version = "0.1.0"`, no dependencies, no build backend) is a placeholder; nothing reads it and the package is not pip-installable. | The comments in it are the best explanation of the test setup anywhere in the repo. |
 | `requirements-dev.txt` | Python test dependencies. One deliberate exact pin, see section 7.5. | |
 | `package.json`, `package-lock.json`, `vite.config.ts`, `vitest.config.ts`, `tsconfig.json` | Card toolchain: Lit 3, TypeScript 7, Vite 8 (Rolldown + Oxc), Vitest 4 with happy-dom. | `package.json` version `0.1.0` is also a placeholder. |
-| `hacs.json` | HACS metadata: `zip_release`, `filename: solar_sanity.zip`, minimum Home Assistant `2025.1.0`, `hide_default_branch`. | The declared minimum is wrong, see risk 4. |
+| `hacs.json` | HACS metadata: `zip_release`, `filename: solar_sanity.zip`, minimum Home Assistant `2025.11.0`, `hide_default_branch`. | Enforced by the `tests-floor` CI job and by `tests/integration/test_collection_guard.py`, which reads this file. |
 | `README.md`, `CHANGELOG.md`, `LICENSE` | User-facing documentation, the release log (52 entries dated 2026-08-25 or later), MIT licence. | Parts of the README have fallen behind the code, see risk 7. |
 
 Ignored local directories you will see but git does not: `.venv/`, `node_modules/`,
@@ -628,7 +628,7 @@ remote URL remains, and no literal `__SS_VERSION__` survives; it is
 | --- | --- | --- | --- | --- | --- | --- |
 | Pure engine | `tests/analysis/` (21 files) | no | yes | yes | yes | default |
 | Pure unit | `tests/unit/` | no | yes | yes | yes | default |
-| Meta tests | `tests/test_*.py` | 8 of 11 modules `importorskip("homeassistant")` | partly | yes | yes | default |
+| Meta tests | `tests/test_*.py` | 9 of 14 modules `importorskip("homeassistant")` | partly | yes | yes | default |
 | Fast corpus, 600 | `tests/analysis/test_clean_corpus.py:85` | no | yes | yes | yes | default |
 | Full corpus, 3,000 | same file, `:94` | no | opt-in | **no** | yes | `-m slow -n auto` |
 | Integration | `tests/integration/` (15 files) | **yes** | **no** | yes | yes | directory is only collected when HA is present |
@@ -637,9 +637,9 @@ remote URL remains, and no literal `__SS_VERSION__` survives; it is
 Measured on 2026-09-02 without Home Assistant installed:
 
 ```
-python -m pytest tests -q        →  1791 passed, 8 skipped, 3000 deselected in 68.7 s
-ruff check . / ruff format --check .  →  clean, 91 files
-npm run lint / npm test          →  clean; 7 files, 130 tests, 2.8 s
+python -m pytest tests -q        →  1797 passed, 9 skipped, 3000 deselected in 98.7 s
+ruff check . / ruff format --check .  →  clean, 97 files
+npm run lint / npm test          →  clean; 7 files, 131 tests, 2.7 s
 python scripts/check_size.py     →  14.3 kB gzipped, within 90 kB
 python scripts/check.py          →  all of the above in order, green in 117 s
 ```
@@ -703,7 +703,7 @@ npm run build && python scripts/check_size.py
 ```
 
 The integration tier needs a Python where Home Assistant installs (CI uses
-3.13). On a machine without it, the eight `importorskip` modules skip and
+3.13). On a machine without it, the nine `importorskip` modules skip and
 `tests/integration` is not collected, so a green local run says nothing about
 the HA seam. State that plainly in a pull request when it applies.
 
@@ -716,7 +716,8 @@ breaks things on their own schedule, not ours").
 | --- | --- | --- |
 | `hassfest` | `home-assistant/actions/hassfest@master` | manifest, strings and services validation |
 | `hacs` | `hacs/action@main`, category integration | HACS repository rules |
-| `tests` | Python 3.13, `pip install -r requirements-dev.txt`, `pytest tests -q` | the only place the integration tier ever runs |
+| `tests` | Python 3.13, `pip install -r requirements-dev.txt`, `pytest tests -q` | the only place the integration tier ever runs, at the newest Home Assistant |
+| `tests-floor` | Python 3.13, `pip install pytest-homeassistant-custom-component==0.13.294`, `pytest tests -q` | the same suite at the floor `hacs.json` declares (2025.11.0). Until 0.26.0 the declared minimum had never been executed once |
 | `corpus` | not on pull requests; `pytest -m slow -n auto`, then a grep that fails on any `async_register_command` | the full false-positive gate; `websocket_api` was removed from the manifest after years unused, and registering a command without it fails only for users |
 | `lint` | unpinned `pip install ruff`; `ruff check .`; `ruff format --check .` | style and import order |
 | `deprecations` | greps: `async_add_external_statistics` only in `statistics_source.py`, which must contain `mean_type=StatisticMeanType.NONE` and `unit_class="energy"`; no `add_update_listener` | omitting the metadata fields is a hard error in HA 2026.11; the listener combination is an error in 2026.12 |
@@ -728,10 +729,13 @@ Triggered by a published GitHub release, or by `workflow_dispatch` with a tag
 so a failed upload can be retried. Steps, in an order that matters:
 
 1. Check out the tag.
-2. **Stamp** the tag's version into `manifest.json` with an inline Python
-   heredoc.
-3. **Then** `npm ci && npm run build`, so `__SS_VERSION__` carries the stamped
-   version rather than whatever the previous release said.
+2. **Check** the tag against the version committed in `manifest.json`, then
+   stamp. The release PR bumps the manifest itself, so on a tag cut from current
+   main these never differ; when they do, a published release is a hard failure
+   and a `workflow_dispatch` retry only warns, because re-running one of the
+   seven drift-era tags legitimately finds an older number in its tree.
+3. **Then** `npm ci && npm run build`, so `__SS_VERSION__` carries the version
+   the previous step just proved is the tag's.
 4. `cd custom_components/solar_sanity && zip solar_sanity.zip -r ./`, flat,
    because HACS unpacks the zip's contents straight into the domain directory.
    Only `*.pyc` and `__pycache__` are excluded, so the 119 kB source map ships
@@ -749,7 +753,10 @@ where the built card does not exist.
 the newest release still declaring `Requires-Python >=3.13`, and that choice
 is what selects Home Assistant 2026.2.3, pytest 9.0.0 and pytest-asyncio
 1.3.0 underneath it. `tests/integration/test_collection_guard.py:24` asserts
-the harness is at least 2026.1 so a downgrade fails loudly. Dependabot covers
+the running Home Assistant is at least the floor `hacs.json` declares, which
+ties the declared floor to a tested one; the `tests-floor` job runs at exactly
+that floor, pinned by `pytest-homeassistant-custom-component==0.13.294` (Home
+Assistant 2025.11.0). Dependabot covers
 npm weekly (grouped dev bumps) and GitHub Actions monthly; there is no pip
 ecosystem entry, so the Python pins are only ever moved by hand.
 
@@ -784,63 +791,83 @@ silence on houses the author imagined, not on houses that exist.
 machine with different topologies (the documented HACS beta channel exists for
 this), and a soak period before user-facing copy ships.
 
-### 2. The yield guarantee can never fire from the UI
+### 2. Resolved in 0.26.0: the yield guarantee could never fire from the UI
 
-**Evidence.** The options flow writes `guaranteed_annual_kwh` into
-`entry.options` (`config_flow.py:461-472`, `async_create_entry(data={**options, **user_input})`).
-`yield_check.py:81` reads `coordinator.entry.data.get(CONF_GUARANTEED_ANNUAL_KWH)`.
-The wizard never collects it, and the reconfigure path's `data_updates`
-carries only channels and topology (`:422-430`). The integration test seeds
-the value into `data` directly (`tests/integration/test_yield_against_promise.py:44`),
-so the suite is green while the only user-facing path is dead. Compare the
-battery state-of-charge option, which is options on both sides.
+**What it was.** The options flow wrote `guaranteed_annual_kwh` into
+`entry.options` and `yield_check.py` read it from `entry.data`, so the check
+returned `None` for every real installation. `None` is also what "no guarantee
+configured" returns, so a shipped, documented, tested feature did nothing and
+said nothing about doing nothing. The integration test seeded `data` directly,
+which is the one store no user can write, and that is why the suite stayed
+green.
 
-**Why it matters.** A shipped, documented, tested feature that no user can
-turn on, and the failure is silent: the check returns `None`, which is also
-what "no guarantee configured" returns.
+**What fixed it.** The constant is now `OPT_GUARANTEED_ANNUAL_KWH`, read from
+`entry.options`, with the stored string unchanged so nothing migrates.
+`tests/test_option_stores.py` walks the component's AST for any `OPT_` key read
+from `entry.data` or `CONF_` key read from `entry.options`; it runs in the pure
+tier, which is where this should have been caught, and it was confirmed to fail
+naming `yield_check.py` before the fix. Three integration tests now drive the
+real options flow end to end.
 
-**Finished looks like.** Read from `entry.options`, and a test that drives the
-options flow rather than seeding data.
+**What it turned up.** The options form merged `{**options, **user_input}`, and
+a blanked `vol.Optional` is absent from `user_input` rather than empty, so
+clearing a field put the old value straight back. Harmless while nothing read
+the guarantee; not harmless once something did, and it applied equally to the
+battery charge level. The form now drops only the rows it rendered.
 
-### 3. The committed version is four releases behind, and two fallbacks say 0.1.0
+### 3. Two version fallbacks still say 0.1.0
 
-**Evidence.** `manifest.json:22` says `0.21.1`; `CHANGELOG.md:5` and the
-latest tag say `0.25.1`; `git show v0.25.1:custom_components/solar_sanity/manifest.json`
-still says `0.21.1`. The manifest was last bumped in `1f5e995 chore: release 0.21.1`.
-The release workflow stamps the tag into the manifest at build time, which is
-why released zips are correct, but `release.yml:50-53` still describes a
-hand-bump that stopped happening. `__init__.py:65` falls back to `"0.1.0"`,
-and `pyproject.toml` and `package.json` both carry `0.1.0`.
+**Evidence.** `__init__.py:65` falls back to the string `"0.1.0"` when the
+loader lookup for the integration's own version fails, and `pyproject.toml` and
+`package.json` both carry `0.1.0` as dead placeholders that nothing reads.
 
-**Why it matters.** Every local `npm run build` embeds `0.21.1`; any install
-from a checkout reports `0.21.1` in the integrations page and in diagnostics;
-the card cache-buster `?v=` has not moved for those installs across four
-releases. A failed loader lookup would silently produce a version string that
-collides with the placeholder files.
+**Why it matters.** A failed lookup produces a version string that collides
+with two files already containing it, so the failure looks like a
+configuration rather than a bug.
 
-**Finished looks like.** Either bump the manifest in the release commit again,
-or make CI assert that manifest, changelog head and tag agree, and remove the
-`0.1.0` placeholders.
+**Fixed since this was written.** The four-release lag is gone: the release
+pull request bumps `manifest.json` in the same commit as its changelog entry,
+`tests/test_release_contract.py` fails the pull request when the two disagree,
+and `release.yml` fails a published release when the manifest and the tag
+disagree.
 
-### 4. The declared Home Assistant floor cannot work
+**Finished looks like.** The `0.1.0` placeholders removed. Note the `?v=`
+cache-buster still moves only once per release, so a mid-cycle rebuild from a
+checkout serves under the previous release's URL; no design considered here
+changes that.
 
-**Evidence.** `hacs.json` declares `"homeassistant": "2025.1.0"`. The code
-imports `OptionsFlowWithReload` (`config_flow.py:31`), which arrived in Home
-Assistant 2025.8, and writes `mean_type=StatisticMeanType.NONE` and
-`unit_class="energy"` into external statistics metadata
-(`statistics_source.py:270-280`), fields introduced with the October 2025
-recorder API change for 2025.11. `frontend.py:73-75` handles an attribute
-renamed in 2026.2. The only Home Assistant CI ever runs is 2026.2.3, fixed by
-the harness pin.
+### 4. Resolved in 0.26.0: the declared Home Assistant floor could not work
 
-**Why it matters.** On any Home Assistant release before 2025.8 the setup
-wizard fails with an `ImportError` the moment it opens, because
-`config_flow.py` imports the class at module level; before 2025.11 the
-forecast archive would be written with metadata the recorder does not
-understand. Nothing tests the real minimum, so nobody knows what it is.
+**What it was.** `hacs.json` declared `"homeassistant": "2025.1.0"`, which HACS
+enforces, so the integration was offered to anyone on 2025.1 or later and could
+not run there. Two constraints bind, both dated against the published wheels
+rather than inferred:
 
-**Finished looks like.** Raise the floor to the real minimum (2025.11 by the
-evidence here) and run the test job on that version as well as the newest.
+| Constraint | Introduced | Failure below it |
+| --- | --- | --- |
+| `OptionsFlowWithReload`, imported at module scope in `config_flow.py` | 2025.8 | the config flow raises `ImportError`, and a config-entry integration whose flow cannot import does not load at all |
+| `unit_class` in the external-statistics metadata (`statistics_source.py`) | 2025.11 | `StatisticsMeta.from_meta` does `StatisticsMeta(**meta)`, so the first write of each provider's series raises `TypeError` inside the recorder thread and the forecast archive is silently never created |
+
+The 2026.2 rename of `LovelaceData.mode` to `resource_mode` is **not** a floor:
+`frontend.py:75` reads both names.
+
+**Why the second one set the number.** The forecast archive is the one record
+this integration cannot rebuild later, so the floor goes where the code
+actually stands rather than where it first visibly falls over.
+
+**What fixed it.** `hacs.json` now declares 2025.11.0, and a `tests-floor` CI
+job runs the whole suite against exactly that version, which is the first time
+the declared minimum has ever been executed. That job would have been
+permanently red: `tests/integration/test_collection_guard.py` hard-coded
+`OLDEST_USEFUL = (2026, 1)`, chosen as whatever CI happened to resolve when it
+was written, so the number users are held to and the number CI asserts were two
+facts free to drift, and had. The guard now reads `hacs.json`, which collapses
+them into one, while still rejecting the 2025.1.4 that pip resolves on Python
+3.12.
+
+**What remains open.** Users already on 2025.8 to 2025.10 have an integration
+that loads and a forecast archive that has never written a metadata row. The
+floor stops new bad installs and says nothing to them.
 
 ### 5. Card delivery rests on an untracked file and undocumented internals
 
@@ -931,9 +958,11 @@ name, and surface a degraded feature as a note or a diagnostic attribute.
 - `bucket_window` (`coordinator.py:1501`) has no callers. `SolarSanityData.store`
   is set and never read. Three persisted keys are never read back and the
   promised daily digests do not exist (section 5.8).
-- In the card, the `name` and `show_evidence` editor fields are declared,
-  labelled and rendered (`editors.ts:80-89, 142-143`) and consumed nowhere in
-  `status-card.ts`. Five typed attributes are published and never rendered.
+- Five typed attributes are published by the status sensor and never rendered
+  by the card. The `name` and `show_evidence` editor fields, which were the
+  same defect in a more visible place, were removed in 0.26.0; the three-row
+  rule remains the reason the card could not render measured figures even if
+  the entity published them.
 - `forecast-data.ts:20, 23` duplicate a statistic-id prefix and a metadata
   name suffix from `const.py:113` and `statistics_source.py:483`, and the
   "12 hours" in card copy duplicates `DAYAHEAD_MIN_LEAD_HOURS`; nothing joins
@@ -943,9 +972,8 @@ name, and surface a degraded feature as a note or a diagnostic attribute.
 started and left, and the editor fields are user-visible promises that do
 nothing.
 
-**Finished looks like.** Delete what is dead, wire or remove the two editor
-fields, and either generate the shared constants or add a test that reads
-both sides.
+**Finished looks like.** Delete what is dead, and either generate the shared
+constants or add a test that reads both sides.
 
 ### 10. Two files are both the largest and the most changed
 

@@ -32,7 +32,7 @@ python -c "import sys; sys.path[:0] = ['.', 'custom_components/solar_sanity']; f
 ```
 
 Without Home Assistant installed, `tests/integration` is not collected and eight top-level test
-modules skip, silently. At v0.25.1 that is 1,791 tests locally against 2,028 on CI, plus 130 card
+modules skip, silently. At 0.26.0 that is 1,797 tests locally against roughly 2,050 on CI, plus 131 card
 tests. Say in the PR when the HA tier did not run locally. The `Unknown config option:
 asyncio_mode` warning on such a machine is expected.
 
@@ -51,12 +51,18 @@ Unreleased section, and is not precedent.
 - Delete the branch on GitHub after merging; auto-delete is off. Local `origin/*` refs go stale, so
   `git fetch --prune`.
 - A release ships inside its PR: add `## [X.Y.Z] - YYYY-MM-DD` at the top of CHANGELOG.md on the
-  branch, written for the user, under Added, Changed, Fixed, Removed, Notes or Internal. No
-  Unreleased section, no release commit, and never bump manifest.json: release.yml stamps the tag
-  into it and builds the card afterwards, so the committed version lags the tags on purpose.
+  branch, written for the user, under Added, Changed, Fixed, Removed, Notes or Internal, and bump
+  `version` in manifest.json in the **same commit** as that heading. No Unreleased section and no
+  release commit. `tests/test_release_contract.py` fails the PR when the two disagree, and
+  release.yml fails a published release when the manifest and the tag disagree. Home Assistant reads
+  the committed file for the integrations page, for diagnostics and for the card's `?v=`
+  cache-buster, so a checkout that lags the tags is a checkout that lies. It lagged four releases
+  before 0.26.0 because release.yml stamps the tag in and nothing else looked.
 - After merging: `gh release create vX.Y.Z --target main --title "X.Y.Z — <sentence>"` with the
-  changelog section as the body. feat gives a minor version, fix a patch; test and docs PRs get no
-  release. Re-run release.yml from workflow_dispatch with the tag to retry a failed upload.
+  changelog section as the body, taking `X.Y.Z` verbatim from the top heading of CHANGELOG.md. That
+  is the actual guard against a mistyped tag; the release job's check is the receipt. feat gives a
+  minor version, fix a patch; test and docs PRs get no release. Re-run release.yml from
+  workflow_dispatch with the tag to retry a failed upload.
 - Dependabot PRs are not merged as opened; bumps are redone as one `chore/` batch PR run through the
   full gate.
 - Constants and non-obvious branches carry a comment naming the measurement or failure that set
@@ -115,8 +121,14 @@ Traps whose error message points elsewhere:
 - A checkout has no card until `npm run build`; its absence is logged at debug only, and
   `npm test` is green without a bundle because the smoke test skips. Build, then test, then
   check_size. vitest does not typecheck, so `node:*` imports pass it and fail tsc.
-- hacs.json declares Home Assistant 2025.1.0; the code needs 2025.11, and only 2026.2.3 is ever
-  tested.
+- hacs.json declares Home Assistant 2025.11.0, which is the real floor: `unit_class` is not a
+  statistics-metadata column before it, and `OptionsFlowWithReload` needs 2025.8. CI runs the suite
+  at that floor and at 2026.2.3. `tests/integration/test_collection_guard.py` reads the declared
+  number from hacs.json, so moving the floor moves the assertion; the `tests-floor` pin in
+  validate.yml must move with it.
 - `filterwarnings` in pyproject.toml matches no module and enforces nothing.
-- Changing the stored schema: docs/ARCHITECTURE.md section 5.5. Known bugs, including the yield
-  guarantee written to `entry.options` but read from `entry.data`: section 8.
+- A key's prefix says which store it lives in: `CONF_` is what the wizard gathered and lives in
+  `entry.data`, `OPT_` is a setting changed afterwards and lives in `entry.options`. Reading one
+  from the other returns `None`, which is indistinguishable from unset.
+  `tests/test_option_stores.py` walks the source for it.
+- Changing the stored schema: docs/ARCHITECTURE.md section 5.5. Known risks: section 8.

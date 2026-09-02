@@ -1,6 +1,6 @@
 """Run every gate the repository has, in the order they depend on each other.
 
-One command for what validate.yml spreads over seven jobs: ruff lint and
+One command for what validate.yml spreads over eight jobs: ruff lint and
 format, the TypeScript typecheck, the Python suite, the card build, the card
 tests, and the bundle size budget. It stops at the first failure and names the
 step, so a red run reads as one line rather than a scroll.
