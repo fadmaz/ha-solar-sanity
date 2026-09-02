@@ -4,6 +4,32 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [0.26.0] - 2026-09-02
 
+### Added
+
+- **Batteries down to 80% round-trip efficiency now get an answer.** The cut-off
+  was 90%, which is an ordinary hybrid rather than an unusual one, and below it a
+  perfectly healthy installation was told "still looking" indefinitely.
+
+  What changed is where the figure is measured. A battery loses energy in both
+  directions, and the two are locked together by one efficiency, so it is one
+  number rather than two. Measuring it during the day never worked well, because
+  a battery charges from the surplus and so its charging is inseparable from what
+  the panels are doing. In the dark there is no charging and no generation, so the
+  only thing left moving is the battery discharging — and that is now where the
+  figure is taken.
+
+  It is a better measurement rather than a looser one. Faults that used to be at
+  risk of being mistaken for battery loss are simply not present in those hours,
+  so the checks that guard against them are no longer a matter of degree: a charge
+  sensor reading low, an unmeasured export path, or a battery reading a tenth low
+  all look exactly like a healthy house overnight, and are refused. A house whose
+  battery is charged from the grid on a cheap overnight tariff is recognised and
+  handed back to the old method, because for that house the premise does not hold.
+
+  Where no figure can be established, the diagnostics download now carries what
+  was measured anyway, so "nothing could be established" says which of the seven
+  reasons applied.
+
 ### Changed
 
 - **Home Assistant 2025.11 or newer is now required.** The declared minimum was

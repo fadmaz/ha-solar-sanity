@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Final
 
 from .faults import DC_MEASUREMENT_MAX_IQR, DC_MEASUREMENT_WINDOW
-from .linalg import least_squares, median, theil_sen_intercept, theil_sen_slope
+from .linalg import least_squares, median, project_out, theil_sen_intercept, theil_sen_slope
 from .model import (
     Answer,
     Bucket,
@@ -96,8 +96,83 @@ DC_BATTERY_DIRECTION_TOLERANCE = 0.35
 #: discharge channel reading ten per cent low, sits at 0.125. A ratio of 1.3
 #: between the noise and the signal is not a test.
 #:
-#: Fixing that means constraining the pair to one parameter and profiling over
-#: it rather than fitting two free coefficients. Worth doing; not done here.
+#: Done, and not by profiling. The parameter is now measured where the
+#: collinear column does not exist at all — see `_dark_hours_battery`. The
+#: constants below belong to that estimator; everything above still governs the
+#: day fit, which remains the fallback when the dark hours cannot answer.
+
+#: Dark hours averaged into one design point.
+#:
+#: This constant is the whole estimator, and both ends of it were measured. One
+#: hour per point leaves the discharge column carrying its own meter noise into
+#: a slope fitted against it, which reads the slope about 0.009 high at 5% —
+#: larger than the fault it has to separate. A whole limb of night averages that
+#: away but leaves two points a night, and a line through two points has no
+#: residual left to be wrong about: a load booked to the wrong hour of the night
+#: becomes a slope of 0.17 with nothing to contradict it, which is
+#: `TestASurplusThatComesBackIsNotExport` absorbed rather than reported. Two
+#: hours halves the noise and still leaves five or six blocks a night for the
+#: line to fail against. At two hours that same house measures +0.0000 on clean
+#: data, and 0.029 to 0.035 at 5% noise against an acceptance floor of 0.02.
+NIGHT_BLOCK_HOURS: Final = 2
+
+#: Blocks needed before the slope over them means anything. Roughly ten nights;
+#: thirty days of the synthetic house gives 180, forty-five gives 270.
+MIN_NIGHT_BLOCKS: Final = 40
+
+#: How much charging may happen in the dark before the premise of this whole
+#: estimator has stopped holding.
+#:
+#: The reason a slope over dark hours can be trusted where a day fit cannot is
+#: that charging *is* the surplus: it happens only when generation exceeds
+#: consumption, so in the dark the collinear column is identically zero and
+#: there are no two coefficients to trade. Measured over the synthetic house at
+#: every efficiency, topology and noise level, dark-hour charging is exactly
+#: 0 Wh against 280 to 305 kWh of dark-hour discharge.
+#:
+#: A battery charged from the grid on a cheap overnight tariff breaks that, and
+#: it is an ordinary installation rather than a fault. Built and measured, it
+#: sits at 1.05 to 1.07 on this ratio — not near the threshold, a hundred times
+#: past it — and its slope reads about half the true gamma at 5% meter noise.
+#: Under-subtracting is the safe direction and the partner screens catch most of
+#: it, but a premise that can be checked directly should be, so it is: such a
+#: house is refused here and handed to the day fit, which is where it is today.
+#:
+#: A house that grid-charges *lightly*, at a per cent or two of dark discharge,
+#: would pass this gate and bias the slope down by an amount nobody has
+#: measured. That is the known soft edge of this threshold.
+DARK_CHARGE_TOLERANCE: Final = 0.02
+
+#: The band a DC-measured battery's loss fraction may occupy.
+#:
+#: Deliberately *not* `DC_MEASUREMENT_WINDOW`, which keeps its own meaning for
+#: the generation term, for `infer`, and for the fallback. The two are guarded
+#: by different things. A DC-side generation sensor and one reading high by the
+#: same factor are the same series, so nothing but judgement bounds that term.
+#: The battery term is measured on hours nothing else can reach, so it can
+#: afford the extra room: 0.20 is a round trip of 0.80, below every hybrid
+#: currently sold, and past it "your battery is metered on its DC side" stops
+#: being a credible reading of the number.
+DC_BATTERY_GAMMA_WINDOW: Final = (0.02, 0.20)
+
+#: How wide the sign-test interval on the block slope may be before the dark
+#: hours have not measured a gamma at all. A summer house sits at 0.0007 to
+#: 0.0015; a 1.2 kWp house in December at 5% noise sits at 0.0055 to 0.0060 and
+#: is refused, which is right — its battery moves a seventh of the energy and
+#: its slope wanders from 0.032 to 0.074 on a truth of 0.050.
+MAX_GAMMA_HALF_WIDTH: Final = 0.003
+
+#: How far the day's implied charge coefficient may fall *short* of the one the
+#: dark-hours gamma requires. One-sided on purpose: subtracting more than the
+#: day contains is the failure; finding more than the lock explains is the fault
+#: engine's business, and refusing on it would silence an unmapped-export
+#: finding, which shows -0.60 to -1.12 here. Healthy houses sit in
+#: [-0.012, +0.017]; a battery whose discharge is DC-metered and whose charge is
+#: not sits at +0.042 to +0.152.
+MAX_CHARGE_SHORTFALL: Final = 0.03
+
+#: A day charging less than this has no charge coefficient to imply.
+MIN_DAY_CHARGE_WH: Final = 500.0
 
 #: Hours needed before a night fit means anything.
 MIN_STANDBY_SAMPLES = 200
@@ -370,8 +445,29 @@ def fit_loss_model(
         return prior or LossModel()
 
     established: list[str] = []
+    # Called for the standby draw first, because `_charge_confirms` needs it.
+    _night_gamma, standby = _fit_night_terms(days, specs)
+
+    # Measured where the collinear column does not exist. See
+    # `_dark_hours_battery`: this replaces fitting the two directions freely and
+    # checking their agreement afterwards, which was never a test.
+    dark_gamma, _dark_measured = _dark_hours_battery(days, specs)
+    if dark_gamma is not None and not _charge_confirms(days, specs, dark_gamma, standby):
+        dark_gamma = None
+
     joint = joint_loss_fit(days, specs) or {}
-    battery_dc = _accepted_battery(joint, established)
+    if dark_gamma is not None:
+        battery_dc = dark_gamma
+        established.append("battery_dc")
+    else:
+        # Unchanged, and still the fallback. The dark hours are silent on a
+        # December house at 1.2 kWp, where the battery moves a seventh of the
+        # energy: most such scenarios at 5% noise are refused as imprecise and
+        # handed straight back to this. Letting a *precise* refusal from the
+        # dark hours veto the day fit as well was measured and not taken — it
+        # cost two healthy houses their verdict to buy candour on a load CT
+        # reading a tenth low, which stays "still looking" either way.
+        battery_dc = _accepted_battery(joint, established)
 
     if battery_dc == 0.0 and any(
         spec.role in (Role.BATTERY_CHARGE, Role.BATTERY_DISCHARGE) for spec in specs
@@ -421,16 +517,12 @@ def fit_loss_model(
 
     pv_dc = accepted("pv_dc", DC_PV_MAX_GAMMA)
 
-    night_gamma, standby = _fit_night_terms(days, specs)
-
-    # The both-directions test needs daylight, and daylight is exactly what an
-    # open boundary makes unusable. Falling back to the discharge-only slope is
-    # safe only once generation has independently been shown to be measured on
-    # the DC side, because on such a system a DC-measured battery is the
-    # expected topology rather than a coincidence that happens to look like one.
-    if battery_dc == 0.0 and night_gamma is not None and "pv_dc" in established:
-        battery_dc = night_gamma
-        established.append("battery_dc")
+    # The bare night slope used to be taken here when generation had
+    # independently shown as DC-measured. It is gone: that gate existed only
+    # because the slope had no screens of its own, and `_dark_hours_battery`
+    # now measures the same hours with them. It was also the branch through
+    # which the refit's fabricated pv_dc opened a door for a gamma nothing had
+    # checked.
 
     if standby > 0.0:
         established.append("standby")
@@ -482,6 +574,256 @@ def _accepted_battery(joint: dict[str, float], established: list[str]) -> float:
 
     established.append("battery_dc")
     return discharge
+
+
+def _dark_blocks(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
+) -> tuple[list[float], list[float], list[float], list[float], float, float] | None:
+    """Mean discharge, raw residual, load and import over each block of darkness.
+
+    A day has two limbs of dark — the hours before its first light and the hours
+    after its last — and each limb is chunked separately, so no design point is
+    a mixture of the two ends of a day.
+
+    Raw ``day.r``, never ``dr``, for the reason ``joint_loss_fit`` gives: a
+    residual the previous model has already been subtracted from makes the fit
+    estimate the loss that remains rather than the loss that is there.
+
+    The two totals returned alongside are the dark-hour charge and discharge,
+    which are not fitted against — they are the check that this estimator's
+    premise held for this house at all.
+    """
+    pv_keys = [spec.key for spec in specs if spec.role is Role.PV]
+    if not pv_keys:
+        return None
+    discharge_keys = [spec.key for spec in specs if spec.role is Role.BATTERY_DISCHARGE]
+    charge_keys = [spec.key for spec in specs if spec.role is Role.BATTERY_CHARGE]
+    load_keys = [spec.key for spec in specs if spec.role is Role.LOAD]
+    import_keys = [spec.key for spec in specs if spec.role is Role.GRID_IMPORT]
+
+    xs: list[float] = []
+    ys: list[float] = []
+    loads: list[float] = []
+    imports: list[float] = []
+    dark_charge = 0.0
+    dark_discharge = 0.0
+    for day in days:
+        limbs: list[list[tuple[float, float, float, float]]] = [[], []]
+        limb = 0
+        for bucket, raw in zip(day.buckets, day.r, strict=True):
+            generated = _role_total(bucket, pv_keys)
+            if generated is None:
+                continue
+            if generated > NIGHT_MAX_PV_WH:
+                limb = 1
+                continue
+            # A house with no battery is the degenerate case of the same line,
+            # not one this cannot speak about: its column is all zeros and there
+            # is simply no slope to find.
+            out = 0.0 if not discharge_keys else _role_total(bucket, discharge_keys)
+            into = 0.0 if not charge_keys else _role_total(bucket, charge_keys)
+            drawn = 0.0 if not load_keys else _role_total(bucket, load_keys)
+            taken = 0.0 if not import_keys else _role_total(bucket, import_keys)
+            if out is None or into is None or drawn is None or taken is None:
+                continue
+            dark_charge += abs(into)
+            dark_discharge += abs(out)
+            limbs[limb].append((abs(out), raw, drawn, taken))
+        for hours in limbs:
+            last = len(hours) - NIGHT_BLOCK_HOURS + 1
+            for start in range(0, last, NIGHT_BLOCK_HOURS):
+                block = hours[start : start + NIGHT_BLOCK_HOURS]
+                size = float(len(block))
+                xs.append(sum(point[0] for point in block) / size)
+                ys.append(sum(point[1] for point in block) / size)
+                loads.append(sum(point[2] for point in block) / size)
+                imports.append(sum(point[3] for point in block) / size)
+    if len(xs) < MIN_NIGHT_BLOCKS:
+        return None
+    return xs, ys, loads, imports, dark_charge, dark_discharge
+
+
+def _block_slope(xs: list[float], ys: list[float]) -> tuple[float, float] | None:
+    """Theil-Sen over the blocks, and half the sign-test interval on it.
+
+    Every pair, not ``theil_sen_slope``'s strided sample: forty-five days is 270
+    blocks and 36,315 pairs, which is six milliseconds, and the stride exists to
+    bound a thousand-point problem this one does not have.
+
+    The interval is the order statistic a median carries with it — the sorted
+    slopes read at rank m/2 +/- 0.98*sqrt(m). The pairs share points, so it is
+    not a confidence interval; it is a deterministic measure of how tightly the
+    blocks agree about one line, and that is what decides whether the dark hours
+    measured anything at all rather than how large it was.
+    """
+    slopes: list[float] = []
+    for i in range(len(xs)):
+        for j in range(i + 1, len(xs)):
+            span = xs[j] - xs[i]
+            if abs(span) < 1e-12:
+                continue
+            slopes.append((ys[j] - ys[i]) / span)
+    if len(slopes) < 3:
+        return None
+    slopes.sort()
+    centre = median(slopes)
+    if centre is None:
+        return None
+    count = len(slopes)
+    reach = 0.98 * (count**0.5)
+    low = max(0, int(count / 2.0 - reach))
+    high = min(count - 1, int(count / 2.0 + reach))
+    return centre, (slopes[high] - slopes[low]) / 2.0
+
+
+def _partner_share(
+    discharge: list[float], partner: list[float], residual: list[float]
+) -> float | None:
+    """How much of the dark residual moves with a channel that is not the battery.
+
+    The same screen ``_load_proportional_share`` already applies to the standby
+    term, asked of the slope and of one more channel. A consumption sensor
+    reading a tenth low fits a dark-hours slope of 0.078 to 0.086 — squarely
+    inside the band — and puts 0.136 into the load column; a grid import sensor
+    reading a tenth low fits 0.024 to 0.033 and puts 0.116 into the import
+    column. A real battery puts 0.022 into either at 5% noise. Without these two
+    the band would be admitting two faults it has no other way to see.
+
+    Both partners are removed by projection rather than fitted beside the
+    battery column, so the number returned is the partner's own share of what
+    the discharge column could not explain, whether or not the house has a
+    battery column at all.
+    """
+    ones = [1.0] * len(partner)
+    basis = [discharge, ones] if any(value != 0.0 for value in discharge) else [ones]
+    stripped_partner = project_out(basis, partner)
+    stripped_residual = project_out(basis, residual)
+    if stripped_partner is None or stripped_residual is None:
+        return None
+    fitted = least_squares([stripped_partner], stripped_residual)
+    return None if fitted is None else fitted[0]
+
+
+def _dark_hours_battery(
+    days: tuple[DayResidual, ...], specs: tuple[ChannelSpec, ...]
+) -> tuple[float | None, dict[str, float]]:
+    """The battery's DC loss fraction, measured where nothing else can reach it.
+
+    The two directions of a DC battery are locked together by one efficiency —
+    the charge coefficient must be ``gamma / (1 - gamma)`` — so the pair is one
+    parameter, not two. Fitting them as free columns and checking their
+    agreement afterwards is not a test, because charging *is* the surplus: on a
+    self-consumption house the charge column is nearly collinear with
+    generation, and at 5% meter noise the fitted charge coefficient carries a
+    bias of 0.09 that scales as noise squared, grows with a longer window, and
+    does not average away.
+
+    So identify the parameter where the collinear column does not exist. Over
+    thirty days of the synthetic house at every efficiency and noise level the
+    dark hours contain **zero** charging — 0 Wh against 280 kWh of dark-hour
+    discharge — because charge is non-zero only when generation exceeds
+    consumption. In the dark there is one column and one intercept, and nothing
+    can be traded between them.
+
+    What that buys, and none of it is a threshold: every fault
+    ``DC_BATTERY_DIRECTION_TOLERANCE`` was built to refuse happens in daylight.
+    Unmapped export, a charge channel reading a tenth low, and charge
+    double-counted into export all measure exactly 0.0000 here on clean data and
+    [-0.001, +0.006] at 5% noise, against an acceptance floor of 0.020. A
+    discharge channel reading a tenth low measures -0.111 and is refused by that
+    same floor. And on a house that has *both* a real DC battery and an unmapped
+    export path the estimator returns 0.0500 exactly rather than inflating to
+    help explain the export — because the amount it subtracts from the day is
+    fixed on hours that contain none of the day's faults.
+
+    Returns ``(gamma, measured)``; ``gamma`` is ``None`` when the dark hours
+    could not establish one, and ``measured`` is what they saw either way, so
+    that "nothing could be established" keeps its numbers.
+    """
+    measured: dict[str, float] = {}
+    samples = _dark_blocks(days, specs)
+    if samples is None:
+        return None, measured
+    xs, ys, loads, imports, dark_charge, dark_discharge = samples
+    measured["dark_blocks"] = float(len(xs))
+    measured["dark_charge_wh"] = dark_charge
+    measured["dark_discharge_wh"] = dark_discharge
+
+    line = _block_slope(xs, ys)
+    if line is None:
+        return None, measured
+    gamma, half_width = line
+    measured["dark_gamma"] = gamma
+    measured["dark_gamma_half_width"] = half_width
+
+    load_share = _partner_share(xs, loads, ys)
+    import_share = _partner_share(xs, imports, ys)
+    if load_share is not None:
+        measured["dark_load_share"] = load_share
+    if import_share is not None:
+        measured["dark_import_share"] = import_share
+
+    if dark_charge > DARK_CHARGE_TOLERANCE * dark_discharge:
+        return None, measured
+    if half_width > MAX_GAMMA_HALF_WIDTH:
+        return None, measured
+    if not DC_BATTERY_GAMMA_WINDOW[0] <= gamma <= DC_BATTERY_GAMMA_WINDOW[1]:
+        return None, measured
+    for share in (load_share, import_share):
+        if share is None or abs(share) > MAX_LOAD_PROPORTIONAL_SHARE:
+            return None, measured
+    return gamma, measured
+
+
+def _charge_confirms(
+    days: tuple[DayResidual, ...],
+    specs: tuple[ChannelSpec, ...],
+    gamma: float,
+    standby_w: float,
+) -> bool:
+    """Never subtract more charge-side loss than the day contains.
+
+    Given gamma and the draw, everything in a day's total residual except the
+    charge term is known, so what is left over divided by the day's charge is
+    the coefficient the day implies. A median of per-day ratios, not a fitted
+    column: generation is never a regressor here, so there is nothing for it to
+    be collinear with.
+
+    One-sided on purpose. A shortfall means the model is about to subtract
+    energy the day has not got — a battery whose discharge is metered on the DC
+    side and whose charge is not, which sits at +0.042 to +0.152 against a
+    healthy +0.017. An *excess* means there is more unexplained energy than the
+    lock accounts for, which is the fault engine's business and not a reason to
+    distrust a gamma measured in the dark: an unmapped export path shows -0.60
+    to -1.12 here, and refusing on that would silence the finding that names it.
+    """
+    discharge_keys = [spec.key for spec in specs if spec.role is Role.BATTERY_DISCHARGE]
+    charge_keys = [spec.key for spec in specs if spec.role is Role.BATTERY_CHARGE]
+    if not charge_keys:
+        return True
+    ratios: list[float] = []
+    for day in days:
+        residual = discharged = charged = hours = 0.0
+        whole = True
+        for bucket, raw in zip(day.buckets, day.r, strict=True):
+            out = 0.0 if not discharge_keys else _role_total(bucket, discharge_keys)
+            into = _role_total(bucket, charge_keys)
+            if out is None or into is None:
+                whole = False
+                break
+            residual += raw
+            discharged += abs(out)
+            charged += abs(into)
+            hours += bucket.seconds / 3600.0
+        if not whole or charged < MIN_DAY_CHARGE_WH:
+            continue
+        ratios.append((residual - gamma * discharged - standby_w * hours) / charged)
+    if len(ratios) < 5:
+        return True
+    implied = median(ratios)
+    if implied is None:
+        return True
+    return (gamma / (1.0 - gamma)) - implied <= MAX_CHARGE_SHORTFALL
 
 
 def _fit_night_terms(
@@ -1002,6 +1344,15 @@ def night_fit_raw(
     residual = median(ys)
     if residual is not None:
         out["median_night_residual_wh"] = residual
+
+    # What the dark-hours estimator saw, whether or not it was accepted. Seven
+    # ways of refusing a gamma all leave the term at 0.0 and the same empty
+    # tuple behind, and "too few blocks", "the blocks disagree", "that is not a
+    # loss fraction" and "something else in the dark moves with it" are four
+    # different problems. Recomputed rather than threaded out of
+    # `fit_loss_model`, which is what this function already does for the night
+    # line beside it.
+    out.update(_dark_hours_battery(days, specs)[1])
     return out
 
 

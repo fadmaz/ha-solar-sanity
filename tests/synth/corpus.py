@@ -84,11 +84,17 @@ def _two_arrays(series: Series) -> Series:
 class Losses:
     """Measurement losses a healthy installation genuinely has.
 
-    Every value here is inside what the loss model is built to absorb. The
-    efficiencies beyond them — a DC battery below 0.90 round trip, say — are a
-    real shape of real installation, but the engine does not yet reach a verdict
-    on one, so they belong in a test that records that boundary rather than in a
-    gate that has to stay green. See ``test_clean_corpus.py``.
+    Every value here is inside what the loss model is built to absorb, and
+    deliberately well inside it: the boundary is now a DC battery at 0.80 round
+    trip rather than 0.90, since the battery term is measured on the dark hours
+    where nothing is collinear with it. Efficiencies past that are a real shape
+    of real installation and still get no verdict, so they belong in a test that
+    records where the line falls rather than in a gate that has to stay green.
+    See ``TestTheBoundaryOfWhatCanBeAbsorbed`` in ``test_clean_corpus.py``.
+
+    The axis is deliberately not added here. Crossing another five efficiencies
+    into 3,000 scenarios buys a fifth more CI time to re-measure a boundary that
+    file already pins seed by seed.
     """
 
     name: str
