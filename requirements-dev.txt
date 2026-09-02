@@ -8,6 +8,11 @@ pytest-asyncio>=0.24
 # all four move at once and nobody decided it.
 #
 # Raise this deliberately, and read the CI count afterwards.
+#
+# There is a second pin, in .github/workflows/validate.yml: the `tests-floor`
+# job installs 0.13.294, which is homeassistant 2025.11.0, the floor hacs.json
+# declares. That one moves when the declared floor moves. Two pins, because a
+# test cannot look up which Home Assistant a harness version carries.
 pytest-homeassistant-custom-component==0.13.316
 pytest-xdist>=3.6
 ruff>=0.9
