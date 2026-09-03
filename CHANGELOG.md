@@ -2,6 +2,45 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.27.0] - 2026-09-03
+
+### Changed
+
+- **A battery charged from the grid overnight is now measured, not turned away.**
+  0.26.0 learned to measure a battery's conversion loss on the hours after dark,
+  and it did so by assuming there is no charging then — which is true of most
+  installations and false of any house on a cheap overnight tariff. Those houses
+  were refused outright and got no figure at all.
+
+  They no longer have to be. A battery loses energy in both directions and the
+  two are tied together by one efficiency, so charging and discharging are one
+  number rather than two, and the charging hours carry information instead of
+  spoiling it. Where a house does not charge after dark nothing changes at all:
+  the arithmetic reduces to exactly what it did before, to the last digit.
+
+### Fixed
+
+- **A consumption sensor reading about a tenth low could be absorbed as battery
+  loss.** On installations with a large battery and ordinary meter noise, the
+  check meant to catch that can quietly stop working: where almost all of what
+  your consumption sensor reports is explained by the battery, asking whether
+  the unexplained energy follows consumption is asking whether it follows
+  itself, and the answer flatters the fault. Measured on 600 simulated houses,
+  eighteen were affected.
+
+  There is now a separate figure that says whether that check is a real test on
+  your house, computed from the shape of your data alone so that no fault can
+  influence it, and the battery figure is not taken unless it clears. It appears
+  in the diagnostics download as `dark_load_independence` whether it passes or
+  not.
+
+### Internal
+
+- The dark-hours estimator fits both battery directions under the physical lock,
+  finding the loss fraction that is its own slope against the column it defines
+  by bisection rather than iteration; a plain fixed point two-cycles on some
+  houses, which would make the answer depend on where the search stopped.
+
 ## [0.26.1] - 2026-09-03
 
 ### Fixed

@@ -1,19 +1,29 @@
-"""The battery's loss fraction, measured where nothing else can reach it.
+"""The battery's loss fraction, measured on the hours after dark.
 
-The two directions of a DC battery are locked together by one efficiency, so the
-pair is one parameter and not two. Fitting them as free columns and checking
-their agreement afterwards was never a test: charging *is* the surplus, so on a
-self-consumption house the charge column is nearly collinear with generation,
-and at the meter noise this project already calls healthy the fitted charge
+The two directions of a DC battery are locked together by one efficiency, so
+the pair is one parameter and not two. Fitting them as free columns and
+checking their agreement afterwards was never a test: charging *is* the
+surplus, so over daylight the charge column is nearly collinear with
+generation, and at the meter noise this project calls healthy the fitted charge
 coefficient carried a bias larger than the fault it had to separate.
 
-The way out is not a better estimator. It is a subset of hours where the
-collinear column does not exist: in the dark there is no charging, so there is
-one column and one intercept and nothing that can be traded between them.
+After dark that collinearity is gone — the charge column tracks discharge at
+-0.53 to -0.26 there, because grid charging happens in the cheap hours when
+discharge is suppressed, against +0.48 to +0.70 against generation in daylight.
+So the two directions are fitted as the single column the physics says they
+are: ``discharge + charge/(1-gamma)``, whose slope is gamma.
 
-Every test here is about that premise or about what it buys. The most important
-one is the first, because if the dark hours ever stop being free of charging the
-whole estimator is unsound and nothing else would notice.
+0.26.0 assumed the charge column away instead, and refused any house that
+charged after dark. That is an ordinary installation on a cheap overnight
+tariff, and the reference installation is one. Keeping those hours is also what
+keeps the screens alive: drop them and the survivors satisfy
+``load = discharge - residual`` identically, so the load screen returns its own
+input and the import column is a constant zero.
+
+What is delicate here is not charge against discharge. It is load against
+discharge, which after dark runs 0.70 to 0.98, and `MIN_LOAD_INDEPENDENCE` is
+the gate on it — the only thing standing between this estimator and absorbing a
+consumption sensor reading ten per cent low.
 """
 
 from __future__ import annotations
@@ -22,10 +32,12 @@ import pytest
 from analysis.model import Answer, DeclaredTopology, LossModel
 from analysis.residual import build_days
 from analysis.topology import (
-    DARK_CHARGE_TOLERANCE,
     DC_BATTERY_GAMMA_WINDOW,
     MAX_LOAD_PROPORTIONAL_SHARE,
+    MIN_LOAD_INDEPENDENCE,
     MIN_NIGHT_BLOCKS,
+    _block_slope,
+    _dark_blocks,
     _dark_hours_battery,
     fit_loss_model,
     night_fit_raw,
@@ -51,47 +63,91 @@ def _dark(series, channels=None):
     return _dark_hours_battery(days, specs)
 
 
-class TestThePremise:
-    """If charging ever reaches the dark hours, none of the rest holds."""
+def _grid_charged(series, kwh_per_night: float, efficiency: float):
+    """A battery filled from the grid overnight, metered on its DC side.
 
-    @pytest.mark.parametrize("seed", range(3))
-    def test_the_dark_hours_contain_no_charging(self, seed: int) -> None:
-        """The one fact the whole estimator rests on.
+    ``E`` leaves the grid and ``E * efficiency`` is metered into the battery, so
+    the shortfall is the conversion loss the lock has to explain rather than
+    something the fixture has hidden in another channel. An earlier version of
+    this helper added the shortfall to consumption, which balances the identity
+    exactly and leaves the charge hours with no residual to measure — the fixture
+    silently testing nothing.
+    """
+    data = {key: list(values) for key, values in series.data.items()}
+    per_hour = kwh_per_night * 1000.0 / 4.0
+    for hour in range(series.hours):
+        if hour % 24 in (1, 2, 3, 4):
+            data["grid_import"][hour] += per_hour
+            data["battery_charge"][hour] += per_hour * efficiency
+    return series.copy_with(**data)
 
-        Charge is non-zero only when generation exceeds consumption, so it
-        cannot happen in the dark. That is a property of the house rather than
-        of the fit, which is why it is asserted directly: a change to the
-        synthetic house's dispatch that put charging into the night would make
-        the estimator unsound while every other test still passed.
+
+class TestTheLock:
+    """One parameter for two directions, and what that buys."""
+
+    @pytest.mark.parametrize("efficiency", [0.95, 0.90, 0.85])
+    @pytest.mark.parametrize("kwh", [5.0, 12.0])
+    def test_a_grid_charged_battery_is_measured_rather_than_refused(
+        self, efficiency: float, kwh: float
+    ) -> None:
+        """The houses 0.26.0 turned away.
+
+        A cheap overnight tariff is not a fault. Under the lock the charge hours
+        carry information, so the figure comes back exact on clean data at charge
+        ratios from 0.4 to 1.2 — more energy into the battery overnight than out
+        of it, and still answered.
         """
-        _gamma, measured = _dark(house.measure_battery_dc(house.build(days=DAYS, seed=seed), 0.90))
+        series = _grid_charged(
+            house.measure_battery_dc(house.build(days=DAYS, seed=0), efficiency),
+            kwh,
+            efficiency,
+        )
 
-        assert measured["dark_charge_wh"] == 0.0
-        assert measured["dark_discharge_wh"] > 100_000.0
+        gamma, measured = _dark(series)
 
-    def test_a_battery_charged_from_the_grid_overnight_is_refused(self) -> None:
-        """The ordinary installation whose premise fails.
+        assert measured["dark_charge_wh"] > 0.0, "the fixture did not charge in the dark"
+        assert gamma is not None, "a healthy grid-charged battery was refused"
+        assert gamma == pytest.approx(1.0 - efficiency, abs=0.002)
 
-        A cheap overnight tariff is not a fault, and the estimator has no
-        business measuring a slope on hours where the column it assumes absent
-        is the largest thing moving. The ratio is checked directly rather than
-        inferred, and such a house is handed back to the day fit.
+    @pytest.mark.parametrize("efficiency", [0.95, 0.90, 0.85])
+    def test_without_dark_charging_it_is_the_plain_slope_exactly(self, efficiency: float) -> None:
+        """Bit-identical, not merely close.
+
+        Where nothing charges after dark the locked column *is* the discharge
+        column for every candidate gamma, so the search is skipped rather than
+        approximated. This is what makes the lock free on the houses the
+        estimator already answered.
         """
-        series = house.measure_battery_dc(house.build(days=DAYS, seed=0), 0.90)
-        # 3 kW into the battery for four hours every night, taken from the grid,
-        # so the house still balances and only the premise is broken.
-        into = list(series.data["battery_charge"])
-        taken = list(series.data["grid_import"])
-        for hour in range(series.hours):
-            if hour % 24 in (1, 2, 3, 4):
-                into[hour] += 3000.0
-                taken[hour] += 3000.0
-        charged = series.copy_with(battery_charge=into, grid_import=taken)
+        series = house.measure_battery_dc(house.build(days=DAYS, seed=0), efficiency)
+        specs = specs_for()
+        request = to_request(series, specs=specs, declared=DECLARED)
+        days = build_days(request.buckets, specs, LossModel(), request.utc_offset_hours)
 
-        gamma, measured = _dark(charged)
+        blocks = _dark_blocks(days, specs)
+        assert blocks is not None
+        xs, cs, ys, *_ = blocks
+        assert not any(charge > 0.0 for charge in cs)
 
-        assert measured["dark_charge_wh"] > DARK_CHARGE_TOLERANCE * measured["dark_discharge_wh"]
-        assert gamma is None, "a grid-charged battery was measured on hours it charges in"
+        _gamma, measured = _dark(series)
+
+        assert measured["dark_gamma"] == _block_slope(xs, ys)[0]
+
+    def test_the_search_does_not_depend_on_where_it_started(self) -> None:
+        """Bisection rather than iteration, and the reason is recorded.
+
+        A plain fixed point two-cycles on some houses, which makes the answer at
+        any step cap arbitrary between two values. Halving a bracket has one
+        root and no convergence question, so the same house gives the same
+        number every time.
+        """
+        series = _grid_charged(
+            house.measure_battery_dc(house.build(days=DAYS, seed=1), 0.90), 8.0, 0.90
+        )
+
+        first, _ = _dark(series)
+        second, _ = _dark(series)
+
+        assert first == second
 
 
 class TestWhatTheDarkCannotSee:
@@ -269,3 +325,64 @@ class TestTheModelItFeeds:
 
         assert not model.established("battery_dc")
         assert model.battery_dc_gamma == 0.0
+
+
+class TestTheScreenThatKeepsItHonest:
+    """`MIN_LOAD_INDEPENDENCE`, and the fault it is the only guard against."""
+
+    @pytest.mark.parametrize("efficiency", [0.95, 0.90])
+    @pytest.mark.parametrize("channels", [None, NO_EXPORT])
+    def test_a_consumption_sensor_reading_low_is_refused_on_a_charging_house(
+        self, efficiency: float, channels
+    ) -> None:
+        """The decisive case for the whole design.
+
+        Admitting the charging hours admits more houses, and the question that
+        decides whether that is safe is not whether the figure is recovered but
+        whether this fault is still turned away. It is: the slope it produces is
+        half again the truth, and the load screen sees it at roughly +0.11
+        against a limit of 0.04 — a measurement rather than the identity it
+        would be if the charging hours had been dropped instead.
+
+        Run on both boundary shapes, because the open one is the reference
+        installation's and is where dropping hours breaks the screen.
+        """
+        base = _grid_charged(
+            house.measure_battery_dc(house.build(days=DAYS, seed=0), efficiency), 5.0, efficiency
+        )
+        if channels is not None:
+            base = house.drop(base, "grid_export")
+
+        healthy, _ = _dark(base, channels)
+        gamma, measured = _dark(house.scale(base, "load", 0.90), channels)
+
+        assert healthy is not None, "the healthy house was refused, so this proves nothing"
+        assert gamma is None, "a consumption sensor reading a tenth low was absorbed"
+        assert abs(measured["dark_load_share"]) > MAX_LOAD_PROPORTIONAL_SHARE
+
+    @pytest.mark.parametrize("efficiency", [0.95, 0.90])
+    def test_the_screen_is_a_measurement_and_not_an_identity(self, efficiency: float) -> None:
+        """What the independence figure exists to certify.
+
+        The load screen can fail silently: on a house where consumption is the
+        residual's mirror image it returns its own input, and a fault then lands
+        on the *safer* side of it. This figure is computed from the design
+        columns alone — the residual never enters — so no fault can flatter it,
+        and it must clear the floor before the screen above is believed.
+        """
+        series = _grid_charged(
+            house.measure_battery_dc(house.build(days=DAYS, seed=0), efficiency), 5.0, efficiency
+        )
+
+        gamma, measured = _dark(series)
+
+        assert gamma is not None
+        assert measured["dark_load_independence"] >= MIN_LOAD_INDEPENDENCE
+
+    def test_the_independence_figure_is_published_even_when_it_refuses(self) -> None:
+        """A refusal on this gate has to say so, like every other refusal here."""
+        series = house.measure_battery_dc(house.build(days=DAYS, seed=0), 0.90)
+
+        _gamma, measured = _dark(series)
+
+        assert "dark_load_independence" in measured
