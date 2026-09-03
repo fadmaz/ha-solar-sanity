@@ -1320,6 +1320,14 @@ def night_fit_raw(
     # looking at "still looking" and wanting to know why.
     out: dict[str, float] = dict(night_ledger(days, specs))
 
+    # The dark-hours estimator, for the same reason and on the same side of the
+    # gate. It needs sixty two-hour blocks where `_night_samples` needs two
+    # hundred hours, so it answers on houses this function used to leave
+    # silent — and it shipped below the gate, which meant the reference
+    # installation refused a gamma four different ways and published none of
+    # them. Seven ways of declining are seven different problems.
+    out.update(_dark_hours_battery(days, specs)[1])
+
     samples = _night_samples(days, specs)
     if samples is None:
         return out
@@ -1345,14 +1353,6 @@ def night_fit_raw(
     if residual is not None:
         out["median_night_residual_wh"] = residual
 
-    # What the dark-hours estimator saw, whether or not it was accepted. Seven
-    # ways of refusing a gamma all leave the term at 0.0 and the same empty
-    # tuple behind, and "too few blocks", "the blocks disagree", "that is not a
-    # loss fraction" and "something else in the dark moves with it" are four
-    # different problems. Recomputed rather than threaded out of
-    # `fit_loss_model`, which is what this function already does for the night
-    # line beside it.
-    out.update(_dark_hours_battery(days, specs)[1])
     return out
 
 
