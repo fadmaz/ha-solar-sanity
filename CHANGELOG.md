@@ -2,6 +2,28 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.26.1] - 2026-09-03
+
+### Fixed
+
+- **When the battery figure cannot be established, the diagnostics download now
+  says why.** 0.26.0 added a measurement taken on the hours after dark, and said
+  that a house it could not answer would still be told what was seen. On a large
+  share of houses it was not: the figures were assembled below a check that
+  stops early on any installation with fewer than two hundred night hours, which
+  is most of them for the first fortnight, and every installation whose battery
+  is quiet overnight.
+
+  Those are precisely the houses the new measurement exists to answer, so the
+  explanation was missing wherever it was worth having. There are seven distinct
+  reasons the figure can be declined and they are seven different situations —
+  not enough nights yet, the nights disagree with each other, something else in
+  the house moves with the battery, the number is not a loss fraction at all.
+  All of them now appear in the download, whether the figure was taken or not.
+
+  Found by replaying a real installation, which declined the figure four ways at
+  once and reported none of them.
+
 ## [0.26.0] - 2026-09-02
 
 ### Added
