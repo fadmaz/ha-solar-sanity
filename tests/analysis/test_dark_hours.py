@@ -25,8 +25,10 @@ from analysis.topology import (
     DARK_CHARGE_TOLERANCE,
     DC_BATTERY_GAMMA_WINDOW,
     MAX_LOAD_PROPORTIONAL_SHARE,
+    MIN_NIGHT_BLOCKS,
     _dark_hours_battery,
     fit_loss_model,
+    night_fit_raw,
 )
 
 from tests.synth import house
@@ -180,6 +182,44 @@ class TestItSaysWhatItSaw:
         assert measured["dark_gamma"] == pytest.approx(1.0 - efficiency, abs=0.01)
         assert "dark_gamma_half_width" in measured
         assert "dark_blocks" in measured
+
+
+class TestTheReportCarriesThem:
+    """Measuring something and publishing it are two different things.
+
+    The estimator returned its numbers from the first commit and the report
+    dropped them, because the call sat below ``night_fit_raw``'s two-hundred-hour
+    gate. The houses past that gate are exactly the houses the dark hours exist
+    to answer, so the disclosure was missing wherever it was worth having — the
+    reference installation refused a gamma four separate ways and said none of
+    them. The comment above that gate warns about this precise trap for the
+    night ledger; the fix is to sit beside the ledger.
+    """
+
+    def _raw(self, series, channels=None):
+        specs = specs_for(channels) if channels else specs_for()
+        request = to_request(series, specs=specs, declared=DECLARED)
+        days = build_days(request.buckets, specs, LossModel(), request.utc_offset_hours)
+        return night_fit_raw(days, specs)
+
+    def test_a_house_the_night_fit_cannot_speak_about_still_reports_the_dark_hours(
+        self,
+    ) -> None:
+        """Ten days is under two hundred night hours and over sixty blocks."""
+        raw = self._raw(house.measure_battery_dc(house.build(days=10, seed=0), 0.88))
+
+        assert "night_slope" not in raw, "this fixture is meant to be past the night gate"
+        assert raw["dark_blocks"] >= MIN_NIGHT_BLOCKS
+        assert raw["dark_gamma"] == pytest.approx(0.12, abs=0.01)
+
+    @pytest.mark.parametrize("efficiency", [0.88, 0.70])
+    def test_the_figures_are_published_whether_or_not_the_gamma_is_taken(
+        self, efficiency: float
+    ) -> None:
+        raw = self._raw(house.measure_battery_dc(house.build(days=DAYS, seed=0), efficiency))
+
+        for key in ("dark_blocks", "dark_gamma", "dark_gamma_half_width", "dark_charge_wh"):
+            assert key in raw, f"{key} missing at efficiency {efficiency}"
 
 
 class TestItDoesNotMove:
