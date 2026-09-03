@@ -8,9 +8,6 @@ from typing import Final
 DOMAIN: Final = "solar_sanity"
 PLATFORMS: Final = ["sensor", "binary_sensor"]
 
-#: Bumped only on a breaking change to the WebSocket schema. This — not the
-#: integration's version — is what the card checks compatibility against, so a
-
 URL_BASE: Final = "/solar_sanity"
 CARD_FILENAME: Final = "solar-sanity.js"
 

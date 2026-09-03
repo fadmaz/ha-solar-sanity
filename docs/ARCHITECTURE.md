@@ -888,38 +888,47 @@ is missing; a test that drives `async_register` against a fake Lovelace
 collection in both attribute shapes; and a CI step that fails, rather than
 skips, when the smoke test finds no bundle.
 
-### 6. A known dead zone in the loss fit, with the fix written down and not done
+### 6. The loss fit's dead zone, narrowed but still a cliff
 
-**Evidence.** `tests/analysis/test_clean_corpus.py:160-178` pins that a
-healthy DC-coupled battery below 0.90 round-trip efficiency gets
-`investigating` forever, and says so: "A known limitation, pinned. This
-failing is good news." `tests/synth/corpus.py:85-92` excludes those houses
-from the clean gate because "the engine does not yet reach a verdict on one".
-`topology.py:82-100` explains why the obvious widening was measured and
-rejected (the charge and generation columns are nearly collinear, so the
-fitted coefficient wanders by 0.093 against a 0.125 signal) and ends: "Fixing
-that means constraining the pair to one parameter and profiling over it
-rather than fitting two free coefficients. Worth doing; not done here."
+**Resolved in 0.26.0, and worth reading rather than deleting**, because what
+replaced it is not what the old comment predicted. The battery's loss fraction
+is now measured on the dark hours (`topology._dark_hours_battery`), where
+charging is identically zero because charging *is* the surplus, so the column
+that made the day fit collinear is not there to trade against. The boundary
+moved from 0.90 to 0.80 round trip, the figure is recovered exactly down to
+there, and a generation term the old refit branch fabricated on those houses
+is gone.
 
-**Why it matters.** Real hardware in that band never gets an answer, and the
-narrow band that does work is a cliff: rejection is all-or-nothing, so a
-coefficient just outside the window means nothing is subtracted at all.
+Three constrained day-fit designs were built and measured first. All three
+recovered the coefficient, and all three were rejected for the same reason:
+each also absorbed the timing artefact pinned by
+`test_open_boundary.py::TestASurplusThatComesBackIsNotExport`, which is the
+reference installation's own signature. Run that test first if this is ever
+reopened.
 
-**Finished looks like.** The single-parameter constrained fit the comment
-describes, and the pinned test moving down with it.
+**What remains.** The boundary is still a cliff, eleven points lower: a
+coefficient one unit in the last place outside `DC_BATTERY_GAMMA_WINDOW` means
+nothing whatever is subtracted. Winter windows on a small array are refused as
+imprecise and fall back to the day fit, so coverage there is unchanged.
+`DARK_CHARGE_TOLERANCE` is a threshold set from one synthetic grid-charged
+house, and a house that grid-charges lightly would pass it and bias the slope
+down by an unmeasured amount. A dark-hour draw proportional to battery
+throughput is the same signal as conversion loss and is absorbed silently; the
+mitigation is the disclosure note, not detection.
 
 ### 7. Prose that describes behaviour the code no longer has
 
-**Evidence.** `README.md:91-95` and the docstring at
-`tests/analysis/test_loss_notes.py:7-11` say the two conversion-loss notes are
-"written and deliberately still silent" and point at
-`TestTheDcNotesStaySilent`; that class is now `TestTheDcNotesAreSpokenNow`
-(`:240`) and `engine.py:745-762` emits both notes. `README.md:160` says
-"Scoring is not shipped yet"; 0.20.0 shipped the per-provider bias sensor and
-0.22.0 the corrected-tomorrow sensor and `rescore_forecasts`. `README.md:306-321`
-claims 887 tests, 104 card tests and 98 healthy scenarios against a measured
-1,791, 130, and 600 fast plus 3,000 full. `const.py:11-13` is a docstring for
-a WebSocket schema constant that was deleted, cut off mid-sentence.
+**Largely resolved.** The README's "Scoring is not shipped yet", its claim that
+the two conversion-loss notes are still silent, its stale test counts and two
+entity ids that did not exist were all corrected; the `test_loss_notes.py`
+docstring and the orphaned `const.py` docstring went with them. What follows is
+kept because the *class* of defect is what matters here, and it recurs.
+
+**Evidence, as it stood.** `README.md` told a new user that forecast scoring was
+not shipped, two releases after it shipped, and documented
+`sensor.*_expected_tomorrow` and `sensor.*_corrections_active`, neither of which
+exists — entity ids come from the display name in the translations, not from the
+`translation_key`, and no test asserts this integration's own ids.
 
 **Why it matters.** This product's thesis is that it says exactly what it
 measured. Documentation that says the opposite of the code undermines that,
