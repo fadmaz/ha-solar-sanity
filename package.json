@@ -15,10 +15,10 @@
   },
   "devDependencies": {
     "@mdi/js": "^7.4.47",
-    "concurrently": "^10.0.5",
-    "happy-dom": "^20.11.12",
+    "concurrently": "^10.0.6",
+    "happy-dom": "^20.14.6",
     "typescript": "^7.0.2",
-    "vite": "^8.2.2",
+    "vite": "^8.3.4",
     "vitest": "^4.1.11"
   }
 }
