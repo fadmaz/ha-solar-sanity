@@ -185,3 +185,6 @@ custom_components/solar_sanity/frontend/*.js
 custom_components/solar_sanity/frontend/*.map
 node_modules/
 .hass_dev/
+# Diagnostics downloads replayed by scripts/backtest_outlook.py. They hold a
+# real house's entity ids and a month of its consumption; never commit one.
+diagnostics/
