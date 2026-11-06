@@ -41,6 +41,31 @@ close, it names the sensor and explains what is wrong with it:
 Findings appear in Home Assistant's **Repairs** panel, with the real fix
 alongside — not buried in a log.
 
+## Battery outlook
+
+Map your battery's **charge level** and give its **capacity**, and five more
+sensors appear, all read off one projection of the charge from now until the
+forecast runs out:
+
+| Sensor | Answers |
+| --- | --- |
+| Battery full at | When will it reach its charging target? |
+| Battery reaches reserve at | When will it reach the reserve, if before the sun takes over? Unknown means it lasts |
+| Lowest battery before sunrise | How low will it fall tonight? |
+| Safe average load tonight | How much can the house draw, on average, until the sun takes over? |
+| Spare solar | How much sunshine will the battery have no room for? |
+
+Consumption is learned from your history, hour by hour. The night read-outs
+work without a forecast provider; *full at* and *spare solar* need one, because
+an inverter with nowhere to send a surplus records production cut back to what
+it could use, and that history understates the sun.
+
+Two things it deliberately does not do. It **never counts grid charging**: the
+question it answers is whether the battery alone would get the house there,
+which is the one that matters during an outage and the safe one otherwise. And
+it **publishes unknown rather than a guess** — every unknown state carries a
+`reason` attribute saying why.
+
 ## What it deliberately does not do
 
 - **It does not report money.** Not savings, not payback, not bills. Those
@@ -297,6 +322,11 @@ They exist because one uncorrected fault masks every other one.
 | `sensor.*_data_completeness` | How much of the picture exists right now |
 | `sensor.*_corrections_in_effect` | Diagnostic overrides in effect |
 | `sensor.*_live_residual` | Instantaneous imbalance, in watts. Only created when every channel reports a rate |
+| `sensor.*_battery_full_at` | When the battery will reach its charging target. Needs a forecast provider |
+| `sensor.*_battery_reaches_reserve_at` | When it will reach reserve, if before the sun takes over |
+| `sensor.*_lowest_battery_before_sunrise` | Tonight's projected minimum, with the whole trajectory in an attribute |
+| `sensor.*_safe_average_load_tonight` | The steadiest load the battery can carry until the sun takes over |
+| `sensor.*_spare_solar` | Sunshine the battery will have no room for. Needs a forecast provider |
 
 **Download diagnostics** on the device page is the fastest way to understand a
 verdict. It carries per-channel coverage, both forecast archives, and every

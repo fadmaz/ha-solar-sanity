@@ -44,8 +44,13 @@ from .const import (
     CONF_LOAD_WHOLE_HOUSE,
     CONF_ORIGIN,
     CONF_ROLE,
+    DEFAULT_RESERVE_PCT,
+    DEFAULT_TARGET_PCT,
     DOMAIN,
+    OPT_BATTERY_CAPACITY_KWH,
+    OPT_BATTERY_RESERVE_PCT,
     OPT_BATTERY_SOC,
+    OPT_BATTERY_TARGET_PCT,
     OPT_GUARANTEED_ANNUAL_KWH,
     OPT_SUPPRESSED,
 )
@@ -114,13 +119,92 @@ def _channel_schema(discovery: Discovery, current: dict[str, str]) -> vol.Schema
     #
     # Not a channel and never in `CONF_CHANNELS`: it is a level in percent
     # rather than a flow in watt-hours, and it takes no part in the balance. It
-    # is stored in options, which is also where reconfigure keeps it.
+    # is where the battery outlook starts from, and picking it is what makes the
+    # next step ask how big the battery is. Stored in options, which is also
+    # where reconfigure keeps it.
     fields[
         vol.Optional(OPT_BATTERY_SOC, description={"suggested_value": current.get(OPT_BATTERY_SOC)})
     ] = selector.EntitySelector(
         selector.EntitySelectorConfig(domain="sensor", device_class="battery")
     )
     return vol.Schema(fields)
+
+
+#: The three battery settings, in the order they are asked.
+BATTERY_OPTIONS: tuple[str, ...] = (
+    OPT_BATTERY_CAPACITY_KWH,
+    OPT_BATTERY_RESERVE_PCT,
+    OPT_BATTERY_TARGET_PCT,
+)
+
+
+def _capacity_selector() -> selector.NumberSelector:
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0.1,
+            max=1000,
+            step=0.1,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement="kWh",
+        )
+    )
+
+
+def _percent_selector(low: int, high: int) -> selector.NumberSelector:
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=low,
+            max=high,
+            step=1,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement="%",
+        )
+    )
+
+
+def _battery_fields(current: dict[str, Any]) -> dict[Any, Any]:
+    """Capacity, reserve and target, pre-filled from ``current``.
+
+    Asked only once a charge-level sensor has been picked: they are what turns
+    its percentage into hours, and without it there is nothing to turn.
+    Capacity has no default because a guessed one would project somebody else's
+    battery; reserve and target do, because the common values are right for most.
+    """
+    return {
+        vol.Optional(
+            OPT_BATTERY_CAPACITY_KWH,
+            description={"suggested_value": current.get(OPT_BATTERY_CAPACITY_KWH)},
+        ): _capacity_selector(),
+        vol.Optional(
+            OPT_BATTERY_RESERVE_PCT,
+            default=current.get(OPT_BATTERY_RESERVE_PCT, DEFAULT_RESERVE_PCT),
+        ): _percent_selector(0, 95),
+        vol.Optional(
+            OPT_BATTERY_TARGET_PCT,
+            default=current.get(OPT_BATTERY_TARGET_PCT, DEFAULT_TARGET_PCT),
+        ): _percent_selector(10, 100),
+    }
+
+
+def _battery_values(user_input: dict[str, Any]) -> dict[str, float]:
+    """The battery settings that were actually given."""
+    return {
+        key: float(user_input[key])
+        for key in BATTERY_OPTIONS
+        if user_input.get(key) not in (None, "")
+    }
+
+
+def _battery_errors(user_input: dict[str, Any] | None, *, asked: bool) -> dict[str, str]:
+    """A target at or below the reserve leaves the battery no range to use."""
+    if user_input is None or not asked:
+        return {}
+    values = _battery_values(user_input)
+    reserve = values.get(OPT_BATTERY_RESERVE_PCT, DEFAULT_RESERVE_PCT)
+    target = values.get(OPT_BATTERY_TARGET_PCT, DEFAULT_TARGET_PCT)
+    if target <= reserve:
+        return {"base": "target_below_reserve"}
+    return {}
 
 
 def _battery_mapped(channels: dict[str, str]) -> bool:
@@ -135,6 +219,7 @@ def _topology_schema(
     channels: dict[str, str],
     providers: list[tuple[str, str]],
     current: dict[str, Any],
+    soc_selected: bool = False,
 ) -> vol.Schema:
     """The questions worth asking, given what the mapping already answers.
 
@@ -183,6 +268,9 @@ def _topology_schema(
                 mode=selector.SelectSelectorMode.LIST,
             )
         )
+
+    if soc_selected:
+        fields.update(_battery_fields(current))
 
     return vol.Schema(fields)
 
@@ -307,7 +395,8 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Three questions the user knows the answer to."""
-        if user_input is not None:
+        errors = _battery_errors(user_input, asked=bool(self._battery_soc))
+        if user_input is not None and not errors:
             return self.async_create_entry(
                 title="Solar Sanity",
                 data={
@@ -326,16 +415,22 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                     **_topology_values(user_input, self._channels),
                 },
                 options=(
-                    # Options, not data: it is not a channel and reconfigure
-                    # must be able to change it without rewriting the mapping.
-                    {OPT_BATTERY_SOC: self._battery_soc} if self._battery_soc else {}
+                    # Options, not data: none of these is a channel, and
+                    # reconfigure must be able to change them without rewriting
+                    # the mapping.
+                    {OPT_BATTERY_SOC: self._battery_soc, **_battery_values(user_input)}
+                    if self._battery_soc
+                    else {}
                 ),
             )
 
         providers = await async_forecast_providers(self.hass)
         return self.async_show_form(
             step_id="topology",
-            data_schema=_topology_schema(self._channels, providers, {}),
+            data_schema=_topology_schema(
+                self._channels, providers, dict(user_input or {}), bool(self._battery_soc)
+            ),
+            errors=errors,
         )
 
     async def async_step_reconfigure(
@@ -407,8 +502,9 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
         installations end up fighting over one forecast archive.
         """
         entry = self._get_reconfigure_entry()
+        errors = _battery_errors(user_input, asked=bool(self._battery_soc))
 
-        if user_input is not None:
+        if user_input is not None and not errors:
             # `options` REPLACES rather than merges, and there is no
             # `options_updates` — checked against the 2026.2.3 source after
             # writing one that does not exist. Every local test still passed,
@@ -418,6 +514,12 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
             options = {k: v for k, v in entry.options.items() if k != OPT_BATTERY_SOC}
             if self._battery_soc:
                 options[OPT_BATTERY_SOC] = self._battery_soc
+                # Only the rows this form showed are rewritten, and it shows them
+                # only with a charge-level sensor. Clearing that sensor leaves the
+                # battery's size where it was rather than forgetting it.
+                for key in BATTERY_OPTIONS:
+                    options.pop(key, None)
+                options.update(_battery_values(user_input))
 
             return self.async_update_reload_and_abort(
                 entry,
@@ -431,9 +533,13 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
             )
 
         providers = await async_forecast_providers(self.hass)
+        current = {**entry.data, **entry.options, **(user_input or {})}
         return self.async_show_form(
             step_id="reconfigure_topology",
-            data_schema=_topology_schema(self._channels, providers, dict(entry.data)),
+            data_schema=_topology_schema(
+                self._channels, providers, current, bool(self._battery_soc)
+            ),
+            errors=errors,
         )
 
     @staticmethod
@@ -458,8 +564,9 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         fields = self._fields()
+        errors = _battery_errors(user_input, asked=True)
 
-        if user_input is not None:
+        if user_input is not None and not errors:
             # Merge, then drop what was offered and left blank. `vol.Optional`
             # omits a cleared field rather than sending an empty one, so a plain
             # `{**options, **user_input}` puts the old value straight back and a
@@ -482,8 +589,9 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(fields), self.config_entry.options
+                vol.Schema(fields), {**self.config_entry.options, **(user_input or {})}
             ),
+            errors=errors,
         )
 
     def _fields(self) -> dict[Any, Any]:
@@ -500,14 +608,22 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
             ),
         }
 
-        # Optional, and offered here rather than at setup because it buys one
-        # narrow thing rather than being part of the balance: when a battery
-        # meter's reported throughput steps, this is what says whether the
-        # battery changed or the meter did. Filtered to battery-percentage
-        # sensors, which is what a BMS publishes.
+        # Optional, and the start of the battery outlook: everything it projects
+        # begins from this reading. It also still answers, when a battery
+        # meter's reported throughput steps, whether the battery changed or the
+        # meter did. Filtered to battery-percentage sensors, which is what a BMS
+        # publishes.
         fields[vol.Optional(OPT_BATTERY_SOC)] = selector.EntitySelector(
             selector.EntitySelectorConfig(domain="sensor", device_class="battery")
         )
+        # Always offered here, unlike in the wizard: this form cannot show a row
+        # in answer to another row on the same page, and somebody adding the
+        # charge-level sensor now needs to say how big the battery is now.
+        # Suggested values rather than defaults, so clearing a row is possible
+        # and falls back to the default instead of being refilled.
+        fields[vol.Optional(OPT_BATTERY_CAPACITY_KWH)] = _capacity_selector()
+        fields[vol.Optional(OPT_BATTERY_RESERVE_PCT)] = _percent_selector(0, 95)
+        fields[vol.Optional(OPT_BATTERY_TARGET_PCT)] = _percent_selector(10, 100)
 
         dismissible = self._dismissible_codes()
         if dismissible:

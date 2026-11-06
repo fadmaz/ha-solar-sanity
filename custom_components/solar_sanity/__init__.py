@@ -86,6 +86,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     # impossibilities that average out inside an hourly bucket.
     def _tripwire(_now: Any) -> None:
         coordinator.capture_live()
+        # Only when the charge level has moved since the last projection; the
+        # five-minute tick below recomputes regardless.
+        coordinator.battery.refresh()
         # Also on this tick, not only the five-minute one. Completeness and the
         # live residual describe *now*, and after a restart they read 0% for a
         # full five minutes — which looks exactly like the failure they exist to
@@ -99,9 +102,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     # assuming the last reading held for five minutes is where the noise came
     # from that made a healthy system read "still looking" half the time.
     entry.async_on_unload(coordinator.async_track_power())
+    entry.async_on_unload(coordinator.battery.async_track())
 
     def _sample(_now: Any) -> None:
         coordinator.accumulate()
+        coordinator.battery.refresh(force=True)
         # Sensors describing live state must not wait for the six-hourly
         # analysis before they are rewritten.
         coordinator.notify_live_entities()
@@ -120,6 +125,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
 
     entry.async_on_unload(async_track_time_interval(hass, _capture, FORECAST_CAPTURE_INTERVAL))
     await _capture(None)
+    # Before the platforms are set up, so the outlook sensors are born with a
+    # projection, or with the reason there is none, rather than blank.
+    coordinator.battery.refresh(force=True)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     # Before this entry's own reconcile, and against every entry rather than

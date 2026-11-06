@@ -34,6 +34,13 @@ status sensor (`ok`, `insufficient_data`, `not_checkable`, `investigating`,
 at most one finding in Home Assistant's Repairs panel. A Lit-based Lovelace card
 renders the verdict and, separately, an archived day-ahead solar forecast.
 
+Since 0.28.0 a second product runs beside the check: the **battery outlook**.
+`analysis/outlook.py` simulates the battery's charge an hour at a time from
+now to the end of the forecast, and five sensors are read off that one
+trajectory (full at, reserve at, lowest before sunrise, safe average load,
+spare solar). The check is to be retired once the outlook has been measured
+against real history; until then the two share the window and nothing else.
+
 Two design rules shape everything:
 
 - **Silence is the product.** The stated budget is fewer than one false finding
@@ -90,6 +97,8 @@ Ignored local directories you will see but git does not: `.venv/`, `node_modules
 | `scoring.py`, `yield_check.py` | Forecast-versus-actual bias, and a year of generation against an installer's guarantee. |
 | `frontend.py` | Serves and registers the built card. |
 | `diagnostics.py` | Redacted download that includes a replayable window. |
+| `battery_outlook.py` | The outlook's Home Assistant side: reads the charge level when computing (never at setup), doubts a stale one, picks a fresh forecast, keeps published times steady. |
+| `analysis/outlook.py`, `analysis/profile.py` | The pure projection and the hour-of-day profiles it runs on. Consumption keyed by local hour, production by UTC hour. |
 
 ### 3.2 Data flow
 
@@ -163,6 +172,10 @@ places: `OptionsFlowWithReload` for options (`config_flow.py:456`),
 | 30 min | `FORECAST_CAPTURE_INTERVAL` (`const.py:102`) | `async_capture_forecasts` (`coordinator.py:678`) pulls each selected provider through the public energy platform and writes two external statistic series per provider (section 3.8). |
 | 6 h | `ANALYSIS_INTERVAL` (`const.py:88`) | `_async_update_data` (`coordinator.py:828`) builds an `AnalysisRequest`, runs `analysis.engine.analyse` in an executor (`:844`), caches the fitted `LossModel`, persists, scores forecasts, and runs the yield check (`:849-851`). Also triggered by the `validate_now` service. |
 
+The battery outlook rides the first two: the 30-second tick recomputes it
+when the charge level has changed since the last projection, and the
+five-minute tick recomputes it regardless.
+
 Backfill (`__init__.py:165-220`) classifies each mapped entity as sum-backed,
 mean-backed or unrecorded, pulls `BACKFILL_DAYS = 30` of hourly statistics and
 calls `ingest_backfill` (`coordinator.py:622`), which never overwrites an hour
@@ -179,6 +192,13 @@ Unique ids are `f"{entry.entry_id}_{key}"`. Sensors (`sensor.py:114-173`):
 (diagnostic, disabled by default), plus one `forecast_bias_<provider>` per
 configured provider. The binary sensor `data_healthy` has device class
 `problem`, inverted.
+
+The five outlook sensors (`battery_full_at`, `battery_reserve_at`,
+`battery_lowest_before_sunrise`, `safe_average_load`, `spare_solar`) are
+created when `entry.options` holds both a charge-level sensor and a capacity,
+never on live state. They are unavailable only while the charge level is,
+and otherwise unknown with a `reason` attribute, because unavailable hides
+attributes. None carries a `state_class`.
 
 The rules the tests in `tests/test_entity_honesty.py` and
 `tests/test_live_state_honesty.py` pin:

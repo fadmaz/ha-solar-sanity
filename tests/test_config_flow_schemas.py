@@ -508,6 +508,9 @@ class TestReconfigureCoversEverything:
                 "grid_is_net",
                 "load_whole_house",
                 "forecast_entries",
+                "battery_capacity_kwh",
+                "battery_reserve_pct",
+                "battery_target_pct",
             }
 
 

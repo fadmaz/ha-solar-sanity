@@ -2,6 +2,50 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.28.0] - 2026-11-06
+
+### Added
+
+- **A battery outlook: five sensors that say where your battery is heading.**
+  Map your battery's charge level and tell Solar Sanity how big the battery is,
+  and it projects the charge an hour at a time from now until the forecast runs
+  out:
+
+  - **Battery full at** — when it will reach its charging target.
+  - **Battery reaches reserve at** — when it will reach your reserve, if that
+    happens before the sun takes over in the morning. Unknown means it lasts.
+  - **Lowest battery before sunrise** — how low it will fall tonight.
+  - **Safe average load tonight** — the steadiest load the house could draw
+    until the sun takes over without the battery reaching reserve.
+  - **Spare solar** — sunshine the battery will have no room for today (or
+    tomorrow, at night), which is yours to use.
+
+  Consumption is learned from your own history, hour by hour, so the outlook
+  works from the first day if Home Assistant already has a couple of weeks of
+  it. The night read-outs work without a forecast provider; the two daytime
+  ones need one, because an inverter with nowhere to send a surplus records
+  production cut back to what it could use, and that history understates the
+  sun.
+
+  Grid charging is never counted. The outlook answers the question that
+  matters when the grid is out: would the battery alone get the house there?
+  When the battery has been charged from the grid recently, the lowest-battery
+  sensor says so in an attribute.
+
+- **Battery capacity, reserve and charging target settings.** Asked in the
+  setup wizard once a charge-level sensor is picked, and in Configure. Without
+  a capacity the outlook sensors are not created.
+
+### Notes
+
+- This is the first step of a change of direction. The energy-balance check
+  will be retired once the outlook has been measured against real
+  installations; until then both run side by side and nothing about the check
+  changes in this release.
+- Diagnostics now carry a month of hourly charge level and both forecast
+  archives, so the outlook can be replayed against what the battery actually
+  did.
+
 ## [0.27.0] - 2026-09-03
 
 ### Changed
