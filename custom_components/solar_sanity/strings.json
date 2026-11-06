@@ -21,7 +21,7 @@
           "grid_export": "Power or energy sent to the grid.",
           "battery_charge": "Energy going into the battery.",
           "battery_discharge": "Energy coming out of the battery.",
-          "battery_soc_entity": "Your battery's charge percentage, if you have it. It takes no part in the arithmetic. It is here for one job: if your battery's charge or discharge readings ever change abruptly, this is the only sensor that can say whether the battery changed or just the meter reporting it."
+          "battery_soc_entity": "Your battery's charge percentage, if you have it. It is where the battery outlook starts: when the battery will be full, when it will reach its reserve, and how much the house can use tonight. Picking it makes the next step ask how big the battery is."
         }
       },
       "topology": {
@@ -31,11 +31,17 @@
           "has_battery": "Do you have a home battery?",
           "grid_is_net": "Is your grid connection one sensor that goes negative when exporting?",
           "load_whole_house": "Does your consumption sensor cover the whole house?",
-          "forecast_entries": "Solar forecast integrations to keep history for"
+          "forecast_entries": "Solar forecast integrations to keep history for",
+          "battery_capacity_kwh": "Usable battery capacity (kWh)",
+          "battery_reserve_pct": "Reserve (%)",
+          "battery_target_pct": "Charging target (%)"
         },
         "data_description": {
           "load_whole_house": "Answer \"No\" if it only covers a backup or critical-loads panel.",
-          "forecast_entries": "Home Assistant discards yesterday's forecast, so Solar Sanity records it as it is issued. Pick any forecast integrations you already have."
+          "forecast_entries": "Home Assistant discards yesterday's forecast, so Solar Sanity records it as it is issued. Pick any forecast integrations you already have.",
+          "battery_capacity_kwh": "How much energy the battery holds between empty and full, as its specification or your inverter states it. The battery outlook needs this to turn a percentage into hours; without it the outlook sensors are not created.",
+          "battery_reserve_pct": "The level the battery is not taken below, usually your inverter's cut-off. \"Reaches reserve\" in the outlook means reaching this, not zero.",
+          "battery_target_pct": "The level the battery is charged to, usually 100. Lower it if your inverter stops charging early; sunshine beyond it counts as spare."
         }
       },
       "reconfigure": {
@@ -51,7 +57,7 @@
           "battery_soc_entity": "Battery charge level (optional)"
         },
         "data_description": {
-          "battery_soc_entity": "Your battery's charge percentage, if you have it. It takes no part in the arithmetic. It is here for one job: if your battery's charge or discharge readings ever change abruptly, this is the only sensor that can say whether the battery changed or just the meter reporting it."
+          "battery_soc_entity": "Your battery's charge percentage, if you have it. It is where the battery outlook starts: when the battery will be full, when it will reach its reserve, and how much the house can use tonight. Picking it makes the next step ask how big the battery is."
         }
       },
       "reconfigure_topology": {
@@ -61,11 +67,17 @@
           "has_battery": "Do you have a home battery?",
           "grid_is_net": "Is your grid connection one sensor that goes negative when exporting?",
           "load_whole_house": "Does your consumption sensor cover the whole house?",
-          "forecast_entries": "Solar forecast integrations to keep history for"
+          "forecast_entries": "Solar forecast integrations to keep history for",
+          "battery_capacity_kwh": "Usable battery capacity (kWh)",
+          "battery_reserve_pct": "Reserve (%)",
+          "battery_target_pct": "Charging target (%)"
         },
         "data_description": {
           "load_whole_house": "Answer \"No\" if it only covers a backup or critical-loads panel.",
-          "forecast_entries": "Home Assistant discards yesterday's forecast, so Solar Sanity records it as it is issued. Removing a provider here stops new history being kept for it; what is already recorded stays."
+          "forecast_entries": "Home Assistant discards yesterday's forecast, so Solar Sanity records it as it is issued. Removing a provider here stops new history being kept for it; what is already recorded stays.",
+          "battery_capacity_kwh": "How much energy the battery holds between empty and full, as its specification or your inverter states it. The battery outlook needs this to turn a percentage into hours; without it the outlook sensors are not created.",
+          "battery_reserve_pct": "The level the battery is not taken below, usually your inverter's cut-off. \"Reaches reserve\" in the outlook means reaching this, not zero.",
+          "battery_target_pct": "The level the battery is charged to, usually 100. Lower it if your inverter stops charging early; sunshine beyond it counts as spare."
         }
       },
       "overlap": {
@@ -77,7 +89,8 @@
       "load_required": "A consumption sensor is required. Without one the balance closes by definition and Solar Sanity cannot check anything.",
       "pv_required": "A generation sensor is required.",
       "duplicate_entity": "The same sensor is mapped to two different roles. One sensor cannot be on both sides of the calculation — it would cancel itself out.",
-      "load_already_monitored": "Another Solar Sanity installation already measures consumption with this sensor, so the two describe the same house. Reconfigure that one instead — every sensor it uses can be changed without losing any history."
+      "load_already_monitored": "Another Solar Sanity installation already measures consumption with this sensor, so the two describe the same house. Reconfigure that one instead — every sensor it uses can be changed without losing any history.",
+      "target_below_reserve": "The charging target must be above the reserve, or the battery has no range to use."
     },
     "abort": {
       "reconfigure_successful": "Sensor mapping updated."
@@ -90,14 +103,23 @@
         "data": {
           "guaranteed_annual_kwh": "Guaranteed annual production (kWh)",
           "suppressed_codes": "Findings to stop reporting",
-          "battery_soc_entity": "Battery charge level"
+          "battery_soc_entity": "Battery charge level",
+          "battery_capacity_kwh": "Usable battery capacity (kWh)",
+          "battery_reserve_pct": "Reserve (%)",
+          "battery_target_pct": "Charging target (%)"
         },
         "data_description": {
           "guaranteed_annual_kwh": "The yearly figure your installer promised, if you have it. Compared against what you actually produced, once there is a full year of history to compare.",
           "suppressed_codes": "Anything ticked here will not be raised again. Only findings this installation has actually been given are listed, and a dismissal can be undone by unticking it.",
-          "battery_soc_entity": "Optional. Your battery's state of charge, as a percentage. It takes no part in the energy arithmetic — it is there for one job: if your battery's charge or discharge readings ever change abruptly, this is the only sensor that can say whether the battery changed or just the meter reporting it."
+          "battery_soc_entity": "Optional. Your battery's state of charge, as a percentage. With the capacity below, it is what the battery outlook projects from. It also says, if your battery's charge or discharge readings ever change abruptly, whether the battery changed or just the meter reporting it.",
+          "battery_capacity_kwh": "How much energy the battery holds between empty and full, as its specification or your inverter states it. The battery outlook needs this to turn a percentage into hours; without it the outlook sensors are not created.",
+          "battery_reserve_pct": "The level the battery is not taken below, usually your inverter's cut-off. \"Reaches reserve\" in the outlook means reaching this, not zero.",
+          "battery_target_pct": "The level the battery is charged to, usually 100. Lower it if your inverter stops charging early; sunshine beyond it counts as spare."
         }
       }
+    },
+    "error": {
+      "target_below_reserve": "The charging target must be above the reserve, or the battery has no range to use."
     }
   },
   "selector": {
@@ -176,6 +198,21 @@
       },
       "expected_tomorrow_corrected": {
         "name": "Expected tomorrow (corrected)"
+      },
+      "battery_full_at": {
+        "name": "Battery full at"
+      },
+      "battery_reserve_at": {
+        "name": "Battery reaches reserve at"
+      },
+      "battery_lowest_before_sunrise": {
+        "name": "Lowest battery before sunrise"
+      },
+      "safe_average_load": {
+        "name": "Safe average load tonight"
+      },
+      "spare_solar": {
+        "name": "Spare solar"
       }
     },
     "binary_sensor": {
