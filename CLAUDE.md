@@ -31,6 +31,16 @@ Replay a real installation from its diagnostics download (no CLI exists, and no 
 python -c "import sys; sys.path[:0] = ['.', 'custom_components/solar_sanity']; from tests.synth import replay; from analysis.engine import analyse; print(analyse(replay.request_from(replay.load('diagnostics.json'))))"
 ```
 
+Grade the battery outlook against what a real battery did (put downloads in the git-ignored
+`diagnostics/`; a download older than 0.28.0 needs the charge level as a history export via
+`--soc-csv`, and its nights are graded against production history rather than a forecast):
+
+```bash
+python scripts/backtest_outlook.py diagnostics/<download>.json --capacity 27 --reserve 35 --tz Asia/Jerusalem --evening 18 20 22 --verbose
+```
+
+The gate before the energy-balance check is deleted counts distinct nights, not projections.
+
 Without Home Assistant installed, `tests/integration` is not collected and eight top-level test
 modules skip, silently. At 0.26.0 that is 1,797 tests locally against roughly 2,050 on CI, plus 131 card
 tests. Say in the PR when the HA tier did not run locally. The `Unknown config option:
