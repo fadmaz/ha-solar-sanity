@@ -54,6 +54,7 @@ from .analysis.model import (
     Status,
 )
 from .analysis.residual import MIN_VALID_BUCKETS_PER_DAY
+from .battery_outlook import BatteryOutlook
 from .const import (
     ANALYSIS_INTERVAL,
     COMPLETENESS_GRACE,
@@ -84,6 +85,7 @@ from .statistics_source import (
     async_record_forecast,
     dayahead_statistic_id,
     forecast_statistic_id,
+    normalise_wh_hours,
     provider_label,
 )
 
@@ -198,6 +200,13 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._first_sample_at: datetime | None = None
         #: Latest forecast total for tomorrow, in kWh.
         self._expected_tomorrow_kwh: float | None = None
+        #: Each provider's latest forecast, in kWh per UTC hour, as the battery
+        #: outlook reads it. Held in memory only: it is re-captured every thirty
+        #: minutes, and the archive keeps the history.
+        self.forecast_points: dict[str, dict[datetime, float]] = {}
+        #: When ``forecast_points`` was last refreshed, so a provider that has
+        #: stopped is not projected from forever.
+        self.forecast_captured_at: datetime | None = None
         #: Entity ids the recorder holds no statistics for. Their sensors
         #: carry no state_class, so no history exists to backfill from.
         self.unrecorded_entities: tuple[str, ...] = ()
@@ -224,6 +233,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             STORAGE_KEY_STATE,
             minor_version=STORAGE_MINOR_VERSION,
         )
+        #: Where the battery is heading. Built here because it reads the window,
+        #: the forecast and the open hour, all of which this class owns.
+        self.battery = BatteryOutlook(hass, self)
 
     # -- configuration ------------------------------------------------------
 
@@ -478,6 +490,45 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         self._live_power.pop(key, None)
         self._gap_since.setdefault(key, when)
 
+    def open_hour_rates(self, now: datetime, min_seconds: float) -> dict[str, float]:
+        """Average power so far this hour, in W, for each channel that can say.
+
+        Read-only: nothing here touches the accumulator, so asking cannot change
+        the bucket the hour will close with. A channel is left out when the hour
+        has a hole in it, when it was reset, or when it has been watched for less
+        than ``min_seconds``; a few minutes of a kettle is not an hour's load.
+
+        Power channels are carried up to ``now`` at the value they currently
+        hold; energy channels only up to their last five-minute reading, since
+        nothing is known about a counter between readings.
+        """
+        start = self._accumulator_start
+        if start is None:
+            return {}
+        began = max(start, self._first_sample_at or start)
+        out: dict[str, float] = {}
+        for spec in self.specs:
+            key = spec.key
+            if key in self._suspect or key in self._gap_since or self._gap_seconds.get(key):
+                continue
+            accumulated = self._accumulator.get(key)
+            held = self._live_power.get(key)
+            if held is not None:
+                watts, since = held
+                carried = watts * max((now - max(since, began)).total_seconds(), 0.0) / 3600.0
+                energy = carried if accumulated is None else accumulated + carried
+                elapsed = (now - began).total_seconds()
+            else:
+                last = self._last_energy.get(key)
+                if accumulated is None or last is None:
+                    continue
+                energy = accumulated
+                elapsed = (last[1] - began).total_seconds()
+            if elapsed < min_seconds:
+                continue
+            out[key] = energy * 3600.0 / elapsed
+        return out
+
     def _key_for_entity(self, entity_id: str | None) -> str | None:
         if entity_id is None:
             return None
@@ -690,6 +741,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
         forecasts = await async_get_solar_forecasts(self.hass, entry_ids)
         written = 0
         tomorrow_kwh: float | None = None
+        points: dict[str, dict[datetime, float]] = {}
         for entry_id, payload in forecasts.items():
             provider = self.hass.config_entries.async_get_entry(entry_id)
             if provider is None:
@@ -697,6 +749,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
             wh_hours = payload.get("wh_hours") if isinstance(payload, dict) else None
             if not isinstance(wh_hours, dict):
                 continue
+            # The same hour-aligned figures the archive is written from, so the
+            # outlook and the archive cannot disagree about what was forecast.
+            points[entry_id] = dict(normalise_wh_hours(wh_hours))
             if self._owns_archive(entry_id) and await async_record_forecast(
                 self.hass, entry_id, await self._provider_name(provider), wh_hours
             ):
@@ -708,6 +763,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 tomorrow_kwh = self._sum_for_tomorrow(wh_hours)
 
         self._expected_tomorrow_kwh = tomorrow_kwh
+        if points:
+            self.forecast_points = points
+            self.forecast_captured_at = dt_util.utcnow()
         return written
 
     async def _provider_name(self, provider: ConfigEntry) -> str:
@@ -792,6 +850,32 @@ class SolarSanityCoordinator(DataUpdateCoordinator[AnalysisReport]):
                 "dayahead_last": hours[-1].isoformat() if hours else None,
                 "dayahead_kwh": round(sum(ahead.values()), 2) if ahead else None,
             }
+        return out
+
+    async def async_forecast_history(self, days: int = 32) -> dict[str, Any]:
+        """Both archives' hourly values, for replaying the battery outlook.
+
+        The day-ahead series is the one a replay must use: the latest series
+        holds each hour's final revision, issued minutes before it, and grading
+        a projection on that would grade it on hindsight. Both are included so
+        the difference can be seen rather than assumed.
+        """
+        end = dt_util.utcnow() + timedelta(days=2)
+        start = end - timedelta(days=days)
+        out: dict[str, Any] = {}
+        for entry_id in self.entry.data.get(CONF_FORECAST_ENTRIES) or []:
+            series = {}
+            for label, statistic_id in (
+                ("dayahead", dayahead_statistic_id(entry_id)),
+                ("latest", forecast_statistic_id(entry_id)),
+            ):
+                values = await async_forecast_series(self.hass, statistic_id, start, end)
+                series[label] = (
+                    None
+                    if values is None
+                    else {when.isoformat(): round(kwh, 4) for when, kwh in sorted(values.items())}
+                )
+            out[entry_id] = series
         return out
 
     def _sum_for_tomorrow(self, wh_hours: dict[str, Any]) -> float | None:

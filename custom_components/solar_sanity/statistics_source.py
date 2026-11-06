@@ -423,7 +423,7 @@ async def async_record_forecast(
 
     from homeassistant.components.recorder.statistics import async_add_external_statistics
 
-    points = _normalise_wh_hours(wh_hours)
+    points = normalise_wh_hours(wh_hours)
     if not points:
         return False
 
@@ -487,7 +487,7 @@ async def _async_record_dayahead(
     return True
 
 
-def _normalise_wh_hours(wh_hours: dict[str, float]) -> list[tuple[datetime, float]]:
+def normalise_wh_hours(wh_hours: dict[str, float]) -> list[tuple[datetime, float]]:
     """Turn a provider's ``wh_hours`` map into hour-aligned kWh points.
 
     Two things about this payload catch people out. The values are Wh produced
@@ -662,3 +662,55 @@ async def async_daily_soc_swing(
         hi[day] = max(hi.get(day, high), high)
 
     return {day: hi[day] - lo[day] for day in lo if day in hi}
+
+
+async def async_hourly_soc(
+    hass: HomeAssistant, entity_id: str, start: datetime, end: datetime
+) -> list[dict[str, Any]]:
+    """Hourly mean, minimum and maximum of a state-of-charge sensor.
+
+    For the diagnostics download, so the battery outlook can be replayed against
+    what the battery actually did. Long-term statistics rather than states,
+    because states are purged after about ten days and a replay wants a month.
+
+    An empty list on any failure: diagnostics must download even when the
+    recorder cannot answer.
+    """
+    if not recorder_available(hass) or not entity_id:
+        return []
+
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.statistics import statistics_during_period
+
+    try:
+        rows = await get_instance(hass).async_add_executor_job(
+            statistics_during_period,
+            hass,
+            start,
+            end,
+            {entity_id},
+            "hour",
+            None,
+            # A fresh set every call; see `async_daily_soc_swing`.
+            {"mean", "min", "max"},
+        )
+    except Exception:
+        _LOGGER.debug("state-of-charge history failed for %s", entity_id, exc_info=True)
+        return []
+
+    out: list[dict[str, Any]] = []
+    for row in (rows or {}).get(entity_id, []):
+        started = row.get("start")
+        if started is None:
+            continue
+        if not isinstance(started, datetime):
+            started = dt_util.utc_from_timestamp(started)
+        out.append(
+            {
+                "start": started.isoformat(),
+                "mean": row.get("mean"),
+                "min": row.get("min"),
+                "max": row.get("max"),
+            }
+        )
+    return out

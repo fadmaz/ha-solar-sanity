@@ -39,6 +39,21 @@ OPT_GUARANTEED_ANNUAL_KWH: Final = "guaranteed_annual_kwh"
 #: it is a level in percent rather than a flow in watt-hours, and its value is
 #: that it sits outside the energy balance entirely.
 OPT_BATTERY_SOC: Final = "battery_soc_entity"
+#: The battery's usable capacity, in kWh. With the charge-level sensor, the one
+#: other thing the outlook cannot run without: a percentage only becomes hours
+#: once it is a percentage of something.
+OPT_BATTERY_CAPACITY_KWH: Final = "battery_capacity_kwh"
+#: The level the battery is not taken below, in percent. "Runs out" in the
+#: outlook means reaching this, not zero; most inverters cut off well above it.
+OPT_BATTERY_RESERVE_PCT: Final = "battery_reserve_pct"
+#: The level the battery is charged to, in percent. Usually 100; lower where the
+#: inverter is set to stop early. Charging stops here in the projection and
+#: anything beyond it counts as spare.
+OPT_BATTERY_TARGET_PCT: Final = "battery_target_pct"
+#: Defaults for the two above. Twenty percent is a common lithium cut-off and
+#: errs early for the ones set lower.
+DEFAULT_RESERVE_PCT: Final = 20.0
+DEFAULT_TARGET_PCT: Final = 100.0
 
 # --- storage ---------------------------------------------------------------
 STORAGE_VERSION: Final = 1
