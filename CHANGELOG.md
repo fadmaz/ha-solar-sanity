@@ -2,6 +2,39 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.28.2] - 2026-11-07
+
+### Fixed
+
+- **Forecast.Solar hours were an hour late on Home Assistant before 2026.11.**
+  Forecast.Solar labels each hour's energy with the moment the hour *ends*.
+  Home Assistant passed that label on unchanged until 2026.11, and Solar Sanity
+  read it as the moment the hour starts. So on any release from 2025.11 to
+  2026.10 the archived forecast, the battery outlook and the forecast-tomorrow
+  sensor all saw the sun an hour late, and the short stretch before sunset was
+  added to the hour before it. The forecast is now corrected the way Home
+  Assistant 2026.11 corrects it, and only where it needs to be: Forecast.Solar
+  on releases before 2026.11.
+- **The forecast card's gridlines and axis labels were invisible.** They were
+  drawn in a way no browser displays, so the card has shown a bare curve with
+  no scale since it was written. Both axes and the gridlines now show.
+
+### Notes
+
+- Forecast history archived before this release stays as it was written, an
+  hour late. The battery outlook learns its forecast scale from the last
+  fortnight, so it is fully on corrected data two weeks after the update.
+  Around the update the sunrise hour may be counted twice in the day-ahead
+  series for up to two days, because each hour of it is written once and never
+  revised.
+- If you are already on Home Assistant 2026.11 or later, nothing changes for
+  you except the card.
+- Replayed with its archive corrected, the reference installation's month of
+  real nights grades better than before: the lowest-battery figure is no
+  longer biased in either direction, the reserve call is right on 72 of 80
+  projections, and the time the battery reaches reserve is predicted with a
+  median error of two minutes.
+
 ## [0.28.1] - 2026-11-07
 
 ### Fixed
