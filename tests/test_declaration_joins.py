@@ -65,7 +65,9 @@ def test_there_is_something_to_check() -> None:
     declared = _declared_keys()
 
     assert len(declared) >= 6, declared
-    assert {key for _, _, key in declared} >= {"status", "data_healthy"}
+    # Anchored on keys that outlive the energy-balance check: the forecast
+    # sensor and the first of the battery outlook's.
+    assert {key for _, _, key in declared} >= {"expected_tomorrow", "battery_full_at"}
 
 
 @pytest.mark.parametrize(
