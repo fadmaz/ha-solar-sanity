@@ -4,8 +4,7 @@
   "after_dependencies": [
     "frontend",
     "recorder",
-    "energy",
-    "repairs"
+    "energy"
   ],
   "codeowners": [
     "@fadmaz"

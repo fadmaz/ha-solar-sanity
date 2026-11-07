@@ -1,6 +1,6 @@
 """Small numeric helpers. Standard library only — no numpy, no scipy.
 
-The whole engine works on at most a few thousand values (30 days x 24 buckets x
+The outlook and the scoring work on at most a few thousand values (30 days x 24 buckets x
 a handful of channels), so hand-rolled implementations are fast enough and keep
 the integration installable on a Raspberry Pi with zero wheels to build.
 
@@ -60,21 +60,6 @@ def mean(values: Sequence[float]) -> float | None:
     return sum(values) / len(values)
 
 
-def coefficient_of_variation(values: Sequence[float]) -> float | None:
-    """Standard deviation over |mean|. ``None`` when the mean is ~zero.
-
-    Used to require that a fault estimate is *stable* across days, not merely
-    correct on average.
-    """
-    if len(values) < 2:
-        return None
-    m = mean(values)
-    if m is None or abs(m) < 1e-9:
-        return None
-    var = sum((v - m) ** 2 for v in values) / (len(values) - 1)
-    return (var**0.5) / abs(m)
-
-
 def pearson(xs: Sequence[float], ys: Sequence[float]) -> float | None:
     """Pearson correlation, or ``None`` if undefined (constant input)."""
     n = min(len(xs), len(ys))
@@ -98,42 +83,6 @@ def pearson(xs: Sequence[float], ys: Sequence[float]) -> float | None:
     return num / ((dx2 * dy2) ** 0.5)
 
 
-def theil_sen_slope(xs: Sequence[float], ys: Sequence[float]) -> float | None:
-    """Robust slope: the median of pairwise slopes.
-
-    A deterministic stride is used to bound the pair count rather than sampling
-    randomly, because the engine must produce byte-identical output for
-    identical input.
-    """
-    n = min(len(xs), len(ys))
-    if n < 3:
-        return None
-    stride = 1 if n <= 60 else n // 60
-    slopes: list[float] = []
-    for i in range(0, n, stride):
-        for j in range(i + 1, n, stride):
-            dx = xs[j] - xs[i]
-            if abs(dx) < 1e-12:
-                continue
-            slopes.append((ys[j] - ys[i]) / dx)
-    return median(slopes)
-
-
-def theil_sen_intercept(xs: Sequence[float], ys: Sequence[float], slope: float) -> float | None:
-    """The robust companion to the slope: ``median(y - slope * x)``.
-
-    A least-squares intercept would be dragged by the same outliers Theil-Sen
-    exists to ignore, so the pair has to be taken together.
-    """
-    if not xs or len(xs) != len(ys):
-        return None
-    return median([y - slope * x for x, y in zip(xs, ys, strict=True)])
-
-
-def sum_squares(values: Sequence[float]) -> float:
-    return sum(v * v for v in values)
-
-
 def safe_ratio(numerator: float, denominator: float) -> float | None:
     """Divide, or return ``None`` when the denominator is negligible.
 
@@ -143,87 +92,3 @@ def safe_ratio(numerator: float, denominator: float) -> float | None:
     if abs(denominator) < 1e-9:
         return None
     return numerator / denominator
-
-
-def least_squares(
-    columns: Sequence[Sequence[float]], target: Sequence[float]
-) -> list[float] | None:
-    """Coefficients minimising the squared error of ``Σ cᵢ·columnᵢ`` against ``target``.
-
-    Exists because estimating one coefficient at a time is biased whenever the
-    columns overlap, and on a DC-coupled hybrid they always do: generation and
-    battery throughput rise together, so a median-of-ratios attributed to one
-    term carries a share of the other. Measured against a known 96%-efficient
-    inverter, that bias reads the generation term 62% high — enough to push a
-    healthy installation's loss outside the window that would have absorbed it,
-    at which point nothing is subtracted at all.
-
-    Solved through the normal equations, which are adequate here and only here:
-    three columns, and each is first scaled to unit root-mean-square so their
-    wildly different magnitudes (watt-hours against a column of ones) cannot
-    wreck the conditioning. Returns ``None`` rather than guessing when a column
-    is empty or the system is singular — two identical columns have no unique
-    answer, and inventing one would put a fault's energy into a loss term.
-    """
-    if not columns or not target:
-        return None
-    width = len(columns)
-    rows = len(target)
-    if any(len(column) != rows for column in columns) or rows <= width:
-        return None
-
-    scales: list[float] = []
-    for column in columns:
-        rms = (sum(v * v for v in column) / rows) ** 0.5
-        if rms <= 1e-12:
-            return None
-        scales.append(rms)
-
-    # A is the scaled design matrix; solve AᵀA x = Aᵀb.
-    normal = [
-        [
-            sum(columns[i][r] * columns[j][r] for r in range(rows)) / (scales[i] * scales[j])
-            for j in range(width)
-        ]
-        + [sum(columns[i][r] * target[r] for r in range(rows)) / scales[i]]
-        for i in range(width)
-    ]
-
-    for pivot in range(width):
-        best = max(range(pivot, width), key=lambda r: abs(normal[r][pivot]))
-        if abs(normal[best][pivot]) < 1e-9:
-            return None
-        normal[pivot], normal[best] = normal[best], normal[pivot]
-        head = normal[pivot]
-        for row in normal[pivot + 1 :]:
-            factor = row[pivot] / head[pivot]
-            for col in range(pivot, width + 1):
-                row[col] -= factor * head[col]
-
-    solved = [0.0] * width
-    for i in reversed(range(width)):
-        total = normal[i][width] - sum(normal[i][j] * solved[j] for j in range(i + 1, width))
-        solved[i] = total / normal[i][i]
-    return [value / scale for value, scale in zip(solved, scales, strict=True)]
-
-
-def project_out(columns: Sequence[Sequence[float]], target: Sequence[float]) -> list[float] | None:
-    """``target`` with its least-squares projection on ``columns`` removed.
-
-    The companion to ``least_squares`` for a fit that has one parameter it cares
-    about and several it does not. Removing the nuisance columns from every
-    vector once, before the parameter of interest is looked at, gives the same
-    coefficient and the same squared error as fitting everything together —
-    exactly, not approximately.
-
-    ``None`` for the same reason ``least_squares`` returns it, and it matters
-    for the same reason: a projection that could not be computed is not a
-    projection onto nothing.
-    """
-    coefficients = least_squares(columns, target)
-    if coefficients is None:
-        return None
-    return [
-        value - sum(c * column[row] for c, column in zip(coefficients, columns, strict=True))
-        for row, value in enumerate(target)
-    ]

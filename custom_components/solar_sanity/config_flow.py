@@ -6,9 +6,9 @@ whole job is remapping sensors:
 * **Reconfigure.** Everything chosen at setup lived in ``entry.data``, which the
   options flow never touched, so correcting a mis-mapped sensor meant deleting
   the entry and orphaning every entity's history. Reconfigure covers the
-  topology answers and the forecast providers too — they were write-once, and a
-  setting that can only be changed by starting again is how two installations
-  end up fighting over one forecast archive.
+  forecast providers and the battery too: a setting that can only be changed by
+  starting again is how two installations end up fighting over one forecast
+  archive.
 * **A check that the same house is not configured twice.** Keyed on what the
   entries actually monitor rather than on a unique id: an id derived from the
   mapping changes the moment the mapping does, so remapping a channel minted a
@@ -39,9 +39,6 @@ from .const import (
     CONF_CHANNELS,
     CONF_ENTITY_ID,
     CONF_FORECAST_ENTRIES,
-    CONF_GRID_IS_NET,
-    CONF_HAS_BATTERY,
-    CONF_LOAD_WHOLE_HOUSE,
     CONF_ORIGIN,
     CONF_ROLE,
     DEFAULT_RESERVE_PCT,
@@ -51,8 +48,6 @@ from .const import (
     OPT_BATTERY_RESERVE_PCT,
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
-    OPT_GUARANTEED_ANNUAL_KWH,
-    OPT_SUPPRESSED,
 )
 from .discovery import Discovery, async_discover
 from .statistics_source import async_forecast_providers
@@ -65,16 +60,6 @@ MAPPED_ROLES: tuple[Role, ...] = (
     Role.GRID_EXPORT,
     Role.BATTERY_CHARGE,
     Role.BATTERY_DISCHARGE,
-)
-
-#: Every question offers "not sure", which defers to inference rather than
-#: forcing a guess that the engine would then treat as fact.
-_TRISTATE = selector.SelectSelector(
-    selector.SelectSelectorConfig(
-        options=["yes", "no", "unknown"],
-        translation_key="tristate",
-        mode=selector.SelectSelectorMode.DROPDOWN,
-    )
 )
 
 
@@ -207,47 +192,20 @@ def _battery_errors(user_input: dict[str, Any] | None, *, asked: bool) -> dict[s
     return {}
 
 
-def _battery_mapped(channels: dict[str, str]) -> bool:
-    return Role.BATTERY_CHARGE.key in channels or Role.BATTERY_DISCHARGE.key in channels
-
-
-def _both_grid_mapped(channels: dict[str, str]) -> bool:
-    return Role.GRID_IMPORT.key in channels and Role.GRID_EXPORT.key in channels
-
-
 def _topology_schema(
     channels: dict[str, str],
     providers: list[tuple[str, str]],
     current: dict[str, Any],
     soc_selected: bool = False,
 ) -> vol.Schema:
-    """The questions worth asking, given what the mapping already answers.
+    """The forecast providers and the battery, whichever there is to ask about.
 
-    Shared by setup and reconfigure so the two cannot drift. Asking "do you have
-    a battery?" of someone who just mapped two battery sensors is the kind of
-    question that makes software feel stupid, and it would be worse the second
-    time.
+    Shared by setup and reconfigure so the two cannot drift. Empty when there
+    is neither a provider to pick nor a charge-level sensor to size, and then
+    the step is not shown at all: a page with nothing on it but a button is a
+    question with no question in it.
     """
     fields: dict[Any, Any] = {}
-
-    if not _battery_mapped(channels):
-        fields[vol.Required(CONF_HAS_BATTERY, default=current.get(CONF_HAS_BATTERY, "unknown"))] = (
-            _TRISTATE
-        )
-
-    # Only ambiguous when import is mapped alone. Both mapped means two
-    # dedicated sensors; neither mapped means there is nothing to interpret.
-    import_only = Role.GRID_IMPORT.key in channels and Role.GRID_EXPORT.key not in channels
-    if import_only:
-        fields[vol.Required(CONF_GRID_IS_NET, default=current.get(CONF_GRID_IS_NET, "unknown"))] = (
-            _TRISTATE
-        )
-
-    # Not inferable from the mapping at all — a backup-panel sensor looks exactly
-    # like a whole-house one until the residual says otherwise.
-    fields[
-        vol.Required(CONF_LOAD_WHOLE_HOUSE, default=current.get(CONF_LOAD_WHOLE_HOUSE, "unknown"))
-    ] = _TRISTATE
 
     # ConfigEntrySelector takes a single entry and has no `multiple` option, so
     # the providers are listed by name instead — which is better anyway, since
@@ -275,20 +233,14 @@ def _topology_schema(
     return vol.Schema(fields)
 
 
-def _topology_values(user_input: dict[str, Any], channels: dict[str, str]) -> dict[str, Any]:
-    """The answers to store, filling in what the mapping settles outright."""
-    return {
-        # A mapped battery answers the question outright; likewise two dedicated
-        # grid sensors mean it is not a net meter.
-        CONF_HAS_BATTERY: user_input.get(
-            CONF_HAS_BATTERY, "yes" if _battery_mapped(channels) else "unknown"
-        ),
-        CONF_GRID_IS_NET: user_input.get(
-            CONF_GRID_IS_NET, "no" if _both_grid_mapped(channels) else "unknown"
-        ),
-        CONF_LOAD_WHOLE_HOUSE: user_input.get(CONF_LOAD_WHOLE_HOUSE, "unknown"),
-        CONF_FORECAST_ENTRIES: user_input.get(CONF_FORECAST_ENTRIES, []),
-    }
+def _topology_values(user_input: dict[str, Any]) -> dict[str, Any]:
+    """What the step stores in ``entry.data``: the chosen forecast providers.
+
+    Entries made before 0.30.0 also hold three answers about the house the
+    energy-balance check used to ask. Nothing reads them now, and they are left
+    where they are: removing them would make a rollback to 0.29 lose them.
+    """
+    return {CONF_FORECAST_ENTRIES: user_input.get(CONF_FORECAST_ENTRIES, [])}
 
 
 def _channel_records(
@@ -296,12 +248,10 @@ def _channel_records(
 ) -> list[dict[str, str]]:
     """Channel records, keeping the origin of anything left alone.
 
-    Origin is not cosmetic: an autodetected channel has its findings downgraded
-    one confidence step, because a mapping nobody confirmed is weaker evidence
-    than one somebody chose. Stamping every channel "user" on the way through a
-    reconfigure would silently promote every channel the user never looked at,
-    and a run through the form without changing anything would quietly raise the
-    confidence of the whole installation.
+    Origin is recorded because a mapping nobody confirmed is weaker evidence
+    than one somebody chose, and diagnostics report it per channel. Stamping
+    every channel "user" on the way through a reconfigure would silently promote
+    every channel the user never looked at.
     """
     was = {
         record[CONF_ROLE]: (record[CONF_ENTITY_ID], record.get(CONF_ORIGIN, "user"))
@@ -394,7 +344,13 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_topology(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Three questions the user knows the answer to."""
+        """The forecast providers and the battery's size, when there are any."""
+        providers = await async_forecast_providers(self.hass)
+        schema = _topology_schema(
+            self._channels, providers, dict(user_input or {}), bool(self._battery_soc)
+        )
+        if user_input is None and not schema.schema:
+            user_input = {}
         errors = _battery_errors(user_input, asked=bool(self._battery_soc))
         if user_input is not None and not errors:
             return self.async_create_entry(
@@ -412,7 +368,7 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                         }
                         for role_key, entity_id in self._channels.items()
                     ],
-                    **_topology_values(user_input, self._channels),
+                    **_topology_values(user_input),
                 },
                 options=(
                     # Options, not data: none of these is a channel, and
@@ -424,14 +380,7 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
             )
 
-        providers = await async_forecast_providers(self.hass)
-        return self.async_show_form(
-            step_id="topology",
-            data_schema=_topology_schema(
-                self._channels, providers, dict(user_input or {}), bool(self._battery_soc)
-            ),
-            errors=errors,
-        )
+        return self.async_show_form(step_id="topology", data_schema=schema, errors=errors)
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -493,15 +442,19 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure_topology(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """The same questions setup asks, answerable again.
+        """The same step setup shows, answerable again.
 
-        Everything here was previously write-once. A user who added a forecast
-        provider after setup, or realised their consumption sensor covers only
-        the backup panel, had no way to say so — and the only route that
+        Everything here was once write-once. A user who added a forecast
+        provider after setup had no way to say so, and the only route that
         appeared to work was adding a second entry, which is how two
         installations end up fighting over one forecast archive.
         """
         entry = self._get_reconfigure_entry()
+        providers = await async_forecast_providers(self.hass)
+        current = {**entry.data, **entry.options, **(user_input or {})}
+        schema = _topology_schema(self._channels, providers, current, bool(self._battery_soc))
+        if user_input is None and not schema.schema:
+            user_input = {}
         errors = _battery_errors(user_input, asked=bool(self._battery_soc))
 
         if user_input is not None and not errors:
@@ -527,36 +480,19 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_CHANNELS: _channel_records(
                         self._channels, entry.data.get(CONF_CHANNELS, [])
                     ),
-                    **_topology_values(user_input, self._channels),
+                    **_topology_values(user_input),
                 },
                 options=options,
             )
 
-        providers = await async_forecast_providers(self.hass)
-        current = {**entry.data, **entry.options, **(user_input or {})}
         return self.async_show_form(
-            step_id="reconfigure_topology",
-            data_schema=_topology_schema(
-                self._channels, providers, current, bool(self._battery_soc)
-            ),
-            errors=errors,
+            step_id="reconfigure_topology", data_schema=schema, errors=errors
         )
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: Any) -> OptionsFlow:
         return SolarSanityOptionsFlow()
-
-
-def _readable(code: str) -> str:
-    """A fault identifier, as a sentence rather than as a symbol.
-
-    These are stable identifiers that appear in entity attributes and events, so
-    they cannot be renamed to read well. Turning them over here costs nothing and
-    means a settings page does not ask somebody to make a decision about
-    ``signed_net_in_dedicated_slot``.
-    """
-    return code.replace("_", " ").capitalize()
 
 
 class SolarSanityOptionsFlow(OptionsFlowWithReload):
@@ -573,10 +509,10 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
             # figure typed by mistake could never be removed — the same trap
             # reconfigure escapes by dropping the key first.
             #
-            # Only keys this form actually rendered are touched. `corrections`
-            # is written by Repairs and is never a row here, and the suppressed
-            # list is a row only on a house that has seen a finding; a naive
-            # `data=user_input` would erase both.
+            # Only keys this form actually rendered are touched. Anything else
+            # in the options was written by another release, and a rollback to
+            # it should find it where it was; a naive `data=user_input` would
+            # erase it.
             options = dict(self.config_entry.options)
             for marker in fields:
                 name = marker.schema
@@ -596,23 +532,11 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
 
     def _fields(self) -> dict[Any, Any]:
         """The rows this form offers, which is also the set it may clear."""
-        fields: dict[Any, Any] = {
-            vol.Optional(OPT_GUARANTEED_ANNUAL_KWH): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0,
-                    max=100000,
-                    step=1,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="kWh",
-                )
-            ),
-        }
+        fields: dict[Any, Any] = {}
 
         # Optional, and the start of the battery outlook: everything it projects
-        # begins from this reading. It also still answers, when a battery
-        # meter's reported throughput steps, whether the battery changed or the
-        # meter did. Filtered to battery-percentage sensors, which is what a BMS
-        # publishes.
+        # begins from this reading. Filtered to battery-percentage sensors,
+        # which is what a BMS publishes.
         fields[vol.Optional(OPT_BATTERY_SOC)] = selector.EntitySelector(
             selector.EntitySelectorConfig(domain="sensor", device_class="battery")
         )
@@ -625,44 +549,4 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
         fields[vol.Optional(OPT_BATTERY_RESERVE_PCT)] = _percent_selector(0, 95)
         fields[vol.Optional(OPT_BATTERY_TARGET_PCT)] = _percent_selector(10, 100)
 
-        dismissible = self._dismissible_codes()
-        if dismissible:
-            fields[vol.Optional(OPT_SUPPRESSED)] = selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(value=code, label=_readable(code))
-                        for code in dismissible
-                    ],
-                    multiple=True,
-                    mode=selector.SelectSelectorMode.LIST,
-                )
-            )
-
         return fields
-
-    def _dismissible_codes(self) -> list[str]:
-        """Findings this installation has actually seen, plus anything already off.
-
-        The engine has honoured ``suppressed_codes`` in five places for a long
-        time and nothing could ever write it — a setting the code kept faith with
-        and the product never offered. This is the missing half.
-
-        Deliberately not every code the engine knows. A list of thirty
-        identifiers is a list nobody reads, and most of them describe faults this
-        house does not have; offering somebody the chance to dismiss a diagnosis
-        they have never been given is how a settings page teaches people to
-        ignore it. What is offered is what has been said: the current finding,
-        the ones ranked behind it, and whatever is already dismissed — the last
-        of those because a setting you cannot see is a setting you cannot undo.
-        """
-        entry: Any = self.config_entry
-        seen: set[str] = set(entry.options.get(OPT_SUPPRESSED, []))
-
-        runtime = getattr(entry, "runtime_data", None)
-        report = getattr(getattr(runtime, "coordinator", None), "report", None)
-        if report is not None:
-            if report.finding is not None:
-                seen.add(report.finding.code)
-            seen.update(report.deferred)
-
-        return sorted(seen)
