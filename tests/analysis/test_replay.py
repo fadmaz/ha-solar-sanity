@@ -155,23 +155,3 @@ class TestItRefusesRatherThanGuesses:
     def test_a_file_without_a_window_says_so(self) -> None:
         with pytest.raises(ValueError, match="no window block"):
             replay.request_from({"data": {"window": None}})
-
-    def test_an_unknown_quality_code_raises(self) -> None:
-        """Silently mapping an unrecognised code to OK would produce a confident
-        wrong answer, which is the failure this module exists to prevent."""
-        with pytest.raises(KeyError):
-            replay.buckets_from(
-                {
-                    "keys": ["pv"],
-                    "rows": [["2026-08-01T00:00:00+00:00", 3600, [1.0], "Z", "i"]],
-                }
-            )
-
-    def test_a_row_whose_codes_do_not_match_its_channels_raises(self) -> None:
-        with pytest.raises(ValueError, match="codes"):
-            replay.buckets_from(
-                {
-                    "keys": ["pv", "load"],
-                    "rows": [["2026-08-01T00:00:00+00:00", 3600, [1.0, 2.0], "O", "ii"]],
-                }
-            )

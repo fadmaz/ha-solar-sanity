@@ -34,7 +34,7 @@ from custom_components.solar_sanity.coordinator import (
     _QUALITY_CODE,
     _SOURCE_CODE,
 )
-from tests.synth.replay import _QUALITY, _SOURCE
+from tests.synth.diagnostics import _QUALITY, _SOURCE
 
 
 def test_the_quality_tables_are_exact_inverses() -> None:
