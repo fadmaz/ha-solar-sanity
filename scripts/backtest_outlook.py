@@ -242,6 +242,29 @@ def forecast_from_diagnostics(history: dict) -> dict[datetime, float] | None:
     return None
 
 
+def keyed_by_period_start(
+    forecast: dict[datetime, float], before: datetime
+) -> dict[datetime, float]:
+    """Move every row archived before ``before`` back by one hour.
+
+    Forecast.Solar stamps each value with the end of its period, and Home
+    Assistant passed that through until 2026.11, so rows archived on an older
+    release are an hour late. Rows from ``before`` on are left alone. This is
+    an approximation at sunset, where the archive already folded two periods
+    into one hour and the split cannot be recovered.
+
+    ``before`` is the start of the first day whose day-ahead rows are keyed by
+    period start. Read it off the archive rather than off the upgrade date: a
+    day-ahead row is written up to two days ahead and never revised, so the
+    series switches days after the release does. In the sunrise hour the
+    shifted rows hold only the minutes before the hour, a fraction of a full
+    sunrise hour, which makes the switch easy to see.
+    """
+    return {
+        (when - timedelta(hours=1) if when < before else when): wh for when, wh in forecast.items()
+    }
+
+
 def grid_charged(buckets: Sequence[Bucket], start: datetime, end: datetime) -> bool:
     for bucket in buckets:
         if not (start <= bucket.start_utc < end):
@@ -507,6 +530,11 @@ def main() -> int:
     )
     parser.add_argument("--morning", type=int, default=8, help="local hour mornings are projected")
     parser.add_argument("--since", help="ignore nights before this ISO date")
+    parser.add_argument(
+        "--period-end-before",
+        help="ISO instant: day-ahead rows before it are Forecast.Solar period-end keys "
+        "from Home Assistant older than 2026.11, and are moved back an hour",
+    )
     parser.add_argument("--verbose", action="store_true", help="print every night")
     parser.add_argument(
         "--raw",
@@ -539,6 +567,11 @@ def main() -> int:
         parser.error("no charge-level history: pass --soc-csv for a download older than 0.28.0")
 
     forecast = forecast_from_diagnostics(data.get("forecast_history") or {})
+    if forecast is not None and args.period_end_before:
+        before = datetime.fromisoformat(args.period_end_before)
+        if before.tzinfo is None:
+            before = before.replace(tzinfo=UTC)
+        forecast = keyed_by_period_start(forecast, before)
     zone = ZoneInfo(args.tz)
 
     print(f"window      {buckets[0].start_utc:%Y-%m-%d} .. {buckets[-1].start_utc:%Y-%m-%d}")
@@ -550,6 +583,8 @@ def main() -> int:
         f"target {battery.target_pct:g}%"
     )
     print(f"production  {'day-ahead forecast' if forecast else 'history (no forecast archive)'}")
+    if forecast is not None and args.period_end_before:
+        print(f"            rows before {args.period_end_before} moved back an hour")
 
     fitted = effective_wh_per_pct(buckets, soc)
     if fitted:
