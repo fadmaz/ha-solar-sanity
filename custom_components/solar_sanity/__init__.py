@@ -1,6 +1,6 @@
-"""Solar Sanity — tells you whether your solar data adds up.
+"""Solar Sanity — where your battery is heading, and what the sun was forecast to do.
 
-Sets up the coordinator, wires the three sampling tiers, and starts capturing
+Sets up the coordinator, wires the sampling ticks, and starts capturing
 forecasts immediately. That last one matters more than it looks: Home
 Assistant's forecast integrations set no ``state_class`` on their energy
 sensors, so nothing records them and yesterday's forecast is gone within about
@@ -20,26 +20,24 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 from . import frontend
-from .analysis.model import Status
 from .const import (
     BUCKET_INTERVAL,
     DOMAIN,
     FORECAST_CAPTURE_INTERVAL,
     LIVE_INTERVAL,
     PLATFORMS,
-    SERVICE_EXPORT_REPORT,
     SERVICE_RESCORE_FORECASTS,
-    SERVICE_VALIDATE_NOW,
     STORAGE_KEY_STATE,
     STORAGE_VERSION,
 )
 from .coordinator import SolarSanityCoordinator, SolarSanityData
-from .repairs import async_remove_issues, async_sweep_orphans, async_sync_issues
 from .statistics_source import (
     async_classify_statistics,
     async_hourly_series,
@@ -50,9 +48,21 @@ _LOGGER = logging.getLogger(__name__)
 
 type SolarSanityConfigEntry = ConfigEntry[SolarSanityData]
 
-#: Days of statistics pulled in at setup so a fresh install has an answer
-#: immediately rather than after a week of its own measurement.
+#: Days of statistics pulled in at setup so a fresh install has a consumption
+#: profile immediately rather than after a week of its own measurement.
 BACKFILL_DAYS = 30
+
+#: The energy-balance check's entities, retired in 0.30.0, as (platform, key).
+#: Removed from the registry at every setup: nothing will ever write them
+#: again, and an entity restored as unavailable forever reads as a fault.
+#: Every setup rather than once, so a downgrade and a re-upgrade are covered.
+RETIRED_ENTITIES: tuple[tuple[str, str], ...] = (
+    ("sensor", "status"),
+    ("sensor", "data_completeness"),
+    ("sensor", "corrections_active"),
+    ("sensor", "live_residual"),
+    ("binary_sensor", "data_healthy"),
+)
 
 #: There is nothing to configure in YAML — everything comes from the config
 #: entry. ``async_setup`` exists only to register the bundled card, which has
@@ -69,7 +79,36 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     await frontend.async_register(hass, version)
     _async_register_services(hass)
+    await _async_retire_the_check(hass)
     return True
+
+
+async def _async_retire_the_check(hass: HomeAssistant) -> None:
+    """Remove what the energy-balance check left behind. Safe to repeat.
+
+    Its Repairs issues, which nothing will ever resolve now: a card with a Fix
+    button that can only abort. And the state file from before files were kept
+    per entry, which only ever held that check's fitted model. Both are shared
+    across entries, so this runs once per start rather than per entry.
+    """
+    registry = ir.async_get(hass)
+    for domain, issue_id in list(registry.issues):
+        if domain == DOMAIN:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+    try:
+        await Store(hass, STORAGE_VERSION, STORAGE_KEY_STATE).async_remove()
+    except Exception:
+        _LOGGER.debug("could not remove the shared state file", exc_info=True)
+
+
+def _remove_retired_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Take the check's entities out of the registry, before the platforms load."""
+    registry = er.async_get(hass)
+    for platform, key in RETIRED_ENTITIES:
+        entity_id = registry.async_get_entity_id(platform, DOMAIN, f"{entry.entry_id}_{key}")
+        if entity_id is not None:
+            registry.async_remove(entity_id)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) -> bool:
@@ -82,33 +121,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
 
     entry.runtime_data = SolarSanityData(coordinator=coordinator, store=coordinator._store)
 
-    # The live tripwire. Cheap, and the only way to see instantaneous
-    # impossibilities that average out inside an hourly bucket.
+    # The battery outlook's quick tick: it recomputes only when the charge level
+    # has moved since the last projection, so a sensor that reports every
+    # second costs nothing. The five-minute tick below recomputes regardless.
     def _tripwire(_now: Any) -> None:
-        coordinator.capture_live()
-        # Only when the charge level has moved since the last projection; the
-        # five-minute tick below recomputes regardless.
         coordinator.battery.refresh()
-        # Also on this tick, not only the five-minute one. Completeness and the
-        # live residual describe *now*, and after a restart they read 0% for a
-        # full five minutes — which looks exactly like the failure they exist to
-        # report, at the moment a user is most likely to be looking at them.
         coordinator.notify_live_entities()
 
     entry.async_on_unload(async_track_time_interval(hass, _tripwire, LIVE_INTERVAL))
 
     # Power is integrated on its own state changes rather than sampled. A timer
-    # cannot see a kettle that ran for ninety seconds between two ticks, and
-    # assuming the last reading held for five minutes is where the noise came
-    # from that made a healthy system read "still looking" half the time.
+    # cannot see a kettle that ran for ninety seconds between two ticks.
     entry.async_on_unload(coordinator.async_track_power())
     entry.async_on_unload(coordinator.battery.async_track())
 
     def _sample(_now: Any) -> None:
         coordinator.accumulate()
         coordinator.battery.refresh(force=True)
-        # Sensors describing live state must not wait for the six-hourly
-        # analysis before they are rewritten.
+        # The sensors describe now and must not wait for the coordinator's
+        # six-hourly refresh before they are rewritten.
         coordinator.notify_live_entities()
 
     entry.async_on_unload(async_track_time_interval(hass, _sample, BUCKET_INTERVAL))
@@ -134,20 +165,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     # projection, or with the reason there is none, rather than blank.
     coordinator.battery.refresh(force=True)
 
+    _remove_retired_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    # Before this entry's own reconcile, and against every entry rather than
-    # just this one, so a card left by an installation that no longer exists
-    # goes even when the entry that replaced it is healthy.
-    await async_sweep_orphans(
-        hass, {other.entry_id for other in hass.config_entries.async_entries(DOMAIN)}
-    )
-    await async_sync_issues(hass, entry, coordinator.report)
-
-    entry.async_on_unload(
-        coordinator.async_add_listener(
-            lambda: hass.async_create_task(async_sync_issues(hass, entry, coordinator.report))
-        )
-    )
     return True
 
 
@@ -157,17 +176,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Take this entry's Repairs issues with it.
+    """Take this entry's state file with it.
 
-    Nothing did, so deleting an installation left its repair card behind —
-    offering to fix a configuration that no longer exists, and able to do
-    nothing but abort when clicked. It cleared on the next restart, which is
-    exactly when a user is least likely to connect the two events.
+    One per entry, so leaving it behind would accumulate dead kilobytes that
+    Home Assistant preloads at every boot.
     """
-    await async_remove_issues(hass, entry.entry_id)
-
-    # And its state file. One per entry now, so leaving it behind would
-    # accumulate dead kilobytes that Home Assistant preloads at every boot.
     store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY_STATE}.{entry.entry_id}")
     try:
         await store.async_remove()
@@ -176,7 +189,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinator) -> None:
-    """Seed the analysis window from long-term statistics.
+    """Seed the measurement window from long-term statistics.
 
     Which query to run depends on what the recorder holds, not on what the state
     machine currently says. Sum-backed statistics answer `change` exactly;
@@ -208,8 +221,8 @@ async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinat
         _LOGGER.warning(
             "No recorded history for %s. Those sensors have no state_class, so "
             "Home Assistant is not keeping statistics for them and Solar Sanity "
-            "must collect its own — expect a verdict in about a week rather than "
-            "immediately.",
+            "must collect its own, so the battery outlook needs about three days "
+            "of its own measurement before it can answer.",
             ", ".join(sorted(absent)),
         )
 
@@ -234,48 +247,14 @@ async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinat
 
 
 def _async_register_services(hass: HomeAssistant) -> None:
-    if hass.services.has_service(DOMAIN, SERVICE_VALIDATE_NOW):
+    if hass.services.has_service(DOMAIN, SERVICE_RESCORE_FORECASTS):
         return
-
-    async def _validate_now(call: ServiceCall) -> None:
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            data = getattr(entry, "runtime_data", None)
-            if data is None:
-                continue
-            # Re-run the backfill too. Statistics may have appeared since setup,
-            # and needing a restart to find out is a poor way to diagnose.
-            await _async_backfill(hass, data.coordinator)
-            await data.coordinator.async_request_refresh()
-
-    async def _export_report(call: ServiceCall) -> dict[str, Any]:
-        """Return a plain-language summary.
-
-        Deliberately shaped for pasting into a warranty email or a forum post —
-        that is the situation a user is usually in when they want this.
-        """
-        reports: list[dict[str, Any]] = []
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            data = getattr(entry, "runtime_data", None)
-            if data is None or data.coordinator.report is None:
-                continue
-            report = data.coordinator.report
-            reports.append(
-                {
-                    "title": entry.title,
-                    "status": report.status.value,
-                    "finding": report.finding.headline if report.finding else None,
-                    "detail": report.finding.detail if report.finding else None,
-                    "days_of_data": report.residual.valid_days,
-                    "checked": report.status is not Status.NOT_CHECKABLE,
-                }
-            )
-        return {"installations": reports}
 
     async def _rescore_forecasts(call: ServiceCall) -> dict[str, Any]:
         """Score every provider now, and say what was found.
 
-        The scoring already runs on the six-hourly analysis tick, so this exists
-        for the case that tick cannot serve: somebody who has just mapped a
+        The scoring already runs on the coordinator's six-hourly refresh, so this
+        exists for the case that refresh cannot serve: somebody who has just mapped a
         channel, or just passed the twenty-first comparable day, and wants to
         know now rather than within six hours.
 
@@ -307,12 +286,5 @@ def _async_register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_RESCORE_FORECASTS,
         _rescore_forecasts,
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(DOMAIN, SERVICE_VALIDATE_NOW, _validate_now)
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_EXPORT_REPORT,
-        _export_report,
         supports_response=SupportsResponse.ONLY,
     )

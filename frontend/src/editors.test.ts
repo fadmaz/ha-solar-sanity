@@ -15,16 +15,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import "./editors";
-import type { SolarSanityCardEditor, SolarSanityForecastCardEditor } from "./editors";
-import { SolarSanityCard } from "./status-card";
+import type { SolarSanityBatteryCardEditor, SolarSanityForecastCardEditor } from "./editors";
+import { SolarSanityBatteryCard } from "./battery-card";
 import { SolarSanityForecastCard } from "./forecast-card";
 import type { HassEntity, HomeAssistant, LovelaceCardConfig } from "./types/hass";
-
-const OPTIONS = ["ok", "insufficient_data", "not_checkable", "investigating", "fault_found"];
-
-function ours(id: string): HassEntity {
-  return { entity_id: id, state: "ok", attributes: { options: OPTIONS }, last_updated: "" };
-}
 
 function hassWith(entities: HassEntity[], archives: unknown[] = []): HomeAssistant {
   return {
@@ -86,108 +80,62 @@ describe("the cards hand back an editor", () => {
     // The registration in `editors.ts` is what makes these real elements
     // rather than `HTMLUnknownElement`. Importing the module for side effects
     // is easy to lose in a tidy-up.
-    expect(SolarSanityCard.getConfigElement().localName).toBe("solar-sanity-card-editor");
+    expect(SolarSanityBatteryCard.getConfigElement().localName).toBe(
+      "solar-sanity-battery-card-editor",
+    );
     expect(SolarSanityForecastCard.getConfigElement().localName).toBe(
       "solar-sanity-forecast-card-editor",
     );
   });
 });
 
-describe("the status card editor", () => {
-  const make = (config: LovelaceCardConfig, hass: HomeAssistant) => {
-    const editor = SolarSanityCard.getConfigElement() as SolarSanityCardEditor;
+describe("the battery card editor", () => {
+  const make = (config: LovelaceCardConfig, entities: Record<string, unknown> = {}) => {
+    const editor = SolarSanityBatteryCard.getConfigElement() as SolarSanityBatteryCardEditor;
     editor.setConfig(config);
-    editor.hass = hass;
+    editor.hass = { ...hassWith([]), entities } as HomeAssistant;
     return editor;
   };
-
-  const base = { type: "custom:solar-sanity-card" };
-
-  it("offers only our own entities, not every sensor in the house", async () => {
-    const hass = hassWith([
-      ours("sensor.solar_sanity_status"),
-      ours("sensor.shed_status"),
-      { entity_id: "sensor.frigate_status", state: "on", attributes: {}, last_updated: "" },
-      { entity_id: "sensor.power", state: "12", attributes: {}, last_updated: "" },
-    ]);
-
-    const rendered = await form(make(base, hass));
-    const entityRow = rendered.schema!.find((row) => row.name === "entity")!;
-
-    expect(entityRow.selector.entity).toEqual({
-      include_entities: ["sensor.shed_status", "sensor.solar_sanity_status"],
-    });
+  const outlook = (device: string) => ({
+    [`sensor.lowest_${device}`]: {
+      entity_id: `sensor.lowest_${device}`,
+      platform: "solar_sanity",
+      translation_key: "battery_lowest_before_sunrise",
+      device_id: device,
+    },
   });
 
-  it("says which installation was picked when the field is empty", async () => {
-    // The reason this editor exists. The card auto-selects and the interface
-    // had nowhere that said which one it chose.
-    const editor = make(base, hassWith([ours("sensor.solar_sanity_status")]));
+  it("offers Home Assistant's own device picker, filtered to this integration", async () => {
+    const rendered = await form(make({ type: "custom:solar-sanity-battery-card" }));
+
+    expect(rendered.schema?.map((row) => row.name)).toEqual(["device_id"]);
+    expect(rendered.schema?.[0]?.selector).toEqual({ device: { integration: "solar_sanity" } });
+  });
+
+  it("says which installation it found when there is one", async () => {
+    const editor = make({ type: "custom:solar-sanity-battery-card" }, outlook("dev-a"));
     await form(editor);
 
-    expect(note(editor)).toContain("sensor.solar_sanity_status");
     expect(note(editor)).toContain("found automatically");
   });
 
-  it("says nothing about auto-selection once a choice has been made", async () => {
+  it("asks for a choice when there are two", async () => {
     const editor = make(
-      { ...base, entity: "sensor.shed_status" },
-      hassWith([ours("sensor.shed_status"), ours("sensor.solar_sanity_status")]),
+      { type: "custom:solar-sanity-battery-card" },
+      { ...outlook("dev-a"), ...outlook("dev-b") },
     );
     await form(editor);
 
-    expect(note(editor)).not.toContain("found automatically");
-  });
-
-  it("asks for a choice when the card would refuse to make one", async () => {
-    const editor = make(
-      base,
-      hassWith([ours("sensor.a_status"), ours("sensor.b_status")]),
-    );
-    await form(editor);
-
-    expect(note(editor)).toContain("2 installations");
-  });
-
-  it("does not call an empty house a broken one", async () => {
-    const editor = make(base, hassWith([]));
-    await form(editor);
-
-    expect(note(editor)).toContain("will fill in by itself");
-  });
-
-  it("keeps the card type, which the form never sends", async () => {
-    const editor = make(base, hassWith([ours("sensor.solar_sanity_status")]));
-    await form(editor);
-
-    expect(change(editor, { entity: "sensor.solar_sanity_status" })).toEqual({
-      type: "custom:solar-sanity-card",
-      entity: "sensor.solar_sanity_status",
-    });
+    expect(note(editor)).toContain("Choose one");
   });
 
   it("removes a cleared field rather than writing it as null", async () => {
-    // `{entity: undefined}` serialises into a dashboard as `entity: null`, and
-    // null is not absent: absent means "find your own", null means "look up an
-    // entity called nothing" and renders an empty card.
-    const editor = make({ ...base, entity: "sensor.a_status" }, hassWith([ours("sensor.a_status")]));
+    const editor = make({ type: "custom:solar-sanity-battery-card", device_id: "dev-a" });
     await form(editor);
 
-    const emitted = change(editor, { entity: undefined, entity_id: "" });
+    const emitted = change(editor, { device_id: undefined });
 
-    expect(emitted).toEqual({ type: "custom:solar-sanity-card" });
-    expect("entity" in emitted).toBe(false);
-    expect("entity_id" in emitted).toBe(false);
-  });
-
-  it("offers nothing the card does not read", async () => {
-    // The editor carried a Title row and a "Show the numbers behind the
-    // verdict" switch for three releases, and the card read neither. Every
-    // other test here reaches for one row with `.find`, so none of them could
-    // see a row that should not exist. This compares the whole list.
-    const rendered = await form(make(base, hassWith([ours("sensor.a_status")])));
-
-    expect(rendered.schema!.map((row) => row.name)).toEqual(["entity"]);
+    expect(emitted).toEqual({ type: "custom:solar-sanity-battery-card" });
   });
 });
 

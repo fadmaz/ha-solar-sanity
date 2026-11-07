@@ -147,7 +147,7 @@ async def test_removing_one_of_two_leaves_the_other_working(
     enable_custom_integrations: None,
     entry_data: dict,
 ) -> None:
-    """``async_remove_entry`` sweeps stored files and repairs issues by entry id.
+    """``async_remove_entry`` removes the stored file by entry id.
 
     A sweep that matched too broadly would take the surviving installation's
     with it, and the only symptom would be a card that stopped updating.

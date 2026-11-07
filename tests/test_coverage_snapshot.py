@@ -93,24 +93,6 @@ def _snapshot(buckets, *, classes=None, rows=None, unrecorded=()) -> dict:
     return SolarSanityCoordinator.coverage_snapshot(stub)
 
 
-class TestValidHours:
-    """The gap between whole hours and valid hours is the whole question."""
-
-    def test_a_missing_channel_makes_the_hour_invalid(self) -> None:
-        snapshot = _snapshot([_bucket(h, ("pv", "load")) for h in range(24)])
-
-        assert snapshot["buckets"]["whole_hours"] == 24
-        assert snapshot["buckets"]["valid_hours"] == 0
-
-    def test_a_complete_hour_counts(self) -> None:
-        keys = ("pv", "load", "grid_import")
-        snapshot = _snapshot([_bucket(h, keys) for h in range(24)])
-
-        assert snapshot["buckets"]["valid_hours"] == 24
-        assert snapshot["valid_hours_per_local_day"] == {"2026-08-01": 24}
-        assert snapshot["days_meeting_minimum"] == 1
-
-
 class TestPerChannelCoverage:
     """One sparse channel has to be visible as *that* channel."""
 
@@ -152,11 +134,9 @@ class TestEmpty:
         assert snapshot["buckets"] == {
             "held": 0,
             "whole_hours": 0,
-            "valid_hours": 0,
             "first_utc": None,
             "last_utc": None,
             # A channel with no hours yet has no provenance to report, and an
             # empty mapping says that better than a missing key does.
             "by_source": {"pv": {}, "load": {}, "grid_import": {}},
         }
-        assert snapshot["days_meeting_minimum"] == 0

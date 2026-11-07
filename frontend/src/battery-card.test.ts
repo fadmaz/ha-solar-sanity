@@ -206,6 +206,19 @@ describe("the battery card", () => {
     ).toThrow();
   });
 
+  it("still renders under the old status card's tag, ignoring its old setting", async () => {
+    // Dashboards built before 0.30.0 hold `type: custom:solar-sanity-card` and
+    // often `entity:` naming the status sensor, which no longer exists.
+    const legacy = document.createElement("solar-sanity-card") as SolarSanityBatteryCard;
+    legacy.setConfig({ type: "custom:solar-sanity-card", entity: "sensor.solar_sanity_status" });
+    legacy.hass = hass();
+    document.body.append(legacy);
+    await legacy.updateComplete;
+
+    expect(legacy.shadowRoot?.textContent).toContain("Lasts until the sun");
+    legacy.remove();
+  });
+
   it("offers a stub with nothing to fill in", () => {
     const ctor = customElements.get("solar-sanity-battery-card") as unknown as {
       getStubConfig(): unknown;

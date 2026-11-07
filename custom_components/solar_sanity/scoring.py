@@ -72,10 +72,8 @@ def _actual_kwh_by_hour(coordinator: SolarSanityCoordinator) -> dict[datetime, f
     """Generation this integration measured, by UTC hour, in kilowatt-hours.
 
     Only whole hours, and only hours with a reading. A partial hour is not a
-    small hour — ``build_days`` in the residual engine drops anything not
-    exactly 3600 s for the same reason, and a forecast compared against
-    three-quarters of an hour under-reads by a quarter with nothing to show for
-    it.
+    small hour: a forecast compared against three-quarters of an hour
+    under-reads by a quarter with nothing to show for it.
 
     Provenance is deliberately *not* filtered on. A statistics-derived hour is a
     weaker measurement of generation than our own, but it is a measurement, and
@@ -143,9 +141,9 @@ async def async_score_providers(
 ) -> list[ProviderScore]:
     """Every configured provider, scored against measured generation.
 
-    Returns an empty list rather than raising: this runs on a timer beside the
-    analysis, and a forecast that cannot be scored must not cost a house its
-    verdict.
+    Returns an empty list rather than raising: this runs on the coordinator's
+    refresh, and a forecast that cannot be scored must not cost a house its
+    battery outlook.
     """
     entry_ids = list(coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or [])
     if not entry_ids:

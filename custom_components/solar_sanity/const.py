@@ -6,7 +6,7 @@ from datetime import timedelta
 from typing import Final
 
 DOMAIN: Final = "solar_sanity"
-PLATFORMS: Final = ["sensor", "binary_sensor"]
+PLATFORMS: Final = ["sensor"]
 
 URL_BASE: Final = "/solar_sanity"
 CARD_FILENAME: Final = "solar-sanity.js"
@@ -17,27 +17,11 @@ CONF_ROLE: Final = "role"
 CONF_ENTITY_ID: Final = "entity_id"
 CONF_ORIGIN: Final = "origin"
 
-CONF_HAS_BATTERY: Final = "has_battery"
-CONF_GRID_IS_NET: Final = "grid_is_net"
-CONF_LOAD_WHOLE_HOUSE: Final = "load_whole_house"
-
 CONF_FORECAST_ENTRIES: Final = "forecast_entries"
 
-OPT_CORRECTIONS: Final = "corrections"
-OPT_SUPPRESSED: Final = "suppressed_codes"
-#: The annual figure the installer promised, compared against a full year of
-#: production. An option rather than configuration: it is typed after setup,
-#: changed at any time, and takes no part in the mapping.
-#:
-#: It was named ``CONF_`` and read from ``entry.data`` while the only thing that
-#: could write it was the options flow, which writes ``entry.options``. So the
-#: check returned ``None`` for every real installation, and ``None`` is also
-#: what "no guarantee configured" returns. The prefix is not decoration here,
-#: it is the store.
-OPT_GUARANTEED_ANNUAL_KWH: Final = "guaranteed_annual_kwh"
 #: Entity id of a battery state-of-charge sensor. Optional, and not a channel:
-#: it is a level in percent rather than a flow in watt-hours, and its value is
-#: that it sits outside the energy balance entirely.
+#: it is a level in percent rather than a flow in watt-hours. With the capacity
+#: below, it is what the battery outlook projects from.
 OPT_BATTERY_SOC: Final = "battery_soc_entity"
 #: The battery's usable capacity, in kWh. With the charge-level sensor, the one
 #: other thing the outlook cannot run without: a percentage only becomes hours
@@ -60,31 +44,10 @@ STORAGE_VERSION: Final = 1
 STORAGE_MINOR_VERSION: Final = 1
 STORAGE_KEY_STATE: Final = f"{DOMAIN}.state"
 
-#: Daily digests only. Raw hourly buckets live in memory for the current window;
-#: the long history lives in the recorder as external statistics, which is
-#: indexed, never purged, and does not cost boot time the way a growing
-#: ``.storage`` file would.
-DIGEST_RETENTION_DAYS: Final = 400
-
 # --- scheduling ------------------------------------------------------------
-#: The live tripwire. Only ever raises simultaneous-flow and stuck/stale.
+#: The battery outlook's quick tick. It recomputes only when the charge level
+#: has moved since the last projection.
 LIVE_INTERVAL: Final = timedelta(seconds=30)
-
-#: How long after setup completeness withholds judgement when it has read
-#: nothing at all.
-#:
-#: Home Assistant gives an integration no way to wait for another one's
-#: entities, so at the first refresh the inverter has usually not published yet
-#: and every channel reads as absent. Reporting that as 0% states that nothing
-#: works, at the moment a user is most likely to be looking. But withholding it
-#: forever is no better: a sensor that breaks while the user restarts would then
-#: never be reported at all.
-#:
-#: Five minutes is long enough for anything polling or push-based to have
-#: spoken, and short enough that a genuine outage is not hidden for long. It
-#: only ever delays the *first* answer — once a live reading has arrived, an
-#: outage is reported the moment it happens.
-COMPLETENESS_GRACE: Final = timedelta(minutes=5)
 
 #: Our own hourly integrator closes a bucket on the hour.
 BUCKET_INTERVAL: Final = timedelta(minutes=5)
@@ -105,14 +68,9 @@ POWER_GAP_TOLERANCE_SECONDS: Final = 180.0
 #: report. Generous, because a slow sensor is ordinary and a dropout is not.
 ENERGY_MAX_AGE_SECONDS: Final = 15 * 60.0
 
-#: The full analysis. Nightly is plenty — nothing here changes minute to minute.
-ANALYSIS_INTERVAL: Final = timedelta(hours=6)
-
-#: Every channel must have updated within this window for a live snapshot to
-#: mean anything. Comparing a 60-second-stale battery reading against a
-#: 5-second-fresh PV reading produces a kilowatt-scale residual with no fault
-#: present, which is why the live tier may not raise inferential findings.
-LIVE_MAX_AGE_SECONDS: Final = 120
+#: How often the forecast providers are scored against the window. A score
+#: rests on whole days, so nothing about it changes minute to minute.
+SCORING_INTERVAL: Final = timedelta(hours=6)
 
 # --- forecast capture ------------------------------------------------------
 #: Home Assistant's own forecast integrations set no ``state_class`` on their
@@ -140,11 +98,5 @@ DAYAHEAD_MIN_LEAD_HOURS: Final = 12
 #: treated as unresumable rather than restarted at zero.
 FORECAST_SUM_LOOKBACK_DAYS: Final = 7
 
-# --- events ----------------------------------------------------------------
-EVENT_FINDING_RAISED: Final = f"{DOMAIN}_finding_raised"
-EVENT_FINDING_CLEARED: Final = f"{DOMAIN}_finding_cleared"
-
 # --- services --------------------------------------------------------------
-SERVICE_VALIDATE_NOW: Final = "validate_now"
 SERVICE_RESCORE_FORECASTS: Final = "rescore_forecasts"
-SERVICE_EXPORT_REPORT: Final = "export_report"

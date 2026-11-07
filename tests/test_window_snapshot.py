@@ -1,7 +1,7 @@
 """The exported window and the replayer must agree about what the codes mean.
 
 `coordinator` writes single-character codes for quality and provenance;
-`tests/synth/replay.py` reads them back. They are deliberately two tables rather
+`tests/synth/diagnostics.py` reads them back. They are deliberately two tables rather
 than one import, because the replayer has to stay usable with Home Assistant
 absent — which is most of this repository's test suite.
 

@@ -4,8 +4,7 @@
   "after_dependencies": [
     "frontend",
     "recorder",
-    "energy",
-    "repairs"
+    "energy"
   ],
   "codeowners": [
     "@fadmaz"
@@ -19,5 +18,5 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/fadmaz/ha-solar-sanity/issues",
   "requirements": [],
-  "version": "0.29.0"
+  "version": "0.30.0"
 }

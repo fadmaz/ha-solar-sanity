@@ -1,51 +1,34 @@
 # Solar Sanity
 
-**Tells you whether your solar data adds up — and stays quiet when it does.**
+**Where your battery is heading tonight, learned from your own house.**
 
 [![Validate](https://github.com/fadmaz/ha-solar-sanity/actions/workflows/validate.yml/badge.svg)](https://github.com/fadmaz/ha-solar-sanity/actions/workflows/validate.yml)
 [![HACS](https://img.shields.io/badge/HACS-custom-41BDF5.svg)](https://hacs.xyz)
 [![License](https://img.shields.io/github/license/fadmaz/ha-solar-sanity)](LICENSE)
 
 > [!WARNING]
-> Early development. The checks are conservative by design, but the thresholds
-> are still being tuned against real installations.
+> Early development. The outlook has been graded against one real installation;
+> the thresholds are still being checked against others.
 
 ---
 
 ## The problem
 
-You have solar panels and a dashboard full of numbers. You have no way of
-knowing whether those numbers are **correct**.
+You have a battery and a dashboard that tells you where it is now. What you
+actually want to know is where it will be:
+- **Will it last the night?**
+- **When will it be full?**
+- **How much can the house use before the sun is back?**
 
-If a current clamp is on backwards, if a sensor reports kilowatts while claiming
-watts, if your battery's charge and discharge are mapped to each other's slots —
-nothing tells you. Your dashboard looks fine. It is confidently wrong, and every
-figure downstream inherits the error.
+The usual answer is a template sensor dividing the charge by the current load. It
+jumps every time the kettle goes on, and it knows nothing about tomorrow's
+weather or the evening you always have.
 
 ## What this does
 
-Over any hour, energy in must equal energy out:
-
-```
-solar + grid import + battery discharge  =  house load + grid export + battery charge
-```
-
-Solar Sanity checks that identity against your own sensors. When it does not
-close, it names the sensor and explains what is wrong with it:
-
-> **Grid export is counted the wrong way round**
-> When Grid export reads a positive number, the energy is actually flowing the
-> other way. The magnitude is right; the direction is backwards. Over the last
-> 6 days this explains 94% of the energy that does not add up.
-
-Findings appear in Home Assistant's **Repairs** panel, with the real fix
-alongside — not buried in a log.
-
-## Battery outlook
-
-Map your battery's **charge level** and give its **capacity**, and five more
-sensors appear, all read off one projection of the charge from now until the
-forecast runs out:
+Solar Sanity learns how your house uses energy, hour by hour, from its own
+history. It projects the battery's charge from now until the forecast runs out,
+and reads five answers off that one projection:
 
 | Sensor | Answers |
 | --- | --- |
@@ -55,24 +38,41 @@ forecast runs out:
 | Safe average load tonight | How much can the house draw, on average, until the sun takes over? |
 | Spare solar | How much sunshine will the battery have no room for? |
 
-Consumption is learned from your history, hour by hour. The night read-outs
-work without a forecast provider; *full at* and *spare solar* need one, because
-an inverter with nowhere to send a surplus records production cut back to what
-it could use, and that history understates the sun.
+**Data:**
+- Consumption comes from your history: the backfill reads up to a month of it
+  at setup, so most houses have an answer on the first day.
+- The night read-outs work without a forecast provider.
+- *Full at* and *spare solar* need one. An inverter with nowhere to send a
+  surplus records production cut back to what it could use, so history
+  understates the sun.
 
-It learns two things about your installation from your own meters, and shows
-both as attributes. **How far your forecast is off** (`forecast_scale`): what
-your panels delivered against what the forecast said a day ahead, over the last
-fortnight, counting only hours the battery had room in. On the installation it
-was built on, the forecast ran at twice the real output. **What the inverter
-draws for itself** (`inverter_standby_w`): power the house meter never sees,
-measured on the hours the battery carried the house alone in the dark.
+**Learned from your own meters,** and shown as attributes:
+- **How far your forecast is off** (`forecast_scale`): what your panels delivered
+  against what the forecast said a day ahead, over the last fortnight, counting
+  only hours the battery had room in. On the installation it was built on, the
+  forecast ran at twice the real output.
+- **What the inverter draws for itself** (`inverter_standby_w`): power the house
+  meter never sees, measured on the hours the battery carried the house alone in
+  the dark.
 
-Two things it deliberately does not do. It **never counts grid charging**: the
-question it answers is whether the battery alone would get the house there,
-which is the one that matters during an outage and the safe one otherwise. And
-it **publishes unknown rather than a guess** — every unknown state carries a
+**It never counts grid charging.** The question it answers is whether the
+battery alone would get the house there, which is the one that matters during an
+outage and the safe one otherwise. When the battery has been charged from the
+grid recently, an attribute says so.
+
+**It publishes unknown rather than a guess.** Every unknown state carries a
 `reason` attribute saying why.
+
+### How good is it?
+
+Every night it can be graded against what the battery really did.
+`scripts/backtest_outlook.py` replays a month of a diagnostics download. On the
+installation it was built on (30 kWh, reserve 35%, Forecast.Solar), over 27 real
+nights:
+- the lowest-battery figure was off by 2.8 points on average, with no bias;
+- the call on whether the battery reaches its reserve before sunrise was right
+  72 times out of 80;
+- the "will it be full today" call was wrong on 6 of 27 mornings.
 
 ## What it deliberately does not do
 
@@ -81,92 +81,7 @@ it **publishes unknown rather than a guess** — every unknown state carries a
 - **It does not control anything.** No switches, no battery scheduling, no
   automation of your hardware. It reads and it tells you.
 - **It does not draw another power-flow diagram.** That is well served already.
-  Everything here lives on the time axis: days, weeks, seasons.
-
----
-
-## Silence is the point
-
-A diagnostic tool that cries wolf gets uninstalled in a week, so the design
-budget is *fewer than one false finding per two hundred installations per year*.
-Everything follows from that.
-
-**It stays quiet unless it can name the fault.** Every fault reduces to
-estimating one number per channel, and that number snaps to a small physical
-set:
-
-| Estimate | Means |
-| --- | --- |
-| ~0 | healthy |
-| +0.02 … +0.10 | measured before the inverter — normal conversion loss, not a fault |
-| +1 | the channel is counted twice |
-| +2 | the sign is backwards |
-| −1 | it sees half — one clamp on a two-conductor supply |
-| −2 | it sees a third — one clamp on a three-phase supply |
-| −999 | kW reported as W |
-
-Land at 1.43 and that is not a fault anyone can name, so nothing is said.
-Possibly forever. That single rule is the main defence against false alarms.
-
-**A perfect zero would be wrong.** Real systems lose energy — inverters are
-95–97% efficient, batteries 85–95% round-trip — so expected loss is fitted per
-installation and subtracted before any test runs. The conversion term needs a
-few days; the inverter's own idle draw is measured on hours with no generation
-and needs about two hundred of them. What makes any of this workable is that
-the noise floor (4–5%) and the fault floor (50%+) do not overlap.
-
-**And it says what it measured.** A healthy verdict used to be the word `ok` and
-nothing else, while the analysis behind it had found a continuous draw nothing
-in the house accounts for. If there is one you are told — *"About 35 W flows
-continuously that nothing measures"* — and the figures behind every verdict,
-including `ok`, are in the diagnostics download.
-
-**And it says what it assumed.** The loss model subtracts three things before any
-test runs — a generation sensor reading before the inverter, a battery metered on
-its DC side, a continuous unmetered draw — and each one is a note saying what was
-taken and what it was taken to mean. Quiet absorption was never the cautious
-option; it is the one where a wrong assumption never surfaces. The generation
-note gives the figure both ways round, because a sensor a twentieth of whose
-reading never arrives is a sensor reading a nineteenth high, and nothing in the
-data can tell those apart.
-
-**Five honest answers, not two:** `ok`, `insufficient_data`, `not_checkable`,
-`investigating`, `fault_found`. Most systems are `insufficient_data` on day one
-and plenty stay `investigating`. That is a real answer, not a failure.
-
-**One finding at a time.** An uncorrected fault dominates everything, so a list
-of five would mostly be echoes of the first.
-
-**Naming a sensor takes a week.** The per-channel estimate is taken from the
-largest hours only, so it needs about a hundred and sixty complete hours before
-it means anything. Structural findings — an unmeasured battery, an unmeasured
-export path — rest on shape rather than arithmetic and can be named from five
-days.
-
----
-
-## When your balance cannot close
-
-Plenty of systems have no grid export sensor. Nothing measures what leaves the
-house, so the identity is short a term and can never close — and the energy that
-leaves looks exactly like generation that went missing.
-
-Solar Sanity says so, and then checks what it still can. In the hours with no
-generation nothing can be exported, so the arithmetic has to close, and that
-half of the day is verified normally:
-
-> Nothing measures what leaves your house, so only the 11 hours a day with no
-> generation could be checked — in those, nothing can be exported and the
-> arithmetic has to close. Your generation sensor is not covered by this,
-> because it only produces energy during the hours that cannot be checked.
-
-> About 4.9 kWh a day is unaccounted for while you have a surplus. With no
-> export meter that is most likely what you are sending to the grid, but it
-> cannot be told apart from a generation sensor reading high.
-
-Those are **notes**: never a fault, never a Repairs entry, never an alarm. They
-say what a verdict covers, because a clean status that quietly covered half the
-hours would be worse than no status.
+  Everything here lives on the time axis.
 
 ---
 
@@ -187,60 +102,62 @@ statistics engine, as two separate series:
 | `solar_sanity:dayahead_<provider>` | Each hour as first seen at twelve hours of lead, and never revised |
 
 The split matters. A provider revises its forecast all day, so by the time an
-hour has passed the rolling series holds a figure issued *minutes* before it —
-a nowcast. Scoring that would flatter every provider equally and mean nothing.
+hour has passed the rolling series holds a figure issued *minutes* before it,
+which is a nowcast. Scoring that would flatter every provider equally and mean
+nothing.
 
 Capture starts the moment you install the integration. It is the one thing in
 the product that cannot be backfilled later.
 
-**Scoring ships, and it usually says nothing.** Each configured provider gets an
-accuracy sensor comparing what it said the day before against what your roof then
-produced — signed the way you would read it, so negative means the system produced
-less than promised. A second sensor moves tomorrow's figure by that bias once
-there is a correction worth applying, and a `rescore_forecasts` service answers on
-demand rather than at the next six-hour cycle.
+**Forecast.Solar on Home Assistant before 2026.11.** Forecast.Solar labels each
+hour with the moment it ends. Home Assistant passed that label on unchanged until
+2026.11, and Solar Sanity corrects it on older releases, so every hour is where
+it belongs.
 
-The default answer is still no. Twenty-one comparable days across at least
-twenty-eight, spread across the window, stable under a split-half test,
-uncorrelated with the size of the day and not drifting. Only then a magnitude
-gate — and every threshold widens by 1.6 when generation comes from hourly means,
-so some installations will never qualify. Until it is earned the sensor reads
-unknown and its `reason` says which of those it is waiting for. A figure it will
-not stand behind is not shown at all, and that is the correct outcome rather than
-a reason to lower a constant.
+**Scoring ships, and it usually says nothing.**
+- Each configured provider gets an accuracy sensor comparing what it said the
+  day before against what your roof then produced. It is signed the way you
+  would read it: negative means the system produced less than promised.
+- A second sensor moves tomorrow's figure by that bias once there is a
+  correction worth applying.
+- A `rescore_forecasts` service answers on demand.
+
+**The default answer is still no.** A figure needs:
+- twenty-one comparable days across at least twenty-eight, spread across the
+  window;
+- stability under a split-half test;
+- no correlation with the size of the day, and no drift.
+
+Until then the sensor reads unknown and its `reason` says what it is waiting for.
 
 ---
 
 ## Cards
 
-All three ship inside the integration and register themselves. One install,
-always version-matched.
+Both ship inside the integration and register themselves. One install, always
+version-matched.
 
-**Solar Sanity: battery** — the battery outlook on one card. The charge now, one
-sentence worth leading with ("Full at 14:35, in 2 h 10 min", "Lasts until the
-sun, at 06:40", "Reaches the reserve at 04:10"), the safe load, the lowest
-before sunrise and the spare sun, and the projected charge over the next day
-and a half against your reserve and target, with the night shaded. Times are in
-Home Assistant's time zone. It finds its sensors in the entity registry, so
-renaming them does not lose them.
+**Solar Sanity: battery** shows the battery outlook on one card:
+- the charge now;
+- one sentence worth leading with ("Full at 14:35, in 2 h 10 min", "Lasts until
+  the sun, at 06:40", "Reaches the reserve at 04:10");
+- the safe load, the lowest before sunrise and the spare sun;
+- the projected charge over the next day and a half against your reserve and
+  target, with the night shaded.
 
-**Solar Sanity** — the verdict, in three rows that never grow. A healthy day
-says so in one line and shows nothing else; a fault shows the observation and a
-button to the Repairs entry carrying the rest. Every degraded state is a
-sentence rather than an empty box.
+Times are in Home Assistant's time zone. It finds its sensors in the entity
+registry, so renaming them does not lose them.
 
-**Solar Sanity: tomorrow's forecast** — what your provider said a day ahead
-about tomorrow, drawn from the immutable series above. Hand-rolled inline SVG,
-so it re-themes with no JavaScript and uses Home Assistant's own solar colour.
+**Solar Sanity: tomorrow's forecast** shows what your provider said a day ahead
+about tomorrow, drawn from the immutable series above. It is hand-rolled inline
+SVG, so it re-themes with no JavaScript.
 
-None takes any configuration. Drop one on a dashboard and it finds its own
-data: the battery and status cards pick up your installation, the forecast card
-draws every provider you have.
+Neither takes any configuration. Drop one on a dashboard and it finds its own
+data. Each has an editor for when there is a second installation to choose
+between, or a single provider to isolate.
 
-Each has an editor for when the defaults are not what you want: a second
-installation to choose between, or a single provider to isolate. The status
-card's editor also answers a question the interface could not previously answer
-at all, which is *which* installation the card picked when it picked for you.
+A dashboard still using the old status card (`custom:solar-sanity-card`) shows
+the battery card in its place.
 
 ### Laying them out for you
 
@@ -255,11 +172,9 @@ views:
       type: custom:solar-sanity
 ```
 
-Either route emits the battery card first wherever the battery outlook is set
-up, then the verdict, then the forecast: the forecast is what you look at when
-the verdict is boring. If you run more than one
-installation it emits one status card per house, each told which one it belongs
-to, rather than letting a card choose silently between them.
+Either route lays out the battery first and the forecast under it. With more than
+one installation it emits one battery card per house, each told which one it
+belongs to, rather than letting a card choose silently between them.
 
 ## Installation
 
@@ -273,91 +188,54 @@ hand; the log says so explicitly rather than failing silently.
 
 Every release is tagged and carries a written changelog. The version number is
 deliberately still `0.x`, and the reason is specific rather than modest: **this
-has been validated on one installation.**
-
-That one house has been genuinely useful — most of what shipped in the last
-several releases was a defect it exposed, including two the test suite was
-asserting the opposite of. But a fault detector calibrated against a single
-roof is a fault detector with a sample size of one, and its thresholds have
-never met a topology its author did not think of. `1.0.0` is a claim about that,
-not about feature completeness, and it will be cut when the answers hold up
-somewhere else.
+has been validated on one installation.** `1.0.0` will be cut when the outlook's
+answers hold up on houses its author did not build it on.
 
 Pre-releases are published on the same repository. To see them, open Solar
-Sanity in HACS, use the three-dot menu and turn on **beta versions** — the
-setting is per-repository, so it does not affect anything else you have
-installed. If you run one, the most useful thing you can send back is
+Sanity in HACS, use the three-dot menu and turn on **beta versions**; the setting
+is per repository. If you run one, the most useful thing you can send back is
 the diagnostics download.
 
-Read it before you post it. Coordinates, API keys and passwords are stripped;
-**your entity ids are not**, deliberately — they are what makes a mapping report
-answerable, and a report without them usually cannot be acted on. They do name
-your hardware, and the file also carries your hourly consumption for the last
-month. If that matters to you, send it privately rather than attaching it to a
-public issue.
-
+Read it before you post it. Coordinates, API keys and passwords are stripped.
+**Your entity ids are not**, deliberately: they are what makes a report
+answerable. They do name your hardware, and the file also carries your hourly
+consumption and charge level for the last month. If that matters to you, send it
+privately rather than attaching it to a public issue.
 
 ## Setup
 
-Sensors are pre-filled from your Energy Dashboard where possible. Three
-questions follow, and **"Not sure" is a real answer** — it defers to inference
-rather than making you guess.
-
-**Consumption is required.** Without it the arithmetic closes by definition:
-`load` becomes whatever makes the equation balance, the residual is always
-zero, and nothing is actually verified. Solar Sanity reports `not_checkable`
-rather than a reassuring lie.
+1. **Map your sensors.** They are pre-filled from your Energy Dashboard where
+   possible. Consumption and generation are required: the outlook learns the house
+   from what it uses.
+2. **Pick the battery's charge level, if you have one.** The wizard then asks how
+   big the battery is:
+   - **usable capacity;**
+   - **reserve:** the level your inverter will not go below;
+   - **charging target:** usually 100%.
+3. **Pick any solar forecast integrations** you want recorded.
 
 Everything chosen at setup can be changed afterwards through **Reconfigure**,
-including the topology answers and the forecast providers, without losing any
-history. Adding a second entry for the same house is caught rather than allowed
-to quietly corrupt a shared forecast archive.
-
-## Corrections
-
-When a fault is certain, Solar Sanity offers to adjust for it — framed as
-*"applied so I can keep checking"*, never as *"fixed"*.
-
-- Never applied without a click.
-- Scoped to this integration only. Your sensor, your Energy Dashboard and your
-  automations are untouched.
-- Always shown alongside the real fix.
-- Continuously re-tested, so if you repair the sensor properly you get told the
-  correction is no longer needed.
-
-They exist because one uncorrected fault masks every other one.
+without losing any history. Battery settings are also under **Configure**.
+Adding a second entry for the same house is caught rather than allowed to
+quietly corrupt a shared forecast archive.
 
 ## Entities
 
 | Entity | Meaning |
 | --- | --- |
-| `sensor.*_status` | One of the five outcomes. Never a percentage. Its attributes carry the reason, the finding, and any notes |
-| `binary_sensor.*_data_problem` | On when something needs attention — including when the identity provably fails but no single sensor can be blamed |
-| `sensor.*_forecast_tomorrow` | Tomorrow's forecast — with a `state_class`, so it is actually recorded |
-| `sensor.*_expected_tomorrow_corrected` | The same figure moved by the bias measured against your own roof. Empty until there is a correction worth applying |
-| `sensor.*_<provider>_accuracy` | One per configured provider: how close it has been, signed so negative means less than promised. Unknown until it is earned |
-| `sensor.*_data_completeness` | How much of the picture exists right now |
-| `sensor.*_corrections_in_effect` | Diagnostic overrides in effect |
-| `sensor.*_live_residual` | Instantaneous imbalance, in watts. Only created when every channel reports a rate |
 | `sensor.*_battery_full_at` | When the battery will reach its charging target. Needs a forecast provider |
 | `sensor.*_battery_reaches_reserve_at` | When it will reach reserve, if before the sun takes over |
-| `sensor.*_lowest_battery_before_sunrise` | Tonight's projected minimum, with the whole trajectory in an attribute |
-| `sensor.*_safe_average_load_tonight` | The steadiest load the battery can carry until the sun takes over |
+| `sensor.*_lowest_battery_before_sunrise` | Tonight's projected minimum. Its attributes carry the whole trajectory, the charge it started from, the reserve and target, the forecast scale and the inverter's standby |
+| `sensor.*_safe_average_load_tonight` | The steadiest load the house can draw until the sun takes over |
 | `sensor.*_spare_solar` | Sunshine the battery will have no room for. Needs a forecast provider |
+| `sensor.*_forecast_tomorrow` | Tomorrow's forecast, with a `state_class`, so it is actually recorded |
+| `sensor.*_expected_tomorrow_corrected` | The same figure moved by the bias measured against your own roof. Empty until there is a correction worth applying |
+| `sensor.*_<provider>_accuracy` | One per configured provider: how close it has been, signed so negative means less than promised. Unknown until it is earned |
 
-**Download diagnostics** on the device page is the fastest way to understand a
-verdict. It carries per-channel coverage, both forecast archives, and every
-number that was measured and then not acted on — because "nothing could be
-established" is not a useful answer without them.
-
-When the numbers do not add up overnight it also carries a **night ledger**:
-every channel's total over one agreed set of hours, with the residual those
-lines add up to. So a shortfall becomes a subtraction you can check a line at a
-time, and the size of each line says which channel is carrying it.
-`night_ledger_hours` turns the gap into a rate: 35,100 Wh over 390 hours is 90 W
-drawn continuously by something unmeasured. A channel you have not configured
-gets no line rather than a zero, because reporting no export on a system with no
-export meter states the one thing nobody can know without one.
+**Download diagnostics** on the device page carries everything the outlook was
+computed from: per-channel coverage, the hourly window, a month of charge level
+and both forecast archives. It is enough to replay every night with
+`scripts/backtest_outlook.py`.
 
 ## Development
 
@@ -367,31 +245,37 @@ npm ci
 python scripts/check.py               # every gate in the order CI needs them
 ```
 
-That one command runs ruff, the TypeScript typecheck, the Python suite, the card
-build, the card tests and the bundle size budget, and stops at the first failure.
-`--slow` adds the full corpus. The pieces are `python -m pytest tests -q` (1,791
-tests locally, 2,028 on CI where Home Assistant is installed), `npm test` (130
-card tests) and `npm run build`.
+That one command runs:
+- ruff;
+- the TypeScript typecheck;
+- the Python suite;
+- the card build and the card tests;
+- the bundle size budget.
 
-The analysis engine imports nothing from Home Assistant and is tested with
-plain pytest. That is enforced structurally rather than by convention — an AST
-check fails the build on any `homeassistant` import, on relative-parent
-imports, on currency language in user-facing copy, on `or 0` fallbacks, and on
-anything non-deterministic. The currency check covers the cards and the
-translations too, not only the Python.
+It stops at the first failure.
 
-The clean-house suite is a **gate, not a test**: healthy scenarios across
-topologies, loss profiles, noise levels, seasons and dropouts, every one
-asserting silence. 600 of them run on every push; the full 3,000 run on main and
-on the weekly schedule, and that is the run which catches a false accusation only
-one seed in ten produces. It must be green before any threshold anywhere is
-changed.
+The outlook's arithmetic imports nothing from Home Assistant and is tested with
+plain pytest. That is enforced structurally rather than by convention: an AST
+check fails the build on any `homeassistant` import, on relative-parent imports,
+on currency language, on `or 0` fallbacks, and on anything non-deterministic.
+The currency check covers the cards and the translations too.
+
+Before changing anything the outlook computes, replay a real download:
+
+```bash
+python scripts/backtest_outlook.py diagnostics/<download>.json --tz <your zone>
+```
+
+The bar is the one it passed: at least 14 distinct nights, the lowest-battery
+figure within 5 points on average, and the reserve called right at least 85% of
+the time. `frontend/dev/harness.html` renders the cards on synthetic data for
+looking at them in a browser.
 
 ## Brand assets
 
 The icon lives in `custom_components/solar_sanity/brand/` and is regenerated
 with `python scripts/make_brand_assets.py`. Home Assistant serves brand images
-from there as of 2026.3, taking priority over the CDN — the `home-assistant/brands`
+from there as of 2026.3, taking priority over the CDN; the `home-assistant/brands`
 repository no longer accepts custom-integration icons.
 
 ## License
