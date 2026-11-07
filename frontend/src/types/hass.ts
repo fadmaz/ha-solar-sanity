@@ -14,9 +14,23 @@ export interface HassEntity {
   last_updated: string;
 }
 
+/**
+ * One entity's registry entry as the frontend holds it: which integration made
+ * it and under which translation key. Matching on these, rather than on entity
+ * ids, survives a user renaming every entity.
+ */
+export interface HassEntityRegistryEntry {
+  entity_id: string;
+  platform?: string;
+  translation_key?: string;
+  device_id?: string;
+}
+
 export interface HomeAssistant {
   states: Record<string, HassEntity>;
-  config: { state: string };
+  /** Optional here only so fixtures that predate it stay valid. */
+  entities?: Record<string, HassEntityRegistryEntry>;
+  config: { state: string; time_zone?: string };
   themes: { darkMode: boolean };
   language: string;
   translationMetadata: {

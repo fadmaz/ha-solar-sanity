@@ -113,6 +113,9 @@ async def test_the_sensors_are_created_before_the_charge_level_exists(
     state = hass.states.get(lowest)
     assert state.state == "unknown"
     assert "three days" in state.attributes["reason"]
+    # The card shows the battery while consumption is still being learned.
+    assert state.attributes["soc_pct"] == 64.0
+    assert state.attributes["computed_at"]
 
     hass.states.async_set(SOC, "unavailable")
     _refresh(entry)
@@ -140,6 +143,10 @@ async def test_a_week_of_history_gives_a_night_outlook(
     assert float(lowest.state) < 80
     assert lowest.attributes["production_from"] == "history"
     assert lowest.attributes["trajectory"]
+    # One entity carries everything the card draws, from the same refresh.
+    assert lowest.attributes["soc_pct"] == lowest.attributes["trajectory"][0]["soc"] == 80.0
+    assert lowest.attributes["reserve_pct"] == 20.0
+    assert lowest.attributes["target_pct"] == 100.0
     assert float(safe.state) > 0
     assert full.state == "unknown"
     assert "forecast" in full.attributes["reason"]

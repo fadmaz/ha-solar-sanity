@@ -586,9 +586,20 @@ scanning for any URL that starts with the card path.
 ### 6.1 What ships
 
 `frontend/src/main.ts` imports the editors and the strategy for their
-side-effect registrations, re-exports the two cards, and pushes two entries
-onto `window.customCards`: `solar-sanity-card` and
-`solar-sanity-forecast-card`.
+side-effect registrations, re-exports the three cards, and pushes three entries
+onto `window.customCards`: `solar-sanity-battery-card`, `solar-sanity-card`
+and `solar-sanity-forecast-card`.
+
+- **`solar-sanity-battery-card`** (`battery-card.ts`, logic in
+  `battery-model.ts`): one installation's outlook. It finds the five outlook
+  sensors through `hass.entities` by platform, translation key and device, and
+  reads everything it draws from `battery_lowest_before_sunrise` (trajectory,
+  `soc_pct`, `reserve_pct`, `target_pct`, night window). The headline is
+  chosen from the projection's own night and full times, never from the
+  browser's clock, and times are formatted in `hass.config.time_zone`. The
+  chart's shapes are SVG; its labels and dots are positioned elements over it,
+  because text in a stretched SVG is squashed. `frontend/dev/harness.html`
+  renders the cards on synthetic data in a browser, outside the bundle.
 
 - **`solar-sanity-card`** (`status-card.ts:227-457`): three fixed grid rows,
   never more, so a dashboard does not reflow when something goes wrong. It
@@ -604,8 +615,9 @@ onto `window.customCards`: `solar-sanity-card` and
   builds its provider dropdown from `recorder/list_statistic_ids` filtered to
   the day-ahead prefix.
 - **Strategy** (`strategy.ts`): `ll-strategy-view-solar-sanity` and
-  `ll-strategy-dashboard-solar-sanity` generate one status card per
-  installation plus one forecast card.
+  `ll-strategy-dashboard-solar-sanity` generate a battery card per
+  installation with an outlook, one status card per installation, and one
+  forecast card.
 - `types/hass.ts` is a hand-vendored eight-member subset of HA's types, chosen
   over `custom-card-helpers`.
 

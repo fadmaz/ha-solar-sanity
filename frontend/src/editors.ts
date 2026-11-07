@@ -1,5 +1,5 @@
 /**
- * The two card editors.
+ * The card editors.
  *
  * Both are thin on purpose. Home Assistant ships `<ha-form>` in its own bundle
  * and every integration's config flow renders through it, so a schema and a
@@ -22,6 +22,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
+import { findInstallations, hasOutlook } from "./battery-model";
 import { type ArchiveMeta, dayAheadArchives, providerLabel } from "./forecast-data";
 import { isStatusEntity } from "./status-card";
 import type { HomeAssistant, LovelaceCardConfig } from "./types/hass";
@@ -77,12 +78,14 @@ function pruned(data: Record<string, unknown>): Record<string, unknown> {
 const LABELS: (row: FormRow) => string = (row) =>
   ({
     entity: "Installation",
+    device_id: "Installation",
     provider: "Forecast provider",
   })[row.name] ?? row.name;
 
 const HELPERS: (row: FormRow) => string | undefined = (row) =>
   ({
     entity: "Leave empty to use the only one you have.",
+    device_id: "Leave empty to use the only one with a battery outlook.",
     provider: "Leave empty to show every provider you have configured.",
   })[row.name];
 
@@ -305,9 +308,71 @@ export class SolarSanityForecastCardEditor extends LitElement {
   public static styles = SHARED;
 }
 
+/**
+ * The battery card's editor: which installation, and only when there is a
+ * choice to make. Home Assistant's own device picker, filtered to this
+ * integration, so the names are the ones the user gave their devices.
+ */
+@customElement("solar-sanity-battery-card-editor")
+export class SolarSanityBatteryCardEditor extends LitElement {
+  @property({ attribute: false }) public hass?: HomeAssistant;
+  @state() private _config: LovelaceCardConfig = { type: "custom:solar-sanity-battery-card" };
+
+  public setConfig(config: LovelaceCardConfig): void {
+    this._config = config;
+  }
+
+  private readonly _schema: readonly FormRow[] = [
+    { name: "device_id", selector: { device: { integration: "solar_sanity" } } },
+  ];
+
+  private _changed(event: CustomEvent): void {
+    event.stopPropagation();
+    const data = (event.detail as { value: Record<string, unknown> }).value;
+    emit(this, { ...pruned(data), type: this._config.type } as LovelaceCardConfig);
+  }
+
+  protected render(): TemplateResult {
+    return html`
+      <ha-form
+        .hass=${this.hass}
+        .data=${this._config}
+        .schema=${this._schema}
+        .computeLabel=${LABELS}
+        .computeHelper=${HELPERS}
+        @value-changed=${this._changed}
+      ></ha-form>
+      ${this._note()}
+    `;
+  }
+
+  private _note(): TemplateResult | typeof nothing {
+    if (this._config.device_id) return nothing;
+    const withOutlook = findInstallations(this.hass).filter(hasOutlook).length;
+    if (withOutlook === 0) {
+      return html`<div class="found">
+        No installation has a battery outlook yet. Map the battery's charge level and enter
+        its capacity in Solar Sanity, Configure.
+      </div>`;
+    }
+    if (withOutlook === 1) {
+      return html`<div class="found">
+        Showing the only installation with a battery outlook, found automatically.
+      </div>`;
+    }
+    return html`<div class="found">
+      ${withOutlook} installations have a battery outlook. Choose one: the card will not pick
+      for you.
+    </div>`;
+  }
+
+  public static styles = SHARED;
+}
+
 declare global {
   interface HTMLElementTagNameMap {
     "ha-form": HaFormElement;
+    "solar-sanity-battery-card-editor": SolarSanityBatteryCardEditor;
     "solar-sanity-card-editor": SolarSanityCardEditor;
     "solar-sanity-forecast-card-editor": SolarSanityForecastCardEditor;
   }
