@@ -279,7 +279,7 @@ of PV against a configured guarantee and never annualises a shorter archive.
 
 `analysis/` is pure, deterministic, standard-library only. This is enforced:
 
-- `tests/analysis/test_invariants.py:44` walks every module's AST and fails on
+- `tests/analysis/test_purity.py` walks every module's AST and fails on
   any `homeassistant` import, any import escaping the package, any third-party
   dependency, any absolute self-import, and any import of clock or randomness.
 - `pyproject.toml:58` adds `custom_components/solar_sanity` to `pythonpath` so

@@ -13,7 +13,7 @@ This file holds only what the code does not tell you.
 python scripts/check.py                                    # every gate in CI order: ruff, tsc, pytest, build, vitest, size budget; stops at the first failure; --slow adds the corpus
 python -m pytest tests -q                                  # what CI runs; the 3,000-case corpus is deselected by addopts (about 70 s)
 python -m pytest tests/analysis/test_detection.py -q       # one file
-python -m pytest "tests/analysis/test_invariants.py::TestPurity::test_no_homeassistant_imports" -q   # one node id
+python -m pytest "tests/analysis/test_purity.py::TestPurity::test_no_homeassistant_imports" -q   # one node id
 python -m pytest tests -q -m slow -n auto                  # the full clean corpus; needs pytest-xdist; run before changing any threshold constant
 ruff check . && ruff format --check .                      # the only Python gates; no mypy, no pre-commit
 pip install -r requirements-dev.txt                        # Python 3.13 or newer only; installs Home Assistant and unlocks tests/integration
@@ -108,12 +108,12 @@ Tests that grep source text, so the failure names nothing near the edit:
 - Currency words (price, cost, bill, saving, tariff, currency, cent, their plurals, and `$` next to
   a digit) fail in analysis/ strings, in .ts with comments stripped, and in strings.json,
   translations/ and services.yaml with nothing stripped: a YAML comment saying "cost" fails.
-- analysis/ is AST-policed from tests/analysis/test_invariants.py: single-dot relative imports
+- analysis/ is AST-policed from tests/analysis/test_purity.py: single-dot relative imports
   only; a stdlib allowlist of dataclasses, datetime, enum, math, typing, collections, __future__,
   abc, functools and itertools (so `re`, `json` and `statistics` fail); no random, time, secrets or
   uuid; `x or 0` and `x or False` banned. ruff's PLC0415 also applies inside analysis/, unlike the
   top-level component files.
-- KNOWN_UNRAISED in that file is edited in both directions: a fault code without a producer must be
+- KNOWN_UNRAISED in tests/analysis/test_invariants.py is edited in both directions: a fault code without a producer must be
   listed, and wiring a producer must delist it. A new code also needs `faults._TEMPLATES` and the
   hand-declared field sets in tests/analysis/test_templates.py; `faults.render` raises on a missing
   field, and inside HA that takes every entity unavailable.
