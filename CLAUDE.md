@@ -36,8 +36,14 @@ Grade the battery outlook against what a real battery did (put downloads in the 
 `--soc-csv`, and its nights are graded against production history rather than a forecast):
 
 ```bash
-python scripts/backtest_outlook.py diagnostics/<download>.json --capacity 27 --reserve 35 --tz Asia/Jerusalem --evening 18 20 22 --verbose
+python scripts/backtest_outlook.py diagnostics/<download>.json --tz Asia/Jerusalem --evening 18 20 22 --period-end-before 2026-11-08T00:00:00+00:00 --verbose
 ```
+
+`--period-end-before` is for a Forecast.Solar archive written on Home Assistant older than
+2026.11, which keyed each hour by its end. Take the instant off the archive (the first day whose
+sunrise hour holds a full hour of energy), not off the upgrade date: day-ahead rows are written up
+to two days ahead and never revised. Capacity and reserve default to the download's own settings.
+`--raw` replays without the learned standby and forecast scale.
 
 The gate before the energy-balance check is deleted counts distinct nights, not projections.
 

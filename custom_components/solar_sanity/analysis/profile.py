@@ -287,10 +287,12 @@ def forecast_scale(
     """What the panels delivered over what the forecast said, hour by hour.
 
     On the reference installation the Forecast.Solar forecast ran more than
-    twice what the roof delivered, and the ratio held between 0.39 and 0.50
-    through October and November 2026. Unscaled, the outlook called a full
-    battery on 13 of 27 mornings when the battery did not fill. Scaled, it
-    did so on 2, and missed 4 days that did fill: wrong on 6 days instead of 13.
+    twice what the roof delivered, and the ratio held between 0.38 and 0.50
+    through October and November 2026, measured with the archive re-keyed by
+    period start (see ``_forecast_plan.by_period_start``). Unscaled, the
+    outlook called a full battery on 13 of 27 mornings when the battery did
+    not fill. Scaled, it did so on 2, and missed 4 days that did fill: wrong on
+    6 days instead of 13.
 
     ``forecast`` is the forecast as it stood a day ahead, in Wh per UTC hour,
     because that is what a projection had in hand at the time. ``soc_max`` is

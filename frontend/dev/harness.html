@@ -1,0 +1,112 @@
+<!doctype html>
+<!--
+  The cards outside Home Assistant, with made-up data, for looking at them.
+
+  Not shipped: the bundle is built from frontend/src/main.ts and nothing here is
+  imported by it. Build first (npm run build), then serve the repository root
+  and open /frontend/dev/harness.html. Every figure on this page is synthetic.
+
+  ?theme=dark forces dark, ?dir=rtl lays the page out right to left.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Card harness</title>
+    <style>
+      :root {
+        --primary-text-color: #212121;
+        --secondary-text-color: #727272;
+        --primary-color: #03a9f4;
+        --divider-color: rgba(0, 0, 0, 0.12);
+        --card-background-color: #ffffff;
+        --ha-card-background: #ffffff;
+        --energy-solar-color: #ff9800;
+        --error-color: #db4437;
+        --warning-color: #ffa600;
+        --success-color: #43a047;
+        --page-background: #f5f5f5;
+        color-scheme: light;
+      }
+      :root[data-theme="dark"] {
+        --primary-text-color: #e1e1e1;
+        --secondary-text-color: #9b9b9b;
+        --divider-color: rgba(225, 225, 225, 0.12);
+        --card-background-color: #1c1c1c;
+        --ha-card-background: #1c1c1c;
+        --page-background: #111111;
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: var(--page-background);
+        color: var(--primary-text-color);
+        font-family: Roboto, system-ui, sans-serif;
+      }
+      main {
+        display: grid;
+        gap: 16px;
+        max-width: 560px;
+      }
+      ha-card {
+        display: block;
+        background: var(--ha-card-background);
+        border-radius: 12px;
+        border: 1px solid var(--divider-color);
+        overflow: hidden;
+      }
+      h1 {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--secondary-text-color);
+        margin: 8px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="cards"></main>
+    <script type="module">
+      import "../../custom_components/solar_sanity/frontend/solar-sanity.js";
+
+      const params = new URLSearchParams(location.search);
+      if (params.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
+      if (params.get("dir") === "rtl") document.documentElement.dir = "rtl";
+
+      const DAYAHEAD = "solar_sanity:dayahead_harness";
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const sun = [0, 0, 0, 0, 0, 0, 0.05, 0.4, 1.1, 1.9, 2.6, 3.0, 3.1, 2.9, 2.4, 1.7, 0.9, 0.2, 0, 0, 0, 0, 0, 0];
+      const rows = sun.map((kwh, hour) => ({
+        start: new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate(), hour).getTime(),
+        state: kwh,
+      }));
+
+      const hass = {
+        states: {},
+        entities: {},
+        config: { state: "RUNNING" },
+        themes: { darkMode: params.get("theme") === "dark" },
+        language: "en",
+        translationMetadata: { translations: {} },
+        localize: (key) => key,
+        callService: async () => undefined,
+        callWS: async (message) =>
+          message.type === "recorder/list_statistic_ids"
+            ? [{ statistic_id: DAYAHEAD, name: "Forecast.Solar forecast, a day ahead" }]
+            : { [DAYAHEAD]: rows },
+      };
+      window.harnessHass = hass;
+
+      const cards = document.getElementById("cards");
+      for (const [title, type] of [["Forecast card", "solar-sanity-forecast-card"]]) {
+        const heading = document.createElement("h1");
+        heading.textContent = title;
+        const card = document.createElement(type);
+        card.setConfig({ type: `custom:${type}` });
+        card.hass = hass;
+        cards.append(heading, card);
+      }
+    </script>
+  </body>
+</html>

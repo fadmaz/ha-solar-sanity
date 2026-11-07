@@ -22,7 +22,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ._forecast_plan import dayahead_write_plan, eligible, running_totals
+from ._forecast_plan import by_period_start, dayahead_write_plan, eligible, running_totals
 from .const import (
     DAYAHEAD_MIN_LEAD_HOURS,
     FORECAST_DAYAHEAD_PREFIX,
@@ -550,9 +550,35 @@ async def async_get_solar_forecasts(
         except Exception:
             _LOGGER.debug("forecast fetch failed for %s", entry_id, exc_info=True)
             continue
-        if forecast:
-            out[entry_id] = forecast
+        if not forecast:
+            continue
+        wh_hours = forecast.get("wh_hours") if isinstance(forecast, dict) else None
+        if isinstance(wh_hours, dict) and stamps_period_end(entry.domain):
+            forecast = {**forecast, "wh_hours": by_period_start(wh_hours)}
+        out[entry_id] = forecast
     return out
+
+
+#: The release from which Home Assistant keys Forecast.Solar's ``wh_hours`` by
+#: the start of each period (core PR 188790, merged 2026-10-26). Read from the
+#: 2025.11.0, 2026.10.4 and 2026.11.0 tags; there was no backport.
+PERIOD_START_SINCE: tuple[int, int] = (2026, 11)
+
+
+def ha_version() -> tuple[int, int]:
+    """The running Home Assistant's major and minor version. Patched in tests."""
+    from homeassistant.const import MAJOR_VERSION, MINOR_VERSION
+
+    return MAJOR_VERSION, MINOR_VERSION
+
+
+def stamps_period_end(domain: str) -> bool:
+    """Whether this provider's ``wh_hours`` still arrives keyed by period end.
+
+    Only Forecast.Solar, and only before 2026.11. Compared as a pair, never by
+    minor version alone, which would call 2027.1 older than 2026.11.
+    """
+    return domain == "forecast_solar" and ha_version() < PERIOD_START_SINCE
 
 
 def utc_day_bounds(when: datetime, days_back: int) -> tuple[datetime, datetime]:

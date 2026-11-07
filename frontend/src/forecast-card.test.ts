@@ -174,6 +174,16 @@ describe("the card", () => {
 
     expect(card.shadowRoot?.querySelector("path.line")?.getAttribute("d")).toBeTruthy();
     expect(await text()).toContain("Forecast.Solar");
+
+    // The gridlines and axis labels were written with `html` inside the
+    // <svg>, which makes them HTML elements named "line" and "text": present
+    // in the DOM, and drawn by no browser. Only an element in the SVG
+    // namespace paints.
+    const drawn = card.shadowRoot?.querySelectorAll("svg.chart line, svg.chart text") ?? [];
+    expect(drawn.length).toBeGreaterThan(0);
+    for (const element of drawn) {
+      expect(element.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    }
   });
 
   it("never claims an accuracy it has not measured", async () => {

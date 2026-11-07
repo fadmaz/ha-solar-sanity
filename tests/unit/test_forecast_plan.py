@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from _forecast_plan import dayahead_write_plan, eligible, running_totals
+from _forecast_plan import by_period_start, dayahead_write_plan, eligible, running_totals
 
 LEAD = 12
 NOW = datetime(2026, 8, 27, 9, 0, tzinfo=UTC)
@@ -146,3 +146,108 @@ class TestRunningTotals:
     @pytest.mark.parametrize("resume", [0.0, 1234.5])
     def test_an_empty_series_writes_nothing(self, resume: float) -> None:
         assert running_totals([], resume) == []
+
+
+def per_hour(wh_hours: dict[str, float]) -> dict[int, float]:
+    """Energy by UTC hour, floored the way ``normalise_wh_hours`` floors it."""
+    out: dict[int, float] = {}
+    for raw, value in wh_hours.items():
+        hour = datetime.fromisoformat(raw).astimezone(UTC).hour
+        out[hour] = out.get(hour, 0.0) + value
+    return out
+
+
+#: One November day as Forecast.Solar sends it: sunrise and sunset stamped to
+#: the second, each value the energy of the period *ending* at its key. The
+#: endpoints are the real figures from core issue 191026 (Budapest, 2026-11-06).
+NOVEMBER_DAY = {
+    "2026-11-06T05:35:19+00:00": 0,
+    "2026-11-06T06:00:00+00:00": 149,
+    "2026-11-06T07:00:00+00:00": 420,
+    "2026-11-06T08:00:00+00:00": 700,
+    "2026-11-06T09:00:00+00:00": 900,
+    "2026-11-06T10:00:00+00:00": 1000,
+    "2026-11-06T11:00:00+00:00": 980,
+    "2026-11-06T12:00:00+00:00": 900,
+    "2026-11-06T13:00:00+00:00": 760,
+    "2026-11-06T14:00:00+00:00": 640,
+    "2026-11-06T15:00:00+00:00": 598,
+    "2026-11-06T15:19:33+00:00": 49,
+}
+
+
+class TestByPeriodStart:
+    """Forecast.Solar keys each value by the end of its period. Before Home
+    Assistant 2026.11 nobody moved them, and read as period starts every hour
+    sat an hour late, with the sunset period folded into the hour before."""
+
+    def test_each_hour_holds_its_own_energy(self) -> None:
+        hours = per_hour(by_period_start(NOVEMBER_DAY))
+
+        assert hours[5] == 149  # 05:35:19 to 06:00, the sun's first 25 minutes
+        assert hours[6] == 420
+        assert hours[14] == 598
+        assert hours[15] == 49  # 15:00 to sunset at 15:19:33
+
+    def test_read_raw_the_day_was_an_hour_late(self) -> None:
+        """What 0.28.1 and earlier did, and what this replaces: nothing at
+        sunrise, and the hour of sunset holding two periods."""
+        hours = per_hour(NOVEMBER_DAY)
+
+        assert hours[5] == 0
+        assert hours[15] == 598 + 49
+
+    def test_no_energy_is_lost_or_made(self) -> None:
+        assert sum(by_period_start(NOVEMBER_DAY).values()) == sum(NOVEMBER_DAY.values())
+
+    def test_a_zero_at_midnight_starts_a_day_rather_than_ending_a_period(self) -> None:
+        """Core's one rule at the day boundary. Without it, the sunset key
+        would be handed the zero that opens the next day's payload."""
+        two_days = {
+            "2026-11-06T14:00:00+00:00": 640,
+            "2026-11-06T15:00:00+00:00": 598,
+            "2026-11-06T15:19:33+00:00": 49,
+            "2026-11-07T00:00:00+00:00": 0,
+            "2026-11-07T05:36:40+00:00": 0,
+            "2026-11-07T06:00:00+00:00": 140,
+        }
+
+        assert by_period_start(two_days) == {
+            "2026-11-06T14:00:00+00:00": 598,
+            "2026-11-06T15:00:00+00:00": 49,
+            "2026-11-07T00:00:00+00:00": 0,
+            "2026-11-07T05:36:40+00:00": 140,
+        }
+
+    def test_midnight_is_judged_in_the_keys_own_offset(self) -> None:
+        """Local midnight in Jerusalem is 22:00 UTC, and it is still midnight."""
+        local = {
+            "2026-11-06T16:00:00+02:00": 40,
+            "2026-11-07T00:00:00+02:00": 0,
+            "2026-11-07T06:00:00+02:00": 0,
+        }
+
+        assert "2026-11-06T16:00:00+02:00" not in by_period_start(local)
+
+    def test_keys_are_ordered_by_instant_not_as_text(self) -> None:
+        """The night daylight saving ends, 01:30+03:00 comes before 01:00+02:00.
+        Sorted as text the two would swap, and each would get the other's energy."""
+        change = {
+            "2026-10-25T01:00:00+03:00": 10,
+            "2026-10-25T01:30:00+03:00": 20,
+            "2026-10-25T01:00:00+02:00": 30,
+        }
+
+        assert by_period_start(change) == {
+            "2026-10-25T01:00:00+03:00": 20,
+            "2026-10-25T01:30:00+03:00": 30,
+        }
+
+    def test_nothing_in_nothing_out(self) -> None:
+        assert by_period_start({}) == {}
+        assert by_period_start({"2026-11-06T06:00:00+00:00": 149}) == {}
+
+    def test_a_key_that_is_not_a_time_is_ignored(self) -> None:
+        payload = {"soon": 5, **NOVEMBER_DAY}
+
+        assert by_period_start(payload) == by_period_start(NOVEMBER_DAY)

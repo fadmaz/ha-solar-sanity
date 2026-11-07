@@ -258,6 +258,12 @@ series: `solar_sanity:forecast_<entry id>` (rolling, idempotent) and
 `solar_sanity:dayahead_<entry id>` (write-once at 12 h or more of lead time).
 Entry ids are lower-cased because the recorder refuses uppercase ULIDs
 (`statistics_source.py:229-242`, pinned by `tests/test_statistic_ids.py`).
+Forecast.Solar keys each value by the end of its period, and Home Assistant
+re-keys it by period start only from 2026.11 (core PR 188790); on older
+releases `async_get_solar_forecasts` applies the same rule
+(`_forecast_plan.by_period_start`) before anything reads the payload, gated in
+`stamps_period_end` (`tests/test_forecast_period_keys.py`). Rows archived
+before that fix are left as written, an hour late.
 Only one entry owns a provider's archive, elected by the smallest entry id
 among loaded entries. Metadata is `mean_type=StatisticMeanType.NONE`,
 `has_sum=True`, `unit_class="energy"`; CI greps for both fields and forbids

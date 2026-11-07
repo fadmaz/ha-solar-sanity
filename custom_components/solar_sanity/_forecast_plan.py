@@ -13,10 +13,49 @@ without a recorder — the same reason ``_match`` exists.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
+from itertools import pairwise
+from typing import Any
 
 #: An hourly point: when it starts (UTC, on the hour) and its energy in kWh.
 type Point = tuple[datetime, float]
+
+
+def by_period_start(wh_hours: Mapping[str, Any]) -> dict[str, Any]:
+    """A ``wh_hours`` map keyed by the end of each period, re-keyed by its start.
+
+    Forecast.Solar stamps each value with the moment its period *ends*: "the
+    value is always for the period from last timestamp to the timestamp in the
+    key". Home Assistant passed those keys through unchanged until 2026.11
+    (core PR 188790). Read as period starts, every hour landed one hour late,
+    and the short sunset period was folded into the hour before it. On the
+    reference installation that put several kilowatt-hours into the hour the
+    sun set in.
+
+    This is core's correction, so both sides of 2026.11 agree: each value moves
+    to the previous timestamp, and a zero at midnight is the start of a new day
+    rather than a period that ended there. The midnight test is made in the
+    key's own offset, as core makes it. Keys are ordered by instant, not as
+    text, because around a daylight-saving change the offsets in one payload
+    differ. The original key strings are kept, so nothing downstream sees a
+    format it has not seen before.
+    """
+    stamped: list[tuple[datetime, str, Any]] = []
+    for raw, value in wh_hours.items():
+        try:
+            when = datetime.fromisoformat(str(raw))
+        except ValueError:
+            continue
+        stamped.append((when, str(raw), value))
+    stamped.sort(key=lambda item: item[0] if item[0].tzinfo else item[0].replace(tzinfo=UTC))
+
+    out: dict[str, Any] = {}
+    for (_, start, _), (end, _, value) in pairwise(stamped):
+        if value == 0 and (end.hour, end.minute, end.second) == (0, 0, 0):
+            continue
+        out[start] = value
+    return out
 
 
 def eligible(points: list[Point], now: datetime, min_lead_hours: int) -> list[Point]:
