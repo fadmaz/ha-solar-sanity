@@ -2,6 +2,41 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.29.0] - 2026-11-07
+
+### Added
+
+- **A battery card.** *Solar Sanity: battery* puts the battery outlook on one
+  card: the charge now, one sentence worth leading with, the safe load until
+  morning, the lowest charge before sunrise and the spare sun, and a line of the
+  projected charge over the next day and a half against your reserve and
+  target, with the night shaded.
+
+  The sentence follows what the projection says, not the time of day on your
+  phone:
+  - "Reaches the reserve at 04:10" when the battery will run out before the
+    sun, which is the only warning it gives;
+  - "Lasts until the sun, at 06:40" once the night has begun;
+  - "Full at 14:35, in 2 h 10 min" by day;
+  - "Will not fill today" when the forecast says so.
+
+  Times are shown in Home Assistant's time zone. The card finds its sensors by
+  what they are rather than what they are called, so renaming them does not
+  lose them. With more than one installation it asks you to choose one in its
+  settings rather than guessing. The Solar Sanity dashboard puts it first.
+
+- **The lowest-battery sensor carries the starting charge, the reserve and the
+  target** as attributes (`soc_pct`, `computed_at`, `reserve_pct`,
+  `target_pct`), so the card draws everything from one refresh. The charge is
+  published while the outlook is still learning your consumption.
+
+### Fixed
+
+- **On a phone, the forecast card pushed the page sideways.** Its hidden
+  screen-reader table ignored its 1-pixel width and widened the page by the
+  width of its hour column.
+- **In a right-to-left dashboard, the forecast card's total read "kWh 20.2".**
+
 ## [0.28.2] - 2026-11-07
 
 ### Fixed
