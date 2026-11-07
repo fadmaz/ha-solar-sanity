@@ -1,19 +1,27 @@
 """What survives a restart, and what a file we cannot read does to setup.
 
-The fitted loss model is the one thing this integration learns slowly. Throwing
-it away costs a user a day of their verdict; inheriting the wrong one costs them
-a wrong answer for the same day. Both have happened, and neither had a test.
+The measured window is the one thing this integration cannot get back. The
+statistics backfill re-derives hours from the recorder, but an hour this
+integration measured itself carries an attestation a re-derived mean does not,
+and the battery outlook learns the house's consumption and the inverter's own
+draw from exactly these hours. Throwing them away costs a restart's worth of
+history; trusting a damaged file costs a wrong answer with no way to tell.
+
+These were written against the fitted loss model of the energy-balance check
+until it was retired; the mechanisms they protect are the window's now.
 
 ``hass_storage`` is a dict keyed by store key, so seeding a file is writing an
-entry into it before setup — the envelope Home Assistant itself writes, with
+entry into it before setup: the envelope Home Assistant itself writes, with
 ``version``, ``minor_version``, ``key`` and ``data``.
 """
 
 from __future__ import annotations
 
-import pytest
+from datetime import timedelta
+
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.const import (
@@ -23,28 +31,43 @@ from custom_components.solar_sanity.const import (
     STORAGE_VERSION,
 )
 
+KEYS = ["pv", "load", "grid_import", "battery_charge", "battery_discharge"]
 
-def _envelope(key: str, *, version: int, minor: int, gamma: float) -> dict:
-    """A stored file exactly as Home Assistant's ``Store`` writes one."""
+
+def _window(load_wh: float, *, quality: str = "OOOOO") -> dict:
+    """Three recent hours, in the columnar shape ``window_snapshot`` writes."""
+    top = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
     return {
-        "version": version,
-        "minor_version": minor,
-        "key": key,
-        "data": {
-            "loss_model": {
-                "pv_dc_gamma": gamma,
-                "battery_dc_gamma": 0.05,
-                "standby_w": 25.0,
-                "samples": 30,
-            },
-            "last_status": "ok",
-            "last_finding": None,
-            "retention_days": 400,
-        },
+        "keys": KEYS,
+        "columns": ["start_utc", "seconds", "wh", "quality", "source"],
+        "rows": [
+            [
+                (top - timedelta(hours=back)).isoformat(),
+                3600,
+                [0.0, load_wh, 0.0, 0.0, load_wh],
+                quality,
+                "iiiii",
+            ]
+            for back in (3, 2, 1)
+        ],
     }
 
 
-async def test_a_fitted_loss_model_is_read_back_at_setup(
+def _envelope(key: str, window: dict, *, version: int = STORAGE_VERSION) -> dict:
+    """A stored file exactly as Home Assistant's ``Store`` writes one."""
+    return {
+        "version": version,
+        "minor_version": STORAGE_MINOR_VERSION,
+        "key": key,
+        "data": {"window": window},
+    }
+
+
+def _loads(entry: MockConfigEntry) -> list[float]:
+    return [bucket.wh["load"] for bucket in entry.runtime_data.coordinator.buckets]
+
+
+async def test_a_saved_window_is_read_back_at_setup(
     hass: HomeAssistant,
     enable_custom_integrations: None,
     entry: MockConfigEntry,
@@ -53,16 +76,12 @@ async def test_a_fitted_loss_model_is_read_back_at_setup(
     """The affirmative case, so the refusal cases below mean something."""
     entry.add_to_hass(hass)
     key = f"{STORAGE_KEY_STATE}.{entry.entry_id}"
-    hass_storage[key] = _envelope(
-        key, version=STORAGE_VERSION, minor=STORAGE_MINOR_VERSION, gamma=0.0625
-    )
+    hass_storage[key] = _envelope(key, _window(612.5))
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    coordinator = entry.runtime_data.coordinator
-    assert coordinator._loss_model is not None
-    assert coordinator._loss_model.pv_dc_gamma == pytest.approx(0.0625)
+    assert _loads(entry) == [612.5, 612.5, 612.5]
 
 
 async def test_a_storage_file_the_code_cannot_migrate_does_not_kill_setup(
@@ -71,121 +90,62 @@ async def test_a_storage_file_the_code_cannot_migrate_does_not_kill_setup(
     entry: MockConfigEntry,
     hass_storage: dict,
 ) -> None:
-    """A file from a newer release must cost the loss model, not the integration.
+    """A file from a newer release must cost the window, not the integration.
 
     ``Store`` calls ``_async_migrate_func`` whenever the stored version differs
     from the one asked for, and the default implementation raises
-    ``NotImplementedError``. ``async_restore`` guards the *legacy* load in a
-    ``try`` and leaves the primary one bare, so that exception travels straight
-    out through ``async_setup_entry``.
-
-    Nothing writes a version other than 1 today, so this cannot happen in the
-    field yet. It happens the moment anybody bumps either constant — and it
-    happens to *downgrading* users first, who are the ones already having a bad
-    day. The loss model is refitted from data within a day, which is the whole
-    reason it is safe to lose; setup is not.
+    ``NotImplementedError``. Left unguarded, that exception travels out through
+    ``async_setup_entry``, and it reaches *downgrading* users first, who are the
+    ones already having a bad day.
     """
     entry.add_to_hass(hass)
     key = f"{STORAGE_KEY_STATE}.{entry.entry_id}"
-    hass_storage[key] = _envelope(key, version=STORAGE_VERSION + 1, minor=1, gamma=0.0625)
+    hass_storage[key] = _envelope(key, _window(612.5), version=STORAGE_VERSION + 1)
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    assert entry.runtime_data.coordinator._loss_model is None
+    assert _loads(entry) == []
 
 
-async def test_a_corrupt_stored_model_costs_the_model_and_nothing_else(
+async def test_a_damaged_window_costs_the_window_and_nothing_else(
     hass: HomeAssistant,
     enable_custom_integrations: None,
     entry: MockConfigEntry,
     hass_storage: dict,
 ) -> None:
-    """``_loss_from_dict`` already refuses nonsense; this is the join."""
+    """An unreadable quality code is not quietly treated as OK: the whole
+    window is refused, because a partly restored one would launder guesses into
+    the one place this integration treats as measurement."""
     entry.add_to_hass(hass)
     key = f"{STORAGE_KEY_STATE}.{entry.entry_id}"
-    hass_storage[key] = {
-        "version": STORAGE_VERSION,
-        "minor_version": STORAGE_MINOR_VERSION,
-        "key": key,
-        "data": {"loss_model": {"pv_dc_gamma": "not a number"}},
-    }
+    hass_storage[key] = _envelope(key, _window(612.5, quality="OOZOO"))
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    assert entry.runtime_data.coordinator._loss_model is None
+    assert _loads(entry) == []
 
 
-async def test_two_installations_do_not_share_one_loss_model(
+async def test_two_installations_do_not_share_one_window(
     hass: HomeAssistant,
     enable_custom_integrations: None,
     entry_data: dict,
     hass_storage: dict,
 ) -> None:
-    """The 0.5.0 defect, which no test has ever covered.
-
-    Two installations shared one state file and overwrote each other's fitted
-    model on every analysis. The second write won, and the first house silently
-    inherited a model fitted on a different roof. The fix keys the file on the
-    entry id; this is what says so.
-    """
+    """The 0.5.0 defect. Two installations once shared one state file and
+    overwrote each other on every save; the file is keyed on the entry id, and
+    this is what says so."""
     first = MockConfigEntry(domain=DOMAIN, data=entry_data, title="House")
     second = MockConfigEntry(domain=DOMAIN, data=entry_data, title="Barn")
-    for config_entry, gamma in ((first, 0.02), (second, 0.09)):
+    for config_entry, load_wh in ((first, 400.0), (second, 900.0)):
         config_entry.add_to_hass(hass)
         key = f"{STORAGE_KEY_STATE}.{config_entry.entry_id}"
-        hass_storage[key] = _envelope(
-            key, version=STORAGE_VERSION, minor=STORAGE_MINOR_VERSION, gamma=gamma
-        )
+        hass_storage[key] = _envelope(key, _window(load_wh))
         assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert first.runtime_data.coordinator._loss_model.pv_dc_gamma == pytest.approx(0.02)
-    assert second.runtime_data.coordinator._loss_model.pv_dc_gamma == pytest.approx(0.09)
-
-
-async def test_this_entrys_own_file_beats_the_legacy_shared_one(
-    hass: HomeAssistant,
-    enable_custom_integrations: None,
-    entry: MockConfigEntry,
-    hass_storage: dict,
-) -> None:
-    """The fallback is a one-time rescue, not a competitor.
-
-    Reading the shared file when this entry has its own would reintroduce the
-    very defect the per-entry key was added to fix, and it would do it silently.
-    """
-    entry.add_to_hass(hass)
-    own = f"{STORAGE_KEY_STATE}.{entry.entry_id}"
-    hass_storage[own] = _envelope(
-        own, version=STORAGE_VERSION, minor=STORAGE_MINOR_VERSION, gamma=0.0625
-    )
-    hass_storage[STORAGE_KEY_STATE] = _envelope(
-        STORAGE_KEY_STATE, version=STORAGE_VERSION, minor=STORAGE_MINOR_VERSION, gamma=0.01
-    )
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert entry.runtime_data.coordinator._loss_model.pv_dc_gamma == pytest.approx(0.0625)
-
-
-async def test_the_legacy_file_is_still_inherited_when_this_entry_has_none(
-    hass: HomeAssistant,
-    enable_custom_integrations: None,
-    entry: MockConfigEntry,
-    hass_storage: dict,
-) -> None:
-    """The other half: the rescue has to still work."""
-    entry.add_to_hass(hass)
-    hass_storage[STORAGE_KEY_STATE] = _envelope(
-        STORAGE_KEY_STATE, version=STORAGE_VERSION, minor=STORAGE_MINOR_VERSION, gamma=0.01
-    )
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert entry.runtime_data.coordinator._loss_model.pv_dc_gamma == pytest.approx(0.01)
+    assert _loads(first) == [400.0, 400.0, 400.0]
+    assert _loads(second) == [900.0, 900.0, 900.0]
