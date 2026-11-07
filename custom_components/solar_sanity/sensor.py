@@ -391,6 +391,14 @@ def _lowest_attrs(state: OutlookState) -> dict[str, Any]:
         "night_from": _iso(outlook.night_from) if outlook else None,
         "takeover_at": _iso(outlook.takeover_at) if outlook else None,
         "shortfall_kwh": _kwh(outlook.shortfall_wh) if outlook else None,
+        # What the card draws from. The charge it started at is the
+        # trajectory's first point, published on its own so it is there before
+        # the first projection is; reserve and target sit here as well so the
+        # chart's lines come from the same refresh as the line between them.
+        "soc_pct": round(state.soc_pct, 1) if state.soc_pct is not None else None,
+        "computed_at": _iso(state.computed_at),
+        "reserve_pct": state.settings.get("reserve_pct"),
+        "target_pct": state.settings.get("target_pct"),
         "consumption_days": state.load_days,
         "production_from": production,
         "forecast_scale": _scale(state),
@@ -529,8 +537,10 @@ class OutlookSensor(SolarSanityEntity, SensorEntity):
 
     entity_description: OutlookSensorDescription
     #: The trajectory is for the card and for anybody templating against it,
-    #: not for the recorder: it is a kilobyte rewritten every five minutes.
-    _unrecorded_attributes = frozenset({"trajectory"})
+    #: not for the recorder: it is a kilobyte rewritten every five minutes. The
+    #: starting charge and the time of the refresh change on every refresh too,
+    #: and the charge-level sensor already records the first of them.
+    _unrecorded_attributes = frozenset({"trajectory", "soc_pct", "computed_at"})
 
     def __init__(
         self,

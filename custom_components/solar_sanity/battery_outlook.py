@@ -100,6 +100,10 @@ class OutlookState:
     outlook: Outlook | None = None
     reason: str | None = "soc_unavailable"
     soc_age_s: float | None = None
+    #: The charge level the projection started from, kept even when there is
+    #: no projection yet, so the card can show the battery while the
+    #: consumption profile is still being learned.
+    soc_pct: float | None = None
     computed_at: datetime | None = None
     full_at: datetime | None = None
     reserve_at: datetime | None = None
@@ -293,6 +297,7 @@ class BatteryOutlook:
 
         soc, age, reason = self._read_soc(settings, now)
         base.soc_age_s = age
+        base.soc_pct = soc
         if soc is None:
             base.reason = reason
             return base
