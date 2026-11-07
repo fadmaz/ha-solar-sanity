@@ -478,8 +478,24 @@ const OUTLOOK_OFF: Note = {
   body: "Map the battery's charge level and enter its capacity in Solar Sanity, Configure.",
 };
 
+/**
+ * The tag the status card had, kept so a dashboard built before 0.30.0 still
+ * renders something rather than an error. It shows the battery card.
+ *
+ * A subclass, because one constructor cannot be registered under two names.
+ * Not offered in the card picker: anything new should use the battery card's
+ * own tag. Its old `entity:` setting named the status sensor, which no longer
+ * exists, and `setConfig` ignores settings it does not recognise.
+ */
+export class SolarSanityLegacyCard extends SolarSanityBatteryCard {}
+
+if (!customElements.get("solar-sanity-card")) {
+  customElements.define("solar-sanity-card", SolarSanityLegacyCard);
+}
+
 declare global {
   interface HTMLElementTagNameMap {
     "solar-sanity-battery-card": SolarSanityBatteryCard;
+    "solar-sanity-card": SolarSanityLegacyCard;
   }
 }

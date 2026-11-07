@@ -12,9 +12,9 @@
  * `custom-card-helpers` to get a type for it would take a dependency this
  * project deliberately does not have.
  *
- * **Neither editor is required to configure its card.** The status card finds
- * its own entity and the forecast card its own provider, and a house with one
- * installation and one provider never needs either. That is the reason these
+ * **Neither editor is required to configure its card.** The battery card finds
+ * its own installation and the forecast card its own provider, and a house with
+ * one installation and one provider never needs either. That is the reason these
  * are small: an editor whose job is to be unnecessary should not be the largest
  * file in the bundle.
  */
@@ -24,7 +24,6 @@ import { customElement, property, state } from "lit/decorators.js";
 
 import { findInstallations, hasOutlook } from "./battery-model";
 import { type ArchiveMeta, dayAheadArchives, providerLabel } from "./forecast-data";
-import { isStatusEntity } from "./status-card";
 import type { HomeAssistant, LovelaceCardConfig } from "./types/hass";
 
 /** One row of an `<ha-form>` schema. Only the shapes these editors use. */
@@ -77,14 +76,12 @@ function pruned(data: Record<string, unknown>): Record<string, unknown> {
 
 const LABELS: (row: FormRow) => string = (row) =>
   ({
-    entity: "Installation",
     device_id: "Installation",
     provider: "Forecast provider",
   })[row.name] ?? row.name;
 
 const HELPERS: (row: FormRow) => string | undefined = (row) =>
   ({
-    entity: "Leave empty to use the only one you have.",
     device_id: "Leave empty to use the only one with a battery outlook.",
     provider: "Leave empty to show every provider you have configured.",
   })[row.name];
@@ -101,92 +98,6 @@ const SHARED = css`
     word-break: break-all;
   }
 `;
-
-/**
- * The status card's editor.
- *
- * Its real job is the sentence underneath the field, not the field. The card
- * picks its own entity when only one installation exists, and somebody opening
- * this editor is usually asking *which one did it pick* — a question that had
- * no answer anywhere in the interface. Leaving the field blank is a supported
- * choice, and the editor says so rather than treating blank as unfinished.
- */
-@customElement("solar-sanity-card-editor")
-export class SolarSanityCardEditor extends LitElement {
-  @property({ attribute: false }) public hass?: HomeAssistant;
-  @state() private _config: LovelaceCardConfig = { type: "custom:solar-sanity-card" };
-
-  public setConfig(config: LovelaceCardConfig): void {
-    this._config = config;
-  }
-
-  /** Every status entity in the house, identified by what it publishes. */
-  private get _candidates(): string[] {
-    if (!this.hass) return [];
-    const states = this.hass.states;
-    return Object.keys(states)
-      .filter((id) => id.startsWith("sensor.") && isStatusEntity(states[id]))
-      .sort();
-  }
-
-  private get _schema(): FormRow[] {
-    return [
-      {
-        name: "entity",
-        // `include_entities` rather than a domain filter. Every integration in
-        // the house publishes sensors, and a picker offering four hundred of
-        // them so you can choose one of two is a worse answer than no picker.
-        selector: { entity: { include_entities: this._candidates } },
-      },
-    ];
-  }
-
-  private _changed(event: CustomEvent): void {
-    event.stopPropagation();
-    const data = (event.detail as { value: Record<string, unknown> }).value;
-    emit(this, { ...pruned(data), type: this._config.type } as LovelaceCardConfig);
-  }
-
-  protected render(): TemplateResult {
-    return html`
-      <ha-form
-        .hass=${this.hass}
-        .data=${this._config}
-        .schema=${this._schema}
-        .computeLabel=${LABELS}
-        .computeHelper=${HELPERS}
-        @value-changed=${this._changed}
-      ></ha-form>
-      ${this._note()}
-    `;
-  }
-
-  private _note(): TemplateResult | typeof nothing {
-    if (this._config.entity) return nothing;
-    const candidates = this._candidates;
-
-    if (candidates.length === 0) {
-      return html`<div class="found">
-        No Solar Sanity installation is reporting yet. The card will fill in by itself
-        once one does.
-      </div>`;
-    }
-    if (candidates.length === 1) {
-      return html`<div class="found">
-        Showing <code>${candidates[0]}</code>, found automatically. Leave the field empty
-        unless you add a second installation.
-      </div>`;
-    }
-    // The card refuses to guess between several and says so on its face. The
-    // editor is where that gets fixed, so it should not be a surprise here.
-    return html`<div class="found">
-      ${candidates.length} installations are reporting. Choose one — the card will not
-      pick for you, because a verdict about the wrong house is worse than no verdict.
-    </div>`;
-  }
-
-  public static styles = SHARED;
-}
 
 /**
  * The forecast card's editor.
@@ -373,7 +284,6 @@ declare global {
   interface HTMLElementTagNameMap {
     "ha-form": HaFormElement;
     "solar-sanity-battery-card-editor": SolarSanityBatteryCardEditor;
-    "solar-sanity-card-editor": SolarSanityCardEditor;
     "solar-sanity-forecast-card-editor": SolarSanityForecastCardEditor;
   }
 }

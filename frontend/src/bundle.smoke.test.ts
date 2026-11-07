@@ -63,9 +63,10 @@ describe.skipIf(!built)(`the built bundle (${BUNDLE})`, () => {
 
     // Bare, with no `custom:` prefix. That prefix belongs in a dashboard's
     // config; the picker registry wants the element name as defined.
+    // Not the old status card's tag: it is kept as an alias for dashboards
+    // built before 0.30.0, and anything new should use the battery card's.
     expect(cards?.map((c) => c.type).sort()).toEqual([
       "solar-sanity-battery-card",
-      "solar-sanity-card",
       "solar-sanity-forecast-card",
     ]);
   });
