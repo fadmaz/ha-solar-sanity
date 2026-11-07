@@ -6,45 +6,26 @@
  * the discoverable one: it appears by name in Home Assistant's new-dashboard
  * dialog, which is the only route here that costs a user no YAML at all.
  *
- * Neither generates a fixed list. The status card is emitted once per
- * installation and told which one it belongs to, because a card that picks
- * silently between two houses is showing a verdict about a house the reader may
- * not be looking at.
+ * Neither generates a fixed list. The battery card is emitted once per
+ * installation with a battery outlook and pinned to it, because a card that
+ * picks silently between two houses is showing a battery the reader may not be
+ * looking at.
  *
- * When nothing is installed the strategy still emits the status card, and that
- * is deliberate: the card already renders "Solar Sanity is not set up yet" with
- * a button that goes and sets it up. Substituting a markdown card here would
- * mean writing that sentence a second time, in a second place, and watching the
- * two drift.
+ * When there is no outlook to show, the strategy still emits one battery card,
+ * and that is deliberate: the card already says whether Solar Sanity is not set
+ * up or the outlook is off, and how to turn it on. Substituting a markdown card
+ * here would mean writing that sentence a second time and watching the two
+ * drift.
  */
 
 import { findInstallations, hasOutlook } from "./battery-model";
-import { isStatusEntity } from "./status-card";
 import type { HomeAssistant, LovelaceCardConfig } from "./types/hass";
 
-const ENTITY_PREFIX = "sensor.";
-
-/** Every status entity this integration owns, in a stable order. */
-export function installations(hass: HomeAssistant | undefined): string[] {
-  if (!hass?.states) return [];
-  return Object.keys(hass.states)
-    .filter((id) => id.startsWith(ENTITY_PREFIX) && isStatusEntity(hass.states[id]))
-    .sort();
-}
-
 /**
- * The cards for one view, in reading order.
- *
- * Verdict first. The forecast is the thing you look at when the verdict is
- * boring, and on a healthy system the verdict is one line — so putting it
- * second costs nothing and putting it first would bury the answer.
+ * The cards for one view, in reading order: the battery, then the forecast,
+ * which is what you look at when the battery has nothing to say.
  */
 export function buildCards(hass: HomeAssistant | undefined): LovelaceCardConfig[] {
-  const found = installations(hass);
-
-  // The battery first wherever there is one: it is the card with something to
-  // say every evening. One per installation, each pinned to its device, when
-  // there is more than one, for the same reason as the status card below.
   const batteries = findInstallations(hass).filter(hasOutlook);
   const battery: LovelaceCardConfig[] =
     batteries.length > 1
@@ -52,14 +33,9 @@ export function buildCards(hass: HomeAssistant | undefined): LovelaceCardConfig[
           type: "custom:solar-sanity-battery-card",
           device_id: installation.deviceId,
         }))
-      : batteries.map(() => ({ type: "custom:solar-sanity-battery-card" }));
+      : [{ type: "custom:solar-sanity-battery-card" }];
 
-  const status: LovelaceCardConfig[] =
-    found.length > 1
-      ? found.map((entity) => ({ type: "custom:solar-sanity-card", entity }))
-      : [{ type: "custom:solar-sanity-card" }];
-
-  return [...battery, ...status, { type: "custom:solar-sanity-forecast-card" }];
+  return [...battery, { type: "custom:solar-sanity-forecast-card" }];
 }
 
 /** Fills a view. Selected with `strategy: {type: "custom:solar-sanity"}`. */
@@ -101,7 +77,7 @@ window.customStrategies.push({
   type: "solar-sanity",
   strategyType: "dashboard",
   name: "Solar Sanity",
-  description: "Whether your solar data adds up, and what was forecast a day ahead.",
+  description: "Where your battery is heading, and what was forecast a day ahead.",
   documentationURL: "https://github.com/fadmaz/ha-solar-sanity",
 });
 

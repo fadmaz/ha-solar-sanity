@@ -36,9 +36,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.solar_sanity.const import (
     CONF_CHANNELS,
     CONF_ENTITY_ID,
-    CONF_GRID_IS_NET,
-    CONF_HAS_BATTERY,
-    CONF_LOAD_WHOLE_HOUSE,
     CONF_ORIGIN,
     CONF_ROLE,
     DOMAIN,
@@ -62,9 +59,6 @@ def entry_data() -> dict[str, Any]:
     """A config entry payload the config flow would actually have produced."""
     return {
         CONF_CHANNELS: [dict(channel) for channel in CHANNELS],
-        CONF_HAS_BATTERY: "yes",
-        CONF_GRID_IS_NET: "no",
-        CONF_LOAD_WHOLE_HOUSE: "yes",
     }
 
 

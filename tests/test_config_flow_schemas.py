@@ -53,13 +53,6 @@ class TestConfigFlowSchemas:
         # invalid config raises rather than returning something wrong.
         assert selector.config["domain"] == ["sensor"]
 
-    def test_tristate_selector_is_valid(self) -> None:
-        """Every setup question must offer "not sure" as a real answer."""
-        from custom_components.solar_sanity.config_flow import _TRISTATE
-
-        values = set(_TRISTATE.config["options"])
-        assert values == {"yes", "no", "unknown"}
-
     def test_forecast_provider_selector_is_valid(self) -> None:
         """The exact construction that used to raise.
 
@@ -92,10 +85,10 @@ class TestConfigFlowSchemas:
     def test_options_schema_builds(self) -> None:
         """The real form, not a copy of it.
 
-        This test used to rebuild the schema inside itself and assert the key was
-        in the copy, which is true however the flow is written. The flow wrote the
-        guarantee to ``entry.options`` while the check read ``entry.data``, and a
-        test shaped like that cannot see it. It now builds what the flow builds.
+        A test that rebuilt the schema inside itself and asserted a key was in
+        the copy would pass however the flow is written; one option was once
+        written to ``entry.options`` and read from ``entry.data`` behind exactly
+        such a test. This builds what the flow builds.
         """
         from types import SimpleNamespace
 
@@ -103,20 +96,21 @@ class TestConfigFlowSchemas:
 
         from custom_components.solar_sanity.config_flow import SolarSanityOptionsFlow
         from custom_components.solar_sanity.const import (
+            OPT_BATTERY_CAPACITY_KWH,
+            OPT_BATTERY_RESERVE_PCT,
             OPT_BATTERY_SOC,
-            OPT_GUARANTEED_ANNUAL_KWH,
+            OPT_BATTERY_TARGET_PCT,
         )
 
-        # The real `_dismissible_codes` too, bound to the same stand-in, so the
-        # conditional row is decided by the code rather than by the stub.
         stub = SimpleNamespace(config_entry=SimpleNamespace(options={}, runtime_data=None))
-        stub._dismissible_codes = lambda: SolarSanityOptionsFlow._dismissible_codes(stub)
-
         schema = vol.Schema(SolarSanityOptionsFlow._fields(stub))
 
-        keys = _schema_keys(schema)
-        assert OPT_GUARANTEED_ANNUAL_KWH in keys
-        assert OPT_BATTERY_SOC in keys
+        assert _schema_keys(schema) == {
+            OPT_BATTERY_SOC,
+            OPT_BATTERY_CAPACITY_KWH,
+            OPT_BATTERY_RESERVE_PCT,
+            OPT_BATTERY_TARGET_PCT,
+        }
 
 
 class TestIntegrationImports:
@@ -131,61 +125,14 @@ class TestIntegrationImports:
             "discovery",
             "entity",
             "frontend",
-            "repairs",
+            "battery_outlook",
             "sensor",
-            "binary_sensor",
             "statistics_source",
         ],
     )
     def test_module_imports(self, module: str) -> None:
         """Catches the class of bug that made v0.1.0 unloadable."""
         __import__(f"custom_components.solar_sanity.{module}")
-
-
-class TestQuestionsAreConditional:
-    """Never ask what the mapping already answers.
-
-    A user who has just mapped battery charge and discharge sensors should not
-    then be asked whether they have a battery. Beyond looking silly, an
-    "unknown" answer there changes what the engine does — it runs the
-    missing-storage probe — so a redundant question is also a chance to record
-    a worse answer than the one we already had.
-    """
-
-    def test_battery_question_is_skipped_when_battery_is_mapped(self) -> None:
-        from custom_components.solar_sanity.config_flow import _battery_mapped
-
-        assert (
-            _battery_mapped(
-                {"pv": "sensor.pv", "load": "sensor.load", "battery_charge": "sensor.chg"}
-            )
-            is True
-        )
-
-    def test_battery_question_is_asked_when_no_battery_is_mapped(self) -> None:
-        from custom_components.solar_sanity.config_flow import _battery_mapped
-
-        assert _battery_mapped({"pv": "sensor.pv", "load": "sensor.load"}) is False
-
-    def test_grid_net_question_only_matters_when_import_is_alone(self) -> None:
-        """Both mapped means two dedicated sensors — nothing to interpret."""
-        from custom_components.solar_sanity.config_flow import _both_grid_mapped
-
-        assert (
-            _both_grid_mapped(
-                {
-                    "pv": "sensor.pv",
-                    "load": "sensor.load",
-                    "grid_import": "sensor.i",
-                    "grid_export": "sensor.e",
-                }
-            )
-            is True
-        )
-        assert (
-            _both_grid_mapped({"pv": "sensor.pv", "load": "sensor.load", "grid_import": "sensor.i"})
-            is False
-        )
 
 
 class TestChannelKind:
@@ -327,57 +274,11 @@ class TestDuplicateEntityRejected:
         assert _duplicate_entity({"pv": "sensor.a", "load": "sensor.b"}) is None
 
 
-class TestLocalDays:
-    """Buckets must group into local days, not UTC ones."""
-
-    def test_offset_shifts_the_day_boundary(self) -> None:
-        """At UTC-8 a UTC day starts at 16:00 local, splitting the solar curve."""
-        from datetime import UTC, datetime
-
-        from custom_components.solar_sanity.analysis.model import (
-            Bucket,
-            BucketSource,
-            ChannelSpec,
-            LossModel,
-            Quality,
-            Role,
-        )
-        from custom_components.solar_sanity.analysis.residual import build_days
-
-        specs = (
-            ChannelSpec("pv", Role.PV, "sensor.pv", "PV", "Wh"),
-            ChannelSpec("load", Role.LOAD, "sensor.load", "Load", "Wh"),
-        )
-        buckets = tuple(
-            Bucket(
-                start_utc=datetime(2026, 3, 1, hour, tzinfo=UTC),
-                seconds=3600,
-                wh={"pv": 100.0, "load": 100.0},
-                quality={"pv": Quality.OK, "load": Quality.OK},
-                source={
-                    "pv": BucketSource.OWN_INTEGRAL,
-                    "load": BucketSource.OWN_INTEGRAL,
-                },
-            )
-            for hour in range(24)
-        )
-
-        utc_days = build_days(buckets, specs, LossModel(), 0.0)
-        shifted = build_days(buckets, specs, LossModel(), -8.0)
-
-        # A full UTC day is one day at UTC; at -8 it straddles two, so neither
-        # part reaches the 20-bucket minimum and both are dropped.
-        assert len(utc_days) == 1
-        assert len(shifted) == 0
-
-
 class TestNoPermanentlyUnknownSensors:
     """A sensor that can never produce a value should not be shipped.
 
-    Two were: `expected_tomorrow` and `live_residual` both had a value function
-    that returned ``None`` unconditionally, so they advertised a capability that
-    did not exist. A third, `data_completeness`, reported days of history under
-    a name and description promising the fraction of inputs present.
+    Two once were: each had a value function that returned ``None``
+    unconditionally, so it advertised a capability that did not exist.
     """
 
     def test_no_value_fn_is_a_constant_none(self) -> None:
@@ -393,8 +294,8 @@ class TestNoPermanentlyUnknownSensors:
         assert not offenders, f"stub value functions: {offenders}"
 
     def test_every_sensor_reads_from_the_coordinator(self) -> None:
-        """The value functions take the coordinator, so they can report live
-        state rather than only the last analysis."""
+        """The value functions take the coordinator, so they report live state
+        rather than only the last refresh."""
         from custom_components.solar_sanity.sensor import SENSORS
 
         for description in SENSORS:
@@ -415,13 +316,13 @@ class TestForecastTomorrow:
 
 
 class TestLiveSensorsAreNotFrozen:
-    """Sensors describing *now* must not wait for the six-hourly analysis.
+    """Sensors describing *now* must not wait for the six-hourly refresh.
 
     `CoordinatorEntity` writes state only when the coordinator updates. With a
-    six-hour analysis interval, a sensor reading live state is frozen to that
-    cadence — which is how completeness stuck at 0%: the integration loaded
-    before the inverter's entities had published, found nothing readable, and
-    nothing rewrote it for six hours.
+    six-hour refresh, a sensor reading live state is frozen to that cadence,
+    which is how one sensor once stuck at 0% for six hours: the integration
+    loaded before the inverter's entities had published, and nothing rewrote it.
+    The battery outlook describes now.
     """
 
     def test_coordinator_exposes_a_live_notifier(self) -> None:
@@ -439,35 +340,11 @@ class TestLiveSensorsAreNotFrozen:
         assert "notify_live_entities" in source, "the sampling tick does not refresh live entities"
 
 
-class TestLiveResidualEntityIsConditional:
-    """Do not create an entity that can never hold a value.
-
-    `live_residual` needs every balance channel to report a rate. One energy
-    channel rules it out — an amount cannot answer "what is flowing right now" —
-    so on a mixed system the entity should be absent rather than present and
-    permanently blank. Being disabled by default hid this rather than fixing it.
-    """
-
-    def test_setup_filters_the_entity_out(self) -> None:
-        import inspect
-
-        from custom_components.solar_sanity.sensor import async_setup_entry
-
-        source = inspect.getsource(async_setup_entry)
-        assert "has_live_tier" in source
-
-    def test_coordinator_exposes_the_predicate(self) -> None:
-        from custom_components.solar_sanity.coordinator import SolarSanityCoordinator
-
-        assert isinstance(SolarSanityCoordinator.has_live_tier, property)
-
-
 class TestReconfigureCoversEverything:
-    """Setup asks four things and reconfigure used to change only one.
+    """Reconfigure reaches everything setup asks.
 
-    A user who added a forecast provider afterwards, or realised their
-    consumption sensor covers only the backup panel, had no way to say so. The
-    only route that appeared to work was adding a second entry — which is how
+    A user who added a forecast provider afterwards once had no way to say so.
+    The only route that appeared to work was adding a second entry, which is how
     two installations end up fighting over one forecast archive.
     """
 
@@ -504,9 +381,6 @@ class TestReconfigureCoversEverything:
             steps = data["config"]["step"]
             assert "reconfigure_topology" in steps, f"{name} has no copy for the step"
             assert set(steps["reconfigure_topology"]["data"]) == {
-                "has_battery",
-                "grid_is_net",
-                "load_whole_house",
                 "forecast_entries",
                 "battery_capacity_kwh",
                 "battery_reserve_pct",
@@ -515,38 +389,31 @@ class TestReconfigureCoversEverything:
 
 
 class TestTopologySchemaIsShared:
-    """Setup and reconfigure must ask the same questions or they will drift."""
+    """Setup and reconfigure must show the same step or they will drift."""
 
     @staticmethod
-    def _keys(channels, providers=(), current=None):
+    def _keys(channels, providers=(), current=None, soc_selected=False):
         from custom_components.solar_sanity.config_flow import _topology_schema
 
-        schema = _topology_schema(dict(channels), list(providers), dict(current or {}))
+        schema = _topology_schema(
+            dict(channels), list(providers), dict(current or {}), soc_selected
+        )
         return {str(key.schema) for key in schema.schema}
 
-    def test_a_mapped_battery_is_not_asked_about(self) -> None:
-        keys = self._keys({"load": "sensor.l", "pv": "sensor.p", "battery_charge": "sensor.c"})
+    def test_nothing_about_the_house_is_asked_any_more(self) -> None:
+        """The three questions only the energy-balance check read are gone."""
+        keys = self._keys({"load": "sensor.l", "pv": "sensor.p", "grid_import": "sensor.i"})
 
-        assert "has_battery" not in keys
+        assert keys.isdisjoint({"has_battery", "grid_is_net", "load_whole_house"})
 
-    def test_an_unmapped_battery_is(self) -> None:
-        keys = self._keys({"load": "sensor.l", "pv": "sensor.p"})
+    def test_with_no_provider_and_no_charge_level_there_is_nothing_to_ask(self) -> None:
+        """An empty step is skipped rather than shown as a page with a button."""
+        assert self._keys({"load": "sensor.l", "pv": "sensor.p"}) == set()
 
-        assert "has_battery" in keys
+    def test_a_charge_level_brings_the_battery_rows(self) -> None:
+        keys = self._keys({"load": "sensor.l"}, soc_selected=True)
 
-    def test_net_grid_is_asked_only_when_import_is_alone(self) -> None:
-        alone = self._keys({"load": "sensor.l", "pv": "sensor.p", "grid_import": "sensor.i"})
-        both = self._keys(
-            {
-                "load": "sensor.l",
-                "pv": "sensor.p",
-                "grid_import": "sensor.i",
-                "grid_export": "sensor.e",
-            }
-        )
-
-        assert "grid_is_net" in alone
-        assert "grid_is_net" not in both
+        assert keys == {"battery_capacity_kwh", "battery_reserve_pct", "battery_target_pct"}
 
     def test_the_provider_field_is_omitted_when_there_are_none(self) -> None:
         assert "forecast_entries" not in self._keys({"load": "sensor.l"})
@@ -556,46 +423,9 @@ class TestTopologySchemaIsShared:
 
         assert "forecast_entries" in keys
 
-    def test_load_coverage_is_always_asked(self) -> None:
-        """Nothing in a mapping can settle it — a backup panel looks whole."""
-        keys = self._keys({"load": "sensor.l", "pv": "sensor.p"})
-
-        assert "load_whole_house" in keys
-
-
-class TestTopologyValues:
-    """What the mapping settles outright is not left as "not sure"."""
-
-    @staticmethod
-    def _values(user_input, channels):
-        from custom_components.solar_sanity.config_flow import _topology_values
-
-        return _topology_values(dict(user_input), dict(channels))
-
-    def test_a_mapped_battery_answers_yes(self) -> None:
-        values = self._values({}, {"battery_discharge": "sensor.d"})
-
-        assert values["has_battery"] == "yes"
-
-    def test_two_grid_sensors_answer_not_net(self) -> None:
-        values = self._values({}, {"grid_import": "sensor.i", "grid_export": "sensor.e"})
-
-        assert values["grid_is_net"] == "no"
-
-    def test_the_user_answer_wins_where_one_was_asked(self) -> None:
-        values = self._values({"has_battery": "no"}, {})
-
-        assert values["has_battery"] == "no"
-
-    def test_unanswered_is_not_sure_rather_than_a_guess(self) -> None:
-        values = self._values({}, {})
-
-        assert values["has_battery"] == "unknown"
-        assert values["load_whole_house"] == "unknown"
-
 
 class TestReconfigureKeepsOrigin:
-    """Origin decides confidence, so a pass through the form must not inflate it."""
+    """Origin records who chose a mapping, so a pass through the form must not inflate it."""
 
     @staticmethod
     def _records(channels, previous):

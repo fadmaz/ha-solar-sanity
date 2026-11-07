@@ -3,18 +3,18 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 Solar Sanity is a Home Assistant custom integration (`custom_components/solar_sanity`) with a
-Lit card (`frontend/src`). The architecture, the persistent store, the analysis pipeline and
-the ranked known risks are in `docs/ARCHITECTURE.md`; keep it current when structure changes.
+Lit card (`frontend/src`): a battery outlook projected from the house's own history and a solar
+forecast archive. The architecture, the outlook, the persistent store and the ranked known risks
+are in `docs/ARCHITECTURE.md`; keep it current when structure changes.
 This file holds only what the code does not tell you.
 
 ## Commands
 
 ```bash
-python scripts/check.py                                    # every gate in CI order: ruff, tsc, pytest, build, vitest, size budget; stops at the first failure; --slow adds the corpus
-python -m pytest tests -q                                  # what CI runs; the 3,000-case corpus is deselected by addopts (about 70 s)
-python -m pytest tests/analysis/test_detection.py -q       # one file
+python scripts/check.py                                    # every gate in CI order: ruff, tsc, pytest, build, vitest, size budget; stops at the first failure
+python -m pytest tests -q                                  # what CI runs; about a second without Home Assistant
+python -m pytest tests/analysis/test_outlook.py -q         # one file
 python -m pytest "tests/analysis/test_purity.py::TestPurity::test_no_homeassistant_imports" -q   # one node id
-python -m pytest tests -q -m slow -n auto                  # the full clean corpus; needs pytest-xdist; run before changing any threshold constant
 ruff check . && ruff format --check .                      # the only Python gates; no mypy, no pre-commit
 pip install -r requirements-dev.txt                        # Python 3.13 or newer only; installs Home Assistant and unlocks tests/integration
 npm ci && npm run lint && npm test                         # tsc --noEmit, then vitest
@@ -25,13 +25,8 @@ npm run start                                              # rebuild on change a
 python scripts/make_brand_assets.py                        # regenerates the tracked brand PNGs; needs Pillow, which no requirements file lists
 ```
 
-Replay a real installation from its diagnostics download (no CLI exists, and no such file is in the repo):
-
-```bash
-python -c "import sys; sys.path[:0] = ['.', 'custom_components/solar_sanity']; from tests.synth import replay; from analysis.engine import analyse; print(analyse(replay.request_from(replay.load('diagnostics.json'))))"
-```
-
-Grade the battery outlook against what a real battery did (put downloads in the git-ignored
+Grade the battery outlook against what a real battery did, before changing any outlook
+constant (put downloads in the git-ignored
 `diagnostics/`; a download older than 0.28.0 needs the charge level as a history export via
 `--soc-csv`, and its nights are graded against production history rather than a forecast):
 
@@ -45,11 +40,12 @@ sunrise hour holds a full hour of energy), not off the upgrade date: day-ahead r
 to two days ahead and never revised. Capacity and reserve default to the download's own settings.
 `--raw` replays without the learned standby and forecast scale.
 
-The gate before the energy-balance check is deleted counts distinct nights, not projections.
+The gate the outlook passed before the energy-balance check was deleted (at least 14 distinct
+nights, not projections; mean absolute lowest error at most 5 points; reserve calls right at
+least 85%) is the bar for any change to it.
 
-Without Home Assistant installed, `tests/integration` is not collected and eight top-level test
-modules skip, silently. At 0.26.0 that is 1,797 tests locally against roughly 2,050 on CI, plus 131 card
-tests. Say in the PR when the HA tier did not run locally. The `Unknown config option:
+Without Home Assistant installed, `tests/integration` is not collected and nine test modules
+skip, silently. At 0.30.0 that is 232 tests locally, plus 139 card tests; CI adds the integration tier. Say in the PR when the HA tier did not run locally. The `Unknown config option:
 asyncio_mode` warning on such a machine is expected.
 
 ## Branch, commit, PR and release conventions
@@ -93,18 +89,15 @@ CI-only checks that nothing local runs:
   fails), which must contain the literal `mean_type=StatisticMeanType.NONE` and
   `unit_class="energy"`. `add_update_listener` and `async_register_command` must not appear
   anywhere under custom_components, comments included.
-- The 3,000-case corpus runs on every push and on Mondays, never on the pull_request event. The
-  comments in pyproject.toml and test_clean_corpus.py saying it runs on main only are wrong. A
-  healthy house must reach `ok`; `investigating` is not silence.
 - hassfest and the HACS action float on `@master` and `@main`, and ruff is unpinned, so a red
   Monday run with no commits is upstream.
 
 Tests that grep source text, so the failure names nothing near the edit:
 
 - forecast-card.ts must say "currency" in a comment and nowhere else. main.ts must carry the GitHub
-  URL in code. sensor.py, binary_sensor.py and config_flow.py must write `translation_key="literal"`;
-  a constant silently drops out of the join. repairs.py needs a literal
-  `translation_placeholders={...}` dict. services.yaml keys are matched by `^[a-z_]+:`.
+  URL in code. sensor.py and config_flow.py must write `translation_key="literal"`; a constant
+  silently drops out of the join, and the card finds the outlook sensors by those literals.
+  services.yaml keys are matched by `^[a-z_]+:`.
 - Currency words (price, cost, bill, saving, tariff, currency, cent, their plurals, and `$` next to
   a digit) fail in analysis/ strings, in .ts with comments stripped, and in strings.json,
   translations/ and services.yaml with nothing stripped: a YAML comment saying "cost" fails.
@@ -113,13 +106,11 @@ Tests that grep source text, so the failure names nothing near the edit:
   abc, functools and itertools (so `re`, `json` and `statistics` fail); no random, time, secrets or
   uuid; `x or 0` and `x or False` banned. ruff's PLC0415 also applies inside analysis/, unlike the
   top-level component files.
-- KNOWN_UNRAISED in tests/analysis/test_invariants.py is edited in both directions: a fault code without a producer must be
-  listed, and wiring a producer must delist it. A new code also needs `faults._TEMPLATES` and the
-  hand-declared field sets in tests/analysis/test_templates.py; `faults.render` raises on a missing
-  field, and inside HA that takes every entity unavailable.
-- Adding an entity, service or repairs issue: strings.json and translations/en.json stay identical;
-  a repairs key carries `description` or `fix_flow`, never both; unfixable templates need
-  `{detail}` and `{source_fix}`; a service goes in services.yaml and both string files.
+- Adding an entity or service: strings.json and translations/en.json stay identical, and a
+  service goes in services.yaml and both string files.
+- Learn and grade from the `dayahead` forecast series, never `latest`: for an elapsed hour
+  `latest` holds the day's last capture, which on the reference installation was clear-sky-like
+  rather than anything a projection saw.
 
 Traps whose error message points elsewhere:
 
@@ -130,10 +121,12 @@ Traps whose error message points elsewhere:
   down needs `disabled_by=ConfigEntryDisabler.USER`.
 - Every analysis enum exists twice in one pytest session (`analysis.model` and
   `custom_components.solar_sanity.analysis.model`); compare `.value` across that seam.
-- Notes name channels by role, never `friendly_name`: diagnostics lack it and the replay asserts
-  notes are identical. Finding text may use it.
-- Fault code strings are public, as the `finding_code` attribute and the
-  `solar_sanity_finding_raised` event; a removed code goes under `### Removed`.
+- Entity ids, translation keys and attribute names are public: automations and the card bind to
+  them. A removed one goes under `### Removed`, and a retired entity is added to
+  `RETIRED_ENTITIES` in `__init__.py` so setup takes it out of the registry.
+- Entries made before 0.30.0 hold six keys nothing reads (`has_battery`, `grid_is_net`,
+  `load_whole_house` in data; `suppressed_codes`, `corrections`, `guaranteed_annual_kwh` in
+  options). They are kept for a lossless rollback; do not reuse those names.
 - A checkout has no card until `npm run build`; its absence is logged at debug only, and
   `npm test` is green without a bundle because the smoke test skips. Build, then test, then
   check_size. vitest does not typecheck, so `node:*` imports pass it and fail tsc.
