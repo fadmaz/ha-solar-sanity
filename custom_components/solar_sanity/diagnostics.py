@@ -136,6 +136,12 @@ def _outlook(state: OutlookState) -> dict[str, Any]:
         "consumption_days": state.load_days,
         "grid_charged_hours_14d": state.grid_charged_hours,
         "max_charge_w": state.max_charge_w,
+        "standby_w": state.standby_w,
+        "forecast_scale": (
+            {"factor": state.scale.factor, "hours": state.scale.hours, "days": state.scale.days}
+            if state.scale is not None
+            else None
+        ),
         # Per hour of the day: consumption by local hour, production by UTC hour.
         "load_profile_wh": list(state.load_profile),
         "pv_profile_wh": list(state.pv_profile),

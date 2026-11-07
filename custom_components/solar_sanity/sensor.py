@@ -329,6 +329,16 @@ def _kwh(wh: float | None) -> float | None:
     return round(wh / 1000.0, 2) if wh is not None else None
 
 
+def _scale(state: OutlookState) -> float | None:
+    """What the forecast was multiplied by, learned from this roof."""
+    return round(state.scale.factor, 2) if state.scale is not None else None
+
+
+def _standby(state: OutlookState) -> int | None:
+    """The inverter's own draw, in W, added to the house load at every hour."""
+    return round(state.standby_w) if state.standby_w is not None else None
+
+
 def _why(state: OutlookState, unanswered: str) -> str | None:
     """The sentence explaining an unknown state.
 
@@ -347,6 +357,7 @@ def _full_attrs(state: OutlookState) -> dict[str, Any]:
     attrs: dict[str, Any] = {
         "target_pct": state.settings.get("target_pct"),
         "forecast_provider": state.provider,
+        "forecast_scale": _scale(state),
     }
     if state.full_at is None:
         attrs["reason"] = _why(
@@ -382,6 +393,8 @@ def _lowest_attrs(state: OutlookState) -> dict[str, Any]:
         "shortfall_kwh": _kwh(outlook.shortfall_wh) if outlook else None,
         "consumption_days": state.load_days,
         "production_from": production,
+        "forecast_scale": _scale(state),
+        "inverter_standby_w": _standby(state),
         # Disclosed rather than modelled. The projection never counts the grid
         # charging the battery, because the question it answers is whether the
         # battery alone would get the house there.
@@ -402,6 +415,7 @@ def _safe_load_attrs(state: OutlookState) -> dict[str, Any]:
     attrs: dict[str, Any] = {
         "from": _iso(outlook.night_from) if outlook else None,
         "until": _iso(outlook.takeover_at) if outlook else None,
+        "inverter_standby_w": _standby(state),
     }
     if outlook is None or outlook.safe_load_w is None:
         attrs["reason"] = _why(state, "The sun does not take over within the forecast.")
@@ -413,6 +427,7 @@ def _spare_attrs(state: OutlookState) -> dict[str, Any]:
     attrs: dict[str, Any] = {
         "day_from": _iso(outlook.spare_from) if outlook else None,
         "forecast_provider": state.provider,
+        "forecast_scale": _scale(state),
     }
     if outlook is None or outlook.spare_wh is None:
         attrs["reason"] = _why(

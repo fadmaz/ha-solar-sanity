@@ -19,9 +19,9 @@ resolving it needs a time zone and this package deliberately has none.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from .linalg import mean, median, percentile
 from .model import Bucket
@@ -55,6 +55,47 @@ MIN_RATE_SAMPLES = 20
 #: as charged from the grid. Covers metering disagreement between a DC-side
 #: production sensor and an AC-side load sensor.
 GRID_CHARGE_MARGIN_WH = 100.0
+
+#: Energy in an hour, in Wh, below which production, charging or grid import
+#: counts as none. An idle inverter's meters report a few Wh of each.
+QUIET_WH = 20.0
+
+#: Discharge in an hour, in Wh, before the battery counts as carrying the house.
+CARRYING_WH = 50.0
+
+#: Hours the battery carried the house alone in the dark before an inverter's
+#: own draw is stated: a night and a half.
+MIN_STANDBY_HOURS = 24
+
+#: Points below the target at which an hour counts as one the battery was
+#: full in. A battery within three points of full is in its slow last stretch
+#: or already there, and an inverter that cannot export then turns production
+#: down to what the house uses. Measured production in that hour says nothing
+#: about the sun.
+FULL_BAND_PCT = 3.0
+
+#: Days of forecast-and-production pairs needed before the forecast is scaled.
+#: Fewer, and one stormy day the forecast missed would set the scale for every
+#: sunny one.
+MIN_SCALE_DAYS = 3
+
+#: The scale is kept within these bounds. A ratio outside them is a forecast
+#: for a different roof, or a production channel that is not the panels. It
+#: says that something is mapped wrong, and correcting by it would hide that.
+SCALE_BOUNDS = (0.1, 2.0)
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastScale:
+    """How far a provider's forecast runs from what this roof delivers.
+
+    ``factor`` multiplies the forecast. ``hours`` and ``days`` are how much it
+    rests on, carried for the diagnostics and the attributes.
+    """
+
+    factor: float
+    hours: int
+    days: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,3 +218,112 @@ def grid_charged_hours(
         if charged > max(produced - used, 0.0) + GRID_CHARGE_MARGIN_WH:
             count += 1
     return count if seen else None
+
+
+def standby_w(
+    buckets: Sequence[Bucket],
+    *,
+    pv: str,
+    load: str,
+    charge: str,
+    discharge: str,
+    grid: str,
+    discharge_efficiency: float,
+    until: datetime,
+    days: int = PROFILE_DAYS,
+) -> float | None:
+    """The inverter's own draw, in W, on top of the house's.
+
+    The house meter does not see the inverter running itself. On the reference
+    installation in November 2026, over 366 dark hours with no sun and no grid,
+    the battery delivered 125 W plus 1.03 times the house load. The projection
+    left that out, and every night came out two to three points more
+    optimistic than the battery really was.
+
+    Measured, not configured: the median, over the hours the battery carried
+    the house alone in the dark, of what it delivered beyond the load. It is
+    stated on the house side of the discharge efficiency, like the load it
+    is added to, so the projection divides both by the same figure. A battery
+    metered on the AC side, where delivery and load agree, learns a negative
+    figure, which clamps to zero and changes nothing.
+
+    ``None`` when the channels are not all mapped or the battery has not
+    carried the house alone for long enough to say.
+    """
+    since = until - timedelta(days=days)
+    excess: list[float] = []
+    for bucket in buckets:
+        if bucket.seconds != 3600 or not (since <= bucket.start_utc < until):
+            continue
+        produced = bucket.value(pv)
+        used = bucket.value(load)
+        charged = bucket.value(charge)
+        delivered = bucket.value(discharge)
+        if produced is None or used is None or charged is None or delivered is None:
+            continue
+        imported = bucket.value(grid)
+        if produced > QUIET_WH or charged > QUIET_WH or delivered < CARRYING_WH:
+            continue
+        if imported is not None and imported > QUIET_WH:
+            continue
+        excess.append(delivered * discharge_efficiency - used)
+    if len(excess) < MIN_STANDBY_HOURS:
+        return None
+    middle = median(excess)
+    return None if middle is None else max(middle, 0.0)
+
+
+def forecast_scale(
+    buckets: Sequence[Bucket],
+    forecast: Mapping[datetime, float],
+    *,
+    soc_max: Mapping[datetime, float],
+    full_pct: float,
+    pv: str,
+    grid: str,
+    until: datetime,
+    days: int = PROFILE_DAYS,
+) -> ForecastScale | None:
+    """What the panels delivered over what the forecast said, hour by hour.
+
+    On the reference installation the Forecast.Solar forecast ran more than
+    twice what the roof delivered, and the ratio held between 0.39 and 0.50
+    through October and November 2026. Unscaled, the outlook called a full
+    battery on 13 of 27 mornings when the battery did not fill. Scaled, it
+    did so on 2, and missed 4 days that did fill: wrong on 6 days instead of 13.
+
+    ``forecast`` is the forecast as it stood a day ahead, in Wh per UTC hour,
+    because that is what a projection had in hand at the time. ``soc_max`` is
+    the highest charge level in each UTC hour. Hours are left out when the
+    battery was within ``FULL_BAND_PCT`` of ``full_pct``, when the grid was
+    supplying the house, or when the charge level is not known: in any of
+    them, production may have been turned down to what was used, and the sun
+    was not the limit.
+    """
+    since = until - timedelta(days=days)
+    by_hour = {bucket.start_utc: bucket for bucket in buckets if bucket.seconds == 3600}
+    predicted = delivered = 0.0
+    hours = 0
+    dates: set[date] = set()
+    for when, expected in forecast.items():
+        if not (since <= when < until) or expected <= 0:
+            continue
+        bucket = by_hour.get(when)
+        level = soc_max.get(when)
+        if bucket is None or level is None or level >= full_pct - FULL_BAND_PCT:
+            continue
+        produced = bucket.value(pv)
+        imported = bucket.value(grid)
+        if produced is None or (imported is not None and imported > QUIET_WH):
+            continue
+        predicted += expected
+        delivered += produced
+        hours += 1
+        dates.add(when.date())
+    if len(dates) < MIN_SCALE_DAYS or predicted <= 0:
+        return None
+    low, high = SCALE_BOUNDS
+    ratio = delivered / predicted
+    if not low <= ratio <= high:
+        return None
+    return ForecastScale(factor=ratio, hours=hours, days=len(dates))

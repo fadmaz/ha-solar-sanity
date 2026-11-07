@@ -98,7 +98,7 @@ Ignored local directories you will see but git does not: `.venv/`, `node_modules
 | `frontend.py` | Serves and registers the built card. |
 | `diagnostics.py` | Redacted download that includes a replayable window. |
 | `battery_outlook.py` | The outlook's Home Assistant side: reads the charge level when computing (never at setup), doubts a stale one, picks a fresh forecast, keeps published times steady. |
-| `analysis/outlook.py`, `analysis/profile.py` | The pure projection and the hour-of-day profiles it runs on. Consumption keyed by local hour, production by UTC hour. |
+| `analysis/outlook.py`, `analysis/profile.py` | The pure projection and the hour-of-day profiles it runs on. Consumption keyed by local hour, production by UTC hour. `profile.py` also learns the inverter's standby draw and the forecast scale, both from the house's own meters. |
 
 ### 3.2 Data flow
 
@@ -174,7 +174,12 @@ places: `OptionsFlowWithReload` for options (`config_flow.py:456`),
 
 The battery outlook rides the first two: the 30-second tick recomputes it
 when the charge level has changed since the last projection, and the
-five-minute tick recomputes it regardless.
+five-minute tick recomputes it regardless. The 30-minute capture also calls
+`BatteryOutlook.async_learn`, which reads the day-ahead archive and the
+charge level's hourly maxima from the recorder, at most once an hour, and
+learns each provider's `forecast_scale` (`analysis/profile.py`). The
+inverter's standby draw is learned from the window on every projection,
+because it needs nothing beyond the buckets.
 
 Backfill (`__init__.py:165-220`) classifies each mapped entity as sum-backed,
 mean-backed or unrecorded, pulls `BACKFILL_DAYS = 30` of hourly statistics and

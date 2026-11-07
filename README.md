@@ -60,6 +60,14 @@ work without a forecast provider; *full at* and *spare solar* need one, because
 an inverter with nowhere to send a surplus records production cut back to what
 it could use, and that history understates the sun.
 
+It learns two things about your installation from your own meters, and shows
+both as attributes. **How far your forecast is off** (`forecast_scale`): what
+your panels delivered against what the forecast said a day ahead, over the last
+fortnight, counting only hours the battery had room in. On the installation it
+was built on, the forecast ran at twice the real output. **What the inverter
+draws for itself** (`inverter_standby_w`): power the house meter never sees,
+measured on the hours the battery carried the house alone in the dark.
+
 Two things it deliberately does not do. It **never counts grid charging**: the
 question it answers is whether the battery alone would get the house there,
 which is the one that matters during an outage and the safe one otherwise. And

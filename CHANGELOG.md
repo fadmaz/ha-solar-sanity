@@ -2,6 +2,47 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.28.1] - 2026-11-07
+
+### Fixed
+
+- **The outlook now learns how far your forecast is off, instead of trusting
+  it.** On the reference installation the Forecast.Solar forecast ran more than
+  twice what the roof delivered, and *Battery full at* called a full battery on
+  13 of 27 mornings when the battery did not fill. The outlook now compares the
+  forecast as it stood a day ahead with what your panels produced over the last
+  fortnight, and scales the forecast by that ratio. Only hours when the battery
+  had room count: a full battery on an inverter that cannot export turns
+  production down, and that says nothing about the sun. On the same month the
+  outlook wrongly called a full battery on 2 days instead of 13, and missed 4
+  days that did fill. The figure is shown as `forecast_scale` on the sensors
+  that use it. Until three days of history exist, the forecast is used as it
+  comes.
+- **The inverter's own draw is now counted.** A hybrid inverter running from
+  its battery uses power the house meter never sees: about 100 W on the
+  reference installation, all night, every night. Left out, every night came
+  out two to three points better than it was. It is now measured from your
+  battery and consumption meters on the hours the battery carried the house
+  alone in the dark, and added to the load. It is shown as `inverter_standby_w`.
+  A battery metered on the house side learns zero, and nothing changes.
+
+### Notes
+
+- Replayed against a month of real nights on the reference installation, the
+  lowest-battery figure is off by 2.8 points on average, from 3.8, and is no
+  longer biased high: it had been 2.7 points too optimistic on average. The
+  call on whether the battery reaches reserve before sunrise was right on 70 of
+  80 projections.
+- Diagnostics now include the learned standby and forecast scale.
+
+### Internal
+
+- `scripts/backtest_outlook.py` grades on each hour's lowest and highest charge
+  reading rather than its average. A battery that touches its reserve and is
+  then charged from the grid has an hourly average a point above the reserve,
+  and graded on that, a night the projection called right read as one it got
+  wrong. `--raw` replays as 0.28.0 did, for comparison.
+
 ## [0.28.0] - 2026-11-06
 
 ### Added

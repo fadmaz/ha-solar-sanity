@@ -87,6 +87,9 @@ class BatterySettings:
     #: The fastest the battery has been seen to charge, as Wh per hour on the
     #: battery side. ``None`` means no ceiling is known.
     max_charge_w: float | None = None
+    #: The inverter's own draw in W, on top of the house load at every hour.
+    #: Learned (see ``profile.standby_w``); zero until it is.
+    standby_w: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +236,9 @@ def simulate(
     to reserve, and whatever it cannot cover is shortfall. With
     ``constant_load_w`` the profile's load is replaced by a flat draw, which is
     how the safe load is searched for.
+
+    The inverter's standby is added to the load either way. The safe load is
+    what the *house* may draw, and the inverter draws its own on top.
     """
     cap = battery.capacity_wh
     floor = cap * battery.reserve_pct / 100.0
@@ -253,6 +259,7 @@ def simulate(
 
     for step in steps:
         load = step.load_wh if constant_load_w is None else constant_load_w * step.hours
+        load += battery.standby_w * step.hours
         net = step.pv_wh - load
         lost = 0.0
         unmet = 0.0
