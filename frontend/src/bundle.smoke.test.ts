@@ -47,6 +47,7 @@ describe.skipIf(!built)(`the built bundle (${BUNDLE})`, () => {
     await load();
 
     for (const tag of [
+      "solar-sanity-battery-card",
       "solar-sanity-card",
       "solar-sanity-forecast-card",
       "ll-strategy-view-solar-sanity",
@@ -56,13 +57,14 @@ describe.skipIf(!built)(`the built bundle (${BUNDLE})`, () => {
     }
   });
 
-  it("registers both cards in the picker", async () => {
+  it("registers every card in the picker", async () => {
     await load();
     const cards = (window as unknown as { customCards?: { type: string }[] }).customCards;
 
     // Bare, with no `custom:` prefix. That prefix belongs in a dashboard's
     // config; the picker registry wants the element name as defined.
     expect(cards?.map((c) => c.type).sort()).toEqual([
+      "solar-sanity-battery-card",
       "solar-sanity-card",
       "solar-sanity-forecast-card",
     ]);
@@ -76,21 +78,24 @@ describe.skipIf(!built)(`the built bundle (${BUNDLE})`, () => {
     expect(strategies?.some((s) => s.type === "solar-sanity")).toBe(true);
   });
 
-  it("renders a sentence rather than nothing when Home Assistant is absent", async () => {
-    await load();
+  it.each(["solar-sanity-battery-card", "solar-sanity-card"])(
+    "%s renders a sentence rather than nothing when Home Assistant is absent",
+    async (tag) => {
+      await load();
 
-    const card = document.createElement("solar-sanity-card") as HTMLElement & {
-      setConfig: (config: unknown) => void;
-      updateComplete: Promise<unknown>;
-    };
-    card.setConfig({ type: "custom:solar-sanity-card" });
-    document.body.appendChild(card);
-    await card.updateComplete;
+      const card = document.createElement(tag) as HTMLElement & {
+        setConfig: (config: unknown) => void;
+        updateComplete: Promise<unknown>;
+      };
+      card.setConfig({ type: `custom:${tag}` });
+      document.body.appendChild(card);
+      await card.updateComplete;
 
-    // The degraded state is the one a user meets first and the one a minifier
-    // is likeliest to have broken, because nothing else exercises it.
-    expect(card.shadowRoot?.textContent?.trim()).toBeTruthy();
-  });
+      // The degraded state is the one a user meets first and the one a
+      // minifier is likeliest to have broken, because nothing else exercises it.
+      expect(card.shadowRoot?.textContent?.trim()).toBeTruthy();
+    },
+  );
 
   it("is one file with nothing left to fetch", async () => {
     const source = await text();

@@ -301,7 +301,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       <section class="panel">
         <div class="heading">
           <span class="provider">${panel.label}</span>
-          <span class="total">${panel.kwh.toFixed(1)} kWh</span>
+          <span class="total"><bdi>${panel.kwh.toFixed(1)} kWh</bdi></span>
         </div>
         <svg
           class="chart"
@@ -325,7 +325,8 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
           )}
         </svg>
         <!-- The same numbers, for anyone who cannot see the shape. -->
-        <table class="sr-only">
+        <div class="sr-only">
+        <table>
           <caption>
             ${label}
           </caption>
@@ -338,6 +339,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
             )}
           </tbody>
         </table>
+        </div>
       </section>
     `;
   }
@@ -358,6 +360,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       display: block;
     }
     .root {
+      position: relative;
       container-type: inline-size;
       display: flex;
       flex-direction: column;
@@ -436,8 +439,13 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       fill: var(--secondary-text-color);
       font-size: 11px;
     }
+    /* On a wrapper, never on the table itself: a table is as wide as its
+       content whatever its width says, and a wide invisible table pushes the
+       page sideways on a phone. Positioned against the card, not the page. */
     .sr-only {
       position: absolute;
+      inset-inline-start: 0;
+      top: 0;
       width: 1px;
       height: 1px;
       overflow: hidden;

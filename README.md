@@ -213,8 +213,16 @@ a reason to lower a constant.
 
 ## Cards
 
-Both ship inside the integration and register themselves. One install, both
-halves, always version-matched.
+All three ship inside the integration and register themselves. One install,
+always version-matched.
+
+**Solar Sanity: battery** — the battery outlook on one card. The charge now, one
+sentence worth leading with ("Full at 14:35, in 2 h 10 min", "Lasts until the
+sun, at 06:40", "Reaches the reserve at 04:10"), the safe load, the lowest
+before sunrise and the spare sun, and the projected charge over the next day
+and a half against your reserve and target, with the night shaded. Times are in
+Home Assistant's time zone. It finds its sensors in the entity registry, so
+renaming them does not lose them.
 
 **Solar Sanity** — the verdict, in three rows that never grow. A healthy day
 says so in one line and shows nothing else; a fault shows the observation and a
@@ -225,11 +233,11 @@ sentence rather than an empty box.
 about tomorrow, drawn from the immutable series above. Hand-rolled inline SVG,
 so it re-themes with no JavaScript and uses Home Assistant's own solar colour.
 
-Neither takes any configuration. Drop one on a dashboard and it finds its own
-data — the status card picks up your installation, the forecast card draws every
-provider you have.
+None takes any configuration. Drop one on a dashboard and it finds its own
+data: the battery and status cards pick up your installation, the forecast card
+draws every provider you have.
 
-Both have an editor for when the defaults are not what you want: a second
+Each has an editor for when the defaults are not what you want: a second
 installation to choose between, or a single provider to isolate. The status
 card's editor also answers a question the interface could not previously answer
 at all, which is *which* installation the card picked when it picked for you.
@@ -247,8 +255,9 @@ views:
       type: custom:solar-sanity
 ```
 
-Either route emits the verdict first and the forecast under it — the forecast is
-what you look at when the verdict is boring. If you run more than one
+Either route emits the battery card first wherever the battery outlook is set
+up, then the verdict, then the forecast: the forecast is what you look at when
+the verdict is boring. If you run more than one
 installation it emits one status card per house, each told which one it belongs
 to, rather than letting a card choose silently between them.
 
