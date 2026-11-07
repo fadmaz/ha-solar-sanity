@@ -20,7 +20,7 @@
  *  - **Anything in currency.** Never, anywhere in this product.
  */
 
-import { LitElement, css, html, nothing, type TemplateResult } from "lit";
+import { LitElement, css, html, nothing, svg, type SVGTemplateResult, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
 import { areaPath, hourLabels, linePath, niceTicks, round, scaleLinear } from "./chart";
@@ -316,11 +316,11 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
           <path class="area" d=${panel.area} />
           <path class="line" d=${panel.line} />
           ${panel.ticks.map(
-            (tick) => html`<text class="tick" x="0" y=${panel.tickY(tick) + 4}>${tick}</text>`,
+            (tick) => svg`<text class="tick" x="0" y=${panel.tickY(tick) + 4}>${tick}</text>`,
           )}
           ${panel.labels.map((mark) =>
             mark.text
-              ? html`<text class="tick" x=${mark.x} y=${HEIGHT - 6}>${mark.text}</text>`
+              ? svg`<text class="tick" x=${mark.x} y=${HEIGHT - 6}>${mark.text}</text>`
               : nothing,
           )}
         </svg>
@@ -447,9 +447,16 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   `;
 }
 
-/** A gridline. Extracted only so the template above stays readable. */
-function svgLine(x1: number, y1: number, x2: number, y2: number): TemplateResult {
-  return html`<line x1=${x1} y1=${y1} x2=${x2} y2=${y2} />`;
+/**
+ * A gridline. Extracted only so the template above stays readable.
+ *
+ * `svg`, not `html`: a nested template is parsed on its own, outside the
+ * <svg> it lands in, and with `html` a <line> or <text> becomes an HTML element
+ * of that name, which is in the DOM and drawn by no browser. Until 0.28.2 the
+ * gridlines and both axes of this card were invisible for exactly that reason.
+ */
+function svgLine(x1: number, y1: number, x2: number, y2: number): SVGTemplateResult {
+  return svg`<line x1=${x1} y1=${y1} x2=${x2} y2=${y2} />`;
 }
 
 declare global {
