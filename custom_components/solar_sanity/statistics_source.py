@@ -64,8 +64,8 @@ async def async_hourly_series(
       it is a far better estimate than our own five-minute polling because the
       recorder saw every state change rather than one in three hundred.
 
-    Mean-derived values are flagged so the analysis can widen its tolerance and
-    refuse to call a finding certain on them.
+    Mean-derived values are flagged, because an hourly mean cannot say whether
+    its hour was complete.
     """
     if not recorder_available(hass):
         return {}

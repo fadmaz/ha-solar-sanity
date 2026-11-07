@@ -83,28 +83,6 @@ async def test_nothing_is_registered_that_the_yaml_does_not_declare(
     )
 
 
-async def test_export_report_returns_something_when_called(
-    hass: HomeAssistant,
-    enable_custom_integrations: None,
-    entry: MockConfigEntry,
-) -> None:
-    """Registered is not the same as working.
-
-    ``export_report`` returns a response, so it is the one of the two that can
-    be checked without waiting for an analysis cycle. A service that raises on
-    call is registered exactly as convincingly as one that does not.
-    """
-    entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    response = await hass.services.async_call(
-        DOMAIN, "export_report", {}, blocking=True, return_response=True
-    )
-
-    assert response is not None
-
-
 async def test_removing_one_installation_leaves_the_services_registered(
     hass: HomeAssistant,
     enable_custom_integrations: None,

@@ -14,5 +14,4 @@ pytest-asyncio>=0.24
 # declares. That one moves when the declared floor moves. Two pins, because a
 # test cannot look up which Home Assistant a harness version carries.
 pytest-homeassistant-custom-component==0.13.316
-pytest-xdist>=3.6
 ruff>=0.9

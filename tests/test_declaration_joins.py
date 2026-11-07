@@ -32,7 +32,6 @@ STRING_FILES = ("strings.json", "translations/en.json")
 #: an unresolvable entity key.
 SECTION_FOR = {
     "sensor.py": ("entity", "sensor"),
-    "binary_sensor.py": ("entity", "binary_sensor"),
     "config_flow.py": ("selector",),
 }
 

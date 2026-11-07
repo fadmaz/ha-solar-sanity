@@ -9,8 +9,8 @@ Four things are done differently, and each fixes a real defect in the original:
 
 * **Energy sensors are candidates too.** The predecessor gated every match on a
   power unit, which meant the kWh statistics the Energy Dashboard is actually
-  built on were collected and then discarded. The balance check is an energy
-  identity, so that version could not find its own inputs.
+  built on were collected and then discarded, and the battery outlook learns
+  from energy.
 * **Results are ranked, with reasons.** The original returned a bare entity id,
   so a caller could not tell a certain match from the least-bad of two poor
   candidates. For a product about trustworthiness that was the most important
@@ -313,8 +313,8 @@ def _rank(
         score = 0
         reasons: list[str] = []
 
-        # Both power and energy are usable. The balance runs on energy; the live
-        # tripwire runs on power. Rejecting either loses half the inputs.
+        # Both power and energy are usable: power is integrated into hours, and
+        # energy is differenced. Rejecting either loses half the inputs.
         if device_class == SensorDeviceClass.POWER or (unit in POWER_UNITS):
             score += 30
             reasons.append("measures power")

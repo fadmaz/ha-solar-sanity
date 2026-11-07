@@ -76,9 +76,9 @@ def _entity_selector() -> selector.EntitySelector:
 def _duplicate_entity(channels: dict[str, str]) -> str | None:
     """The entity mapped to more than one role, if any.
 
-    One sensor on both sides of the identity cancels itself out and makes the
-    balance meaningless — and the live tripwire would then report the same
-    entity flowing two ways at once, naming it twice in a single sentence.
+    One sensor in two roles measures one thing twice: as production and as
+    consumption, say, the outlook would learn a house that uses exactly what it
+    makes.
     """
     seen: dict[str, str] = {}
     for role_key, entity_id in channels.items():
@@ -103,8 +103,8 @@ def _channel_schema(discovery: Discovery, current: dict[str, str]) -> vol.Schema
     # existed.
     #
     # Not a channel and never in `CONF_CHANNELS`: it is a level in percent
-    # rather than a flow in watt-hours, and it takes no part in the balance. It
-    # is where the battery outlook starts from, and picking it is what makes the
+    # rather than a flow in watt-hours. It is where the battery outlook starts
+    # from, and picking it is what makes the
     # next step ask how big the battery is. Stored in options, which is also
     # where reconfigure keeps it.
     fields[
@@ -292,8 +292,8 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
             self._battery_soc = user_input.get(OPT_BATTERY_SOC) or None
             duplicate = _duplicate_entity(self._channels)
             if Role.LOAD.key not in self._channels:
-                # Without consumption the identity closes by definition and the
-                # whole check is vacuous, so this is worth blocking on.
+                # The outlook learns the house from its consumption; without it
+                # there is nothing to project, so this is worth blocking on.
                 errors["base"] = "load_required"
             elif Role.PV.key not in self._channels:
                 errors["base"] = "pv_required"

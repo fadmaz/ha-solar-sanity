@@ -565,10 +565,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
     def ingest_backfill(self, series: dict[str, list[tuple[datetime, float, bool]]]) -> None:
         """Seed the window from long-term statistics at setup.
 
-        Mean-derived buckets are tagged ``LTS_MEAN`` so the analysis widens its
-        tolerance and refuses to call a finding certain on them: an hourly mean
-        cannot say whether the hour it describes was complete. Sum-derived ones
-        are exact and tagged ``LTS_SUM``. See ``BucketSource``.
+        Mean-derived buckets are tagged ``LTS_MEAN``: an hourly mean cannot say
+        whether the hour it describes was complete, and the forecast scoring
+        reads that tag. Sum-derived ones are exact and tagged ``LTS_SUM``. See
+        ``BucketSource``.
         """
         specs = self.specs
         by_key = {s.key: s.entity_id for s in specs}
@@ -938,13 +938,13 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         return self._expected_tomorrow_kwh
 
     def window_snapshot(self) -> dict[str, Any]:
-        """Every hour in the window, as numbers, so the verdict can be replayed.
+        """Every hour in the window, as numbers, so the outlook can be replayed.
 
-        The engine is a pure function of these buckets. Without them a bug
-        report says what the answer was and nothing about the arithmetic, so
-        every question has to be settled by asking the user to run something —
-        and a diagnosis that cannot be re-derived offline gets retracted, which
-        has now happened three times on one installation.
+        The outlook is a pure function of these buckets, the charge level and
+        the forecast. Without them a bug report says what the answer was and
+        nothing about the arithmetic, so every question has to be settled by
+        asking the user to run something. ``scripts/backtest_outlook.py`` reads
+        this block back.
 
         Columnar rather than a list of objects: the same window as a dict per
         bucket is roughly four times the bytes for the same content, and this is
@@ -954,10 +954,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         Values are emitted unrounded, unlike every figure this integration shows
         a person. Those are rounded because a total that cancels to nothing
         reads as broken when it prints as 2.6e-21; this block is not read by
-        eye, it is fed back into the engine, and rounding it to milliwatt-hours
-        was enough to move a replayed residual from 5e-16 to 3e-06. Harmless
-        here, and precisely the kind of drift that makes a replay stop being
-        evidence.
+        eye, it is fed back into a replay, and rounding it to milliwatt-hours
+        once moved a replayed figure from 5e-16 to 3e-06. Harmless here, and
+        precisely the kind of drift that makes a replay stop being evidence.
         """
         specs = self.specs
         keys = [spec.key for spec in specs]
