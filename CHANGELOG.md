@@ -2,6 +2,59 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.30.0] - 2026-11-07
+
+Solar Sanity is now a battery outlook. The energy-balance check, which told you
+whether your sensors added up, is gone. The outlook replaces it: graded on a
+month of real nights, it gets the night right to within about three points of
+charge. The forecast archive and its scoring stay as they were.
+
+### Changed
+
+- **The setup wizard no longer asks about your house.** The three questions
+  (do you have a battery, is your grid sensor one net sensor, does your
+  consumption sensor cover the whole house) only fed the check. The step after
+  the sensor mapping now shows only the forecast integrations and, if you
+  picked a charge-level sensor, the battery's size. When there is neither, it
+  is skipped.
+- **Configure shows only the battery settings.** The guaranteed annual
+  production and the list of findings to stop reporting are gone with the
+  check.
+- **The old status card shows the battery card.** A dashboard holding
+  `custom:solar-sanity-card` keeps working and shows the battery outlook. The
+  card picker no longer offers it, and its `entity:` setting is ignored. The
+  Solar Sanity dashboard lays out the battery card and the forecast card.
+- **Measured hours are saved as each hour closes,** rather than every six
+  hours. A restart now loses at most the hour in progress.
+
+### Removed
+
+- **Entities:** Status (`sensor.*_status`), Data problem
+  (`binary_sensor.*_data_problem`), Data completeness, Corrections in effect, and
+  Live residual. They are removed from the entity registry when Solar Sanity
+  starts. Their recorded history stays in the recorder and shows as no longer
+  provided.
+- **Services:** `solar_sanity.validate_now` and `solar_sanity.export_report`.
+- **Events:** `solar_sanity_finding_raised` and `solar_sanity_finding_cleared`.
+- **Finding codes,** which appeared in the status sensor's `finding_code`
+  attribute and in those events: `stuck_channel`, `production_stalled`, `unit_scale_1000`, `cumulative_in_periodic_field`, `signed_net_in_dedicated_slot`, `signed_net_battery_slot`, `channels_swapped`, `duplicate_channel_pair`, `simultaneous_opposing_flow`, `channel_sign_inverted`, `channel_never_positive`, `double_counted_channel`, `missing_storage_channel`, `missing_export_channel`, `missing_generation_channel`, `partial_ct_coverage`, `load_boundary_mismatch`, `pv_measured_dc`, `battery_measured_dc`, `unmetered_standby`, `correction_now_harmful`, `unexplained_residual`.
+- **Repairs:** every Solar Sanity issue is removed when Solar Sanity starts.
+  Nothing will raise one again.
+- **Options:** guaranteed annual production, findings to stop reporting, and
+  accepted corrections.
+
+### Notes
+
+- **Nothing about your configuration is deleted.** Entries made before this
+  release keep the three answers and the three removed options where they were.
+  Nothing reads them now, and leaving them there means going back to 0.29.0
+  loses nothing.
+- **The old shared state file is deleted at start,** if one is left from a
+  release older than 0.5.0. It only ever held the check's fitted model.
+- **If you used the check's entities in an automation,** the automation will
+  report a missing entity. The battery outlook's sensors are the replacement
+  for most uses: *Battery reaches reserve at* is the one to alert on.
+
 ## [0.29.0] - 2026-11-07
 
 ### Added
