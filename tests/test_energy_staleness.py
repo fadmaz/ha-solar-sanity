@@ -55,6 +55,16 @@ ATTRS = {
 NOON = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
 
 
+class _RecordingStore:
+    """Stands in for the coordinator's `Store`: notes each save it is asked for."""
+
+    def __init__(self, saves: list[tuple[object, float]]) -> None:
+        self._saves = saves
+
+    def async_delay_save(self, payload: object, delay: float) -> None:
+        self._saves.append((payload, delay))
+
+
 class _Stub:
     """The state `accumulate` and `_close_bucket` touch, borrowing the real
     methods. Listed one by one so anything new the path reaches for fails loudly
@@ -66,6 +76,7 @@ class _Stub:
     _counter_went_quiet = SolarSanityCoordinator._counter_went_quiet
     _settle_power = SolarSanityCoordinator._settle_power
     _integrate = SolarSanityCoordinator._integrate
+    _payload = SolarSanityCoordinator._payload
 
     def __init__(self) -> None:
         self._accumulator: dict[str, float] = {}
@@ -79,6 +90,10 @@ class _Stub:
         self._buckets: list = []
         self._reading: str | None = None
         self.hass = type("_Hass", (), {"states": self})()
+        #: The save `_close_bucket` asks for as each hour closes, recorded
+        #: rather than performed.
+        self.saves: list[tuple[object, float]] = []
+        self._store = _RecordingStore(self.saves)
 
     # -- the states registry, as much of it as `accumulate` uses --------------
     def get(self, _entity_id: str) -> State | None:
@@ -187,6 +202,10 @@ class TestOrdinaryJitterIsStillCredited:
         assert hour.quality["pv"] is Quality.OK
         # 12:05 through 13:00, differenced: eleven steps of 0.5 kWh.
         assert hour.wh["pv"] == pytest.approx(5500.0, rel=1e-6)
+        # The closed hour asked for the window to be saved, with the method
+        # rather than a value, so the deferred write saves it as it is then.
+        assert stub.saves
+        assert all(payload == stub._payload for payload, _ in stub.saves)
 
 
 class TestBeforeThereIsABaseline:
