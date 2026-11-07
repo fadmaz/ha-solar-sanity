@@ -26,7 +26,15 @@ from homeassistant.util import dt as dt_util
 
 from .analysis.model import Role
 from .analysis.outlook import BatterySettings, Outlook, build_steps, project, settle
-from .analysis.profile import grid_charged_hours, hourly_profile, max_charge_w
+from .analysis.profile import (
+    PROFILE_DAYS,
+    ForecastScale,
+    forecast_scale,
+    grid_charged_hours,
+    hourly_profile,
+    max_charge_w,
+    standby_w,
+)
 from .const import (
     CONF_FORECAST_ENTRIES,
     DEFAULT_RESERVE_PCT,
@@ -36,6 +44,7 @@ from .const import (
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
 )
+from .statistics_source import async_forecast_series, async_hourly_soc, dayahead_statistic_id
 
 if TYPE_CHECKING:
     from .coordinator import SolarSanityCoordinator
@@ -98,6 +107,8 @@ class OutlookState:
     load_days: int = 0
     grid_charged_hours: int | None = None
     max_charge_w: float | None = None
+    standby_w: float | None = None
+    scale: ForecastScale | None = None
     load_profile: tuple[float | None, ...] = ()
     pv_profile: tuple[float | None, ...] = ()
     settings: dict[str, float] = field(default_factory=dict)
@@ -143,6 +154,8 @@ class BatteryOutlook:
         self.coordinator = coordinator
         self.state = OutlookState()
         self._dirty = True
+        self._scales: dict[str, ForecastScale | None] = {}
+        self._learned_hour: datetime | None = None
 
     @property
     def settings(self) -> BatterySettings | None:
@@ -170,6 +183,50 @@ class BatteryOutlook:
 
         return async_track_state_change_event(self.hass, [entity_id], _changed)
 
+    async def async_learn(self, now: datetime | None = None) -> None:
+        """Re-learn how far each provider's forecast runs from this roof.
+
+        Reads the recorder twice, for the day-ahead archive and the charge
+        level's hourly maxima. So it runs from the forecast capture, at most once
+        an hour, and never from the thirty-second tick. A read that fails keeps
+        the last scale rather than dropping to an unscaled forecast for an hour.
+        """
+        settings = self.settings
+        entity_id = self.coordinator.entry.options.get(OPT_BATTERY_SOC)
+        if settings is None or not entity_id:
+            return
+        hour = (now or dt_util.utcnow()).replace(minute=0, second=0, microsecond=0)
+        if self._learned_hour == hour:
+            return
+        start = hour - timedelta(days=PROFILE_DAYS)
+        soc_max: dict[datetime, float] = {}
+        for row in await async_hourly_soc(self.hass, entity_id, start, hour):
+            when = dt_util.parse_datetime(str(row.get("start")))
+            level = _number(row.get("max"))
+            if when is not None and level is not None:
+                soc_max[dt_util.as_utc(when)] = level
+        if not soc_max:
+            return
+        scales: dict[str, ForecastScale | None] = {}
+        for entry_id in self.coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or []:
+            series = await async_forecast_series(
+                self.hass, dayahead_statistic_id(entry_id), start, hour
+            )
+            if series is None:
+                scales[entry_id] = self._scales.get(entry_id)
+                continue
+            scales[entry_id] = forecast_scale(
+                self.coordinator.buckets,
+                {when: kwh * 1000.0 for when, kwh in series.items()},
+                soc_max=soc_max,
+                full_pct=settings.target_pct,
+                pv=Role.PV.key,
+                grid=Role.GRID_IMPORT.key,
+                until=hour,
+            )
+        self._scales = scales
+        self._learned_hour = hour
+
     def refresh(self, *, force: bool = False, now: datetime | None = None) -> None:
         """Recompute the projection if anything has changed, or if asked to."""
         if not force and not self._dirty:
@@ -196,11 +253,22 @@ class BatteryOutlook:
         load = hourly_profile(buckets, Role.LOAD.key, local_hour, until=now)
         pv = hourly_profile(buckets, Role.PV.key, _utc_hour, until=now, typical="median")
         ceiling = max_charge_w(buckets, Role.BATTERY_CHARGE.key, until=now)
+        standby = standby_w(
+            buckets,
+            pv=Role.PV.key,
+            load=Role.LOAD.key,
+            charge=Role.BATTERY_CHARGE.key,
+            discharge=Role.BATTERY_DISCHARGE.key,
+            grid=Role.GRID_IMPORT.key,
+            discharge_efficiency=settings.discharge_efficiency,
+            until=now,
+        )
         settings = BatterySettings(
             capacity_wh=settings.capacity_wh,
             reserve_pct=settings.reserve_pct,
             target_pct=settings.target_pct,
             max_charge_w=ceiling,
+            standby_w=0.0 if standby is None else standby,
         )
         base = OutlookState(
             computed_at=now,
@@ -213,6 +281,7 @@ class BatteryOutlook:
                 until=now,
             ),
             max_charge_w=ceiling,
+            standby_w=standby,
             load_profile=load.wh,
             pv_profile=pv.wh,
             settings={
@@ -231,7 +300,8 @@ class BatteryOutlook:
             base.reason = "learning_consumption"
             return base
 
-        provider, forecast = self._forecast(now)
+        provider, forecast, scale = self._forecast(now)
+        base.scale = scale
         if forecast is None and not pv.ready:
             base.reason = "no_production_expectation"
             return base
@@ -306,17 +376,21 @@ class BatteryOutlook:
                     total += value
         return total
 
-    def _forecast(self, now: datetime) -> tuple[str | None, dict[datetime, float] | None]:
+    def _forecast(
+        self, now: datetime
+    ) -> tuple[str | None, dict[datetime, float] | None, ForecastScale | None]:
         """The first configured provider with a fresh forecast reaching past now.
 
-        Raw, in Wh per UTC hour. The provider's measured bias is deliberately
-        not applied yet: on an inverter that curtails when the battery is full,
-        the production it is scored against reads low on exactly the sunny
-        days, so the correction would hide spare sunshine where it exists.
+        In Wh per UTC hour, scaled by what this roof has delivered against that
+        provider's day-ahead forecast (see ``profile.forecast_scale``). The scale
+        is learned only from hours the battery had room in, so an inverter that
+        turns production down when the battery is full does not teach it that
+        the sun is weaker than it is. Unscaled until there is enough to learn
+        from.
         """
         captured = self.coordinator.forecast_captured_at
         if captured is None or now - captured > FORECAST_MAX_AGE:
-            return None, None
+            return None, None, None
         hour = now.replace(minute=0, second=0, microsecond=0)
         points = self.coordinator.forecast_points
         for entry_id in self.coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or []:
@@ -324,11 +398,14 @@ class BatteryOutlook:
             if not series or max(series) < hour:
                 continue
             provider = self.hass.config_entries.async_get_entry(entry_id)
+            scale = self._scales.get(entry_id)
+            factor = 1.0 if scale is None else scale.factor
             return (
                 provider.title if provider is not None else entry_id,
-                {when: kwh * 1000.0 for when, kwh in series.items()},
+                {when: kwh * 1000.0 * factor for when, kwh in series.items()},
+                scale,
             )
-        return None, None
+        return None, None, None
 
     def _anchor(self, now: datetime) -> tuple[float, float] | None:
         """This hour's measured production and consumption, in W, if trustworthy."""

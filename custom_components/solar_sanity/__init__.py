@@ -122,6 +122,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
             # expensive silent failure this integration has — and it stayed
             # silent for a fortnight the first time it happened.
             _LOGGER.warning("Forecast capture failed; history is not being kept", exc_info=True)
+        try:
+            await coordinator.battery.async_learn()
+        except Exception:
+            # The outlook then runs on the last scale it learned, or unscaled.
+            _LOGGER.debug("Forecast scale could not be learned", exc_info=True)
 
     entry.async_on_unload(async_track_time_interval(hass, _capture, FORECAST_CAPTURE_INTERVAL))
     await _capture(None)

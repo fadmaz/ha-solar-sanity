@@ -9,8 +9,9 @@ settings form that writes one store while the code reads another.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
+from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
@@ -21,6 +22,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.const import (
+    CONF_FORECAST_ENTRIES,
     DOMAIN,
     OPT_BATTERY_CAPACITY_KWH,
     OPT_BATTERY_RESERVE_PCT,
@@ -200,6 +202,79 @@ async def test_the_diagnostics_carry_what_a_replay_needs(
 
     assert report["outlook"]["reason"] is None
     assert report["outlook"]["projection"]["trajectory"]
+    assert "standby_w" in report["outlook"]
+    assert "forecast_scale" in report["outlook"]
     assert len(report["outlook"]["load_profile_wh"]) == 24
     assert "soc_history" in report
     assert "forecast_history" in report
+
+
+async def _dayahead_twice_the_roof(
+    _hass: HomeAssistant, _statistic_id: str, start: datetime, end: datetime
+) -> dict[datetime, float]:
+    """The day-ahead archive: 5 kWh in every hour the week of history made 2.5."""
+    out = {}
+    hour = start
+    while hour < end:
+        if 6 <= hour.hour < 18:
+            out[hour] = 5.0
+        hour += timedelta(hours=1)
+    return out
+
+
+async def _battery_with_room(
+    _hass: HomeAssistant, _entity_id: str, start: datetime, end: datetime
+) -> list[dict[str, Any]]:
+    rows = []
+    hour = start
+    while hour < end:
+        rows.append({"start": hour.isoformat(), "mean": 60.0, "min": 59.0, "max": 61.0})
+        hour += timedelta(hours=1)
+    return rows
+
+
+async def test_the_forecast_is_scaled_by_what_the_roof_delivered(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry_data: dict[str, Any],
+) -> None:
+    """The wiring from the recorder to the projection. On the reference
+    installation the forecast ran twice what the roof delivered, and the
+    outlook called a full battery on 13 mornings it did not fill. Here the
+    archive says 5 kWh an hour where the history made 2.5, and the projection
+    must be run on half the forecast and say so."""
+    data = {**entry_data, CONF_FORECAST_ENTRIES: ["provider"]}
+    entry = await _loaded(hass, MockConfigEntry(domain=DOMAIN, data=data, options=BATTERY))
+    _week_of_history(entry)
+    hass.states.async_set(SOC, "40", {"unit_of_measurement": "%", "device_class": "battery"})
+    coordinator = entry.runtime_data.coordinator
+    now = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+    coordinator.forecast_points = {
+        "provider": {
+            now + timedelta(hours=h): 6.0
+            for h in range(36)
+            if 6 <= (now + timedelta(hours=h)).hour < 18
+        }
+    }
+    coordinator.forecast_captured_at = dt_util.utcnow()
+
+    with (
+        patch(
+            "custom_components.solar_sanity.battery_outlook.async_forecast_series",
+            _dayahead_twice_the_roof,
+        ),
+        patch(
+            "custom_components.solar_sanity.battery_outlook.async_hourly_soc",
+            _battery_with_room,
+        ),
+    ):
+        await coordinator.battery.async_learn()
+    _refresh(entry)
+    await hass.async_block_till_done()
+
+    lowest = hass.states.get(_entity_id(hass, entry, "battery_lowest_before_sunrise"))
+    full = hass.states.get(_entity_id(hass, entry, "battery_full_at"))
+    assert lowest.attributes["forecast_scale"] == 0.5
+    assert full.attributes["forecast_scale"] == 0.5
+    report = await async_get_config_entry_diagnostics(hass, entry)
+    assert report["outlook"]["forecast_scale"]["factor"] == 0.5

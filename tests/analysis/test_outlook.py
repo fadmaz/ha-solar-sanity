@@ -103,6 +103,32 @@ class TestTheArithmeticIsExact:
         assert run.full_at == MIDNIGHT + timedelta(minutes=48)
         assert run.spilled_wh[0] == pytest.approx(3100.0)
 
+    def test_the_inverters_own_draw_drains_the_battery_too(self) -> None:
+        """A 400 W house and an inverter drawing 100 W of its own is the 500 W
+        of the first case: reserve after 10.8 hours, not the 13.5 the house
+        alone would give. Left out, every night on the reference installation
+        came out two to three points better than it was."""
+        battery = BatterySettings(10_000, 20, 100, discharge_efficiency=0.9, standby_w=100)
+        run = simulate(80, battery, flat(MIDNIGHT, 12, load=400))
+
+        assert run.reserve_at == MIDNIGHT + timedelta(hours=10.8)
+
+    def test_the_safe_load_is_what_the_house_may_draw_on_top_of_the_inverter(self) -> None:
+        """450 W over twelve hours, of which the inverter takes 100: the house
+        may draw 350."""
+        battery = BatterySettings(10_000, 20, 100, discharge_efficiency=0.9, standby_w=100)
+        safe = safe_average_load(80, battery, flat(MIDNIGHT, 12, load=500))
+
+        assert safe == pytest.approx(350.0, abs=1.0)
+
+    def test_the_inverters_own_draw_is_paid_from_a_surplus_first(self) -> None:
+        """2 kWh/h of surplus with 200 W of standby charges 1.8 kWh: from 90%
+        of 10 kWh, 99% is 900 Wh away, so 30 minutes."""
+        battery = BatterySettings(10_000, 20, 100, charge_efficiency=1.0, standby_w=200)
+        run = simulate(90, battery, flat(MIDNIGHT, 1, pv=2000))
+
+        assert run.full_at == MIDNIGHT + timedelta(minutes=30)
+
     def test_an_empty_battery_is_already_at_reserve(self) -> None:
         battery = BatterySettings(10_000, 20, 100)
         run = simulate(15, battery, flat(MIDNIGHT, 2, load=300))

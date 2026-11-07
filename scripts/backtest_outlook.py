@@ -43,7 +43,14 @@ sys.path[:0] = [str(ROOT), str(ROOT / "custom_components" / "solar_sanity")]
 
 from analysis.model import Bucket  # noqa: E402
 from analysis.outlook import BatterySettings, build_steps, project  # noqa: E402
-from analysis.profile import GRID_CHARGE_MARGIN_WH, hourly_profile, max_charge_w  # noqa: E402
+from analysis.profile import (  # noqa: E402
+    GRID_CHARGE_MARGIN_WH,
+    PROFILE_DAYS,
+    forecast_scale,
+    hourly_profile,
+    max_charge_w,
+    standby_w,
+)
 
 from tests.synth import replay  # noqa: E402
 
@@ -83,12 +90,25 @@ class SocSeries:
     Hourly means are placed at the middle of their hour, raw states at the
     moment they were reported. Both kinds appear in one export: Home Assistant
     keeps raw states for about ten days and hourly statistics after that.
+
+    ``minima`` and ``maxima`` are each hour's extremes, keyed by the hour's
+    start, where known. Grading uses them in preference to the means: a battery
+    that touches its reserve at 01:10 and is charged from the grid from 01:30
+    has an hourly *mean* a point above the reserve, and graded on means that
+    night reads as one the projection wrongly said would reach it.
     """
 
-    def __init__(self, points: Sequence[tuple[datetime, float]]) -> None:
+    def __init__(
+        self,
+        points: Sequence[tuple[datetime, float]],
+        minima: dict[datetime, float] | None = None,
+        maxima: dict[datetime, float] | None = None,
+    ) -> None:
         ordered = sorted(points)
         self.times = [when for when, _ in ordered]
         self.values = [value for _, value in ordered]
+        self.minima = minima or {}
+        self.maxima = maxima or {}
 
     def __bool__(self) -> bool:
         return bool(self.times)
@@ -115,10 +135,32 @@ class SocSeries:
         candidates.append((last, end))
         return min(candidates, key=lambda pair: (pair[0], pair[1]))
 
+    def lowest_reading(self, start: datetime, end: datetime) -> tuple[float, datetime] | None:
+        """The lowest reading in the hours from ``start`` up to ``end``.
+
+        From the hourly minima when there are any, else from the means.
+        """
+        hours = _hours(start, end)
+        known = [(self.minima[hour], hour) for hour in hours if hour in self.minima]
+        if not known:
+            return self.lowest(start, end)
+        return min(known)
+
     def first_at_or_above(self, level: float, start: datetime, end: datetime) -> datetime | None:
+        """When the level was first reached, to the hour where extremes exist."""
+        if self.maxima:
+            hour = next(
+                (h for h in _hours(start, end) if self.maxima.get(h, -math.inf) >= level), None
+            )
+            return None if hour is None else max(hour + timedelta(minutes=30), start)
         return self._first_crossing(level, start, end, rising=True)
 
     def first_at_or_below(self, level: float, start: datetime, end: datetime) -> datetime | None:
+        if self.minima:
+            hour = next(
+                (h for h in _hours(start, end) if self.minima.get(h, math.inf) <= level), None
+            )
+            return None if hour is None else max(hour + timedelta(minutes=30), start)
         return self._first_crossing(level, start, end, rising=False)
 
     def _first_crossing(
@@ -143,15 +185,31 @@ class SocSeries:
         return None
 
 
+def _hours(start: datetime, end: datetime) -> list[datetime]:
+    """Hour starts from the one containing ``start`` up to before ``end``."""
+    hour = start.replace(minute=0, second=0, microsecond=0)
+    out = []
+    while hour < end:
+        out.append(hour)
+        hour += timedelta(hours=1)
+    return out
+
+
 def soc_from_diagnostics(rows: list[dict]) -> SocSeries:
     points = []
+    minima: dict[datetime, float] = {}
+    maxima: dict[datetime, float] = {}
     for row in rows:
         mean = row.get("mean")
         if mean is None:
             continue
         start = datetime.fromisoformat(row["start"])
         points.append((start + timedelta(minutes=30), float(mean)))
-    return SocSeries(points)
+        if row.get("min") is not None:
+            minima[start] = float(row["min"])
+        if row.get("max") is not None:
+            maxima[start] = float(row["max"])
+    return SocSeries(points, minima, maxima)
 
 
 def soc_from_csv(path: Path) -> SocSeries:
@@ -239,6 +297,60 @@ def effective_wh_per_pct(
     return sum(xs) / sum(ys), 1.0 / slope, my - slope * mx
 
 
+#: Set from the command line: replay as 0.28.0 did, without the learned
+#: standby and forecast scale, to compare.
+RAW = False
+
+
+def learned(buckets: Sequence[Bucket], battery: BatterySettings, now: datetime) -> BatterySettings:
+    """The battery as the integration would have seen it at ``now``."""
+    standby = None
+    if not RAW:
+        standby = standby_w(
+            buckets,
+            pv="pv",
+            load="load",
+            charge="battery_charge",
+            discharge="battery_discharge",
+            grid="grid_import",
+            discharge_efficiency=battery.discharge_efficiency,
+            until=now,
+        )
+    return BatterySettings(
+        capacity_wh=battery.capacity_wh,
+        reserve_pct=battery.reserve_pct,
+        target_pct=battery.target_pct,
+        max_charge_w=max_charge_w(buckets, "battery_charge", until=now),
+        standby_w=0.0 if standby is None else standby,
+    )
+
+
+def scaled(
+    buckets: Sequence[Bucket],
+    forecast: dict[datetime, float] | None,
+    soc: SocSeries,
+    battery: BatterySettings,
+    now: datetime,
+) -> dict[datetime, float] | None:
+    """The forecast scaled as the integration would have scaled it at ``now``."""
+    if forecast is None or RAW:
+        return forecast
+    hour = now.replace(minute=0, second=0, microsecond=0)
+    since = hour - timedelta(days=PROFILE_DAYS)
+    scale = forecast_scale(
+        buckets,
+        {when: wh for when, wh in forecast.items() if since <= when < hour},
+        soc_max={when: level for when, level in soc.maxima.items() if since <= when < hour},
+        full_pct=battery.target_pct,
+        pv="pv",
+        grid="grid_import",
+        until=hour,
+    )
+    if scale is None:
+        return forecast
+    return {when: wh * scale.factor for when, wh in forecast.items()}
+
+
 def local_hour_of(zone: ZoneInfo) -> Callable[[datetime], int]:
     return lambda when: when.astimezone(zone).hour
 
@@ -276,17 +388,12 @@ def replay_nights(
         if not load.ready or (forecast is None and not pv.ready):
             skipped["not_ready"] += 1
             continue
-        settings = BatterySettings(
-            capacity_wh=battery.capacity_wh,
-            reserve_pct=battery.reserve_pct,
-            target_pct=battery.target_pct,
-            max_charge_w=max_charge_w(buckets, "battery_charge", until=now),
-        )
+        settings = learned(buckets, battery, now)
         steps = build_steps(
             now,
             load=load.wh,
             local_hour=local_hour,
-            pv_forecast=forecast,
+            pv_forecast=scaled(buckets, forecast, soc, battery, now),
             pv_profile=None if forecast is not None else pv.wh,
         )
         if not steps:
@@ -296,7 +403,7 @@ def replay_nights(
         if outlook.takeover_at is None or outlook.lowest_pct is None:
             skipped["no_takeover"] += 1
             continue
-        lowest = soc.lowest(now, outlook.takeover_at)
+        lowest = soc.lowest_reading(now, outlook.takeover_at)
         if lowest is None:
             skipped["no_actual"] += 1
             continue
@@ -346,17 +453,15 @@ def replay_mornings(
         if start_soc is None or not load.ready or start_soc >= full_level:
             continue
         steps = build_steps(
-            now, load=load.wh, local_hour=local_hour, pv_forecast=forecast, pv_profile=None
+            now,
+            load=load.wh,
+            local_hour=local_hour,
+            pv_forecast=scaled(buckets, forecast, soc, battery, now),
+            pv_profile=None,
         )
         if not steps:
             continue
-        settings = BatterySettings(
-            capacity_wh=battery.capacity_wh,
-            reserve_pct=battery.reserve_pct,
-            target_pct=battery.target_pct,
-            max_charge_w=max_charge_w(buckets, "battery_charge", until=now),
-        )
-        outlook = project(start_soc, settings, steps, forecast_used=True)
+        outlook = project(start_soc, learned(buckets, battery, now), steps, forecast_used=True)
         dusk = now + timedelta(hours=14)
         actual = soc.first_at_or_above(full_level, now, dusk)
         predicted = outlook.full_at if outlook.full_at and outlook.full_at <= dusk else None
@@ -403,7 +508,14 @@ def main() -> int:
     parser.add_argument("--morning", type=int, default=8, help="local hour mornings are projected")
     parser.add_argument("--since", help="ignore nights before this ISO date")
     parser.add_argument("--verbose", action="store_true", help="print every night")
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="replay as 0.28.0 did: no learned standby, no forecast scale",
+    )
     args = parser.parse_args()
+    global RAW  # noqa: PLW0603
+    RAW = args.raw
 
     data = replay.load(args.diagnostics)
     data = data.get("data", data)
@@ -451,11 +563,26 @@ def main() -> int:
             f"standby {standby:+.2f} points/hour"
         )
         print(f"assumed     {battery.capacity_wh * 0.92 / 100:.0f} Wh per point")
+    end = buckets[-1].start_utc + timedelta(hours=1)
+    if not RAW:
+        settings = learned(buckets, battery, end)
+        print(f"standby     {settings.standby_w:.0f} W learned over the last {PROFILE_DAYS} days")
 
     if forecast:
         lags = forecast_lag(buckets, forecast)
         shown = ", ".join(f"{lag:+d} h: r={r:.3f}" for lag, r in sorted(lags.items()))
         print(f"lag         {shown}")
+        if not RAW:
+            now_scaled = scaled(buckets, forecast, soc, battery, end)
+            first = next(iter(forecast))
+            if now_scaled is not forecast and forecast[first]:
+                factor = now_scaled[first] / forecast[first]
+                print(
+                    f"scale       forecast x {factor:.2f}, "
+                    f"learned over the last {PROFILE_DAYS} days"
+                )
+            else:
+                print("scale       none learned (too few hours with room in the battery)")
 
     nights, skipped = replay_nights(
         buckets, soc, forecast, battery=battery, zone=zone, evening=args.evening
@@ -515,6 +642,11 @@ def main() -> int:
         both = [(p, a) for _, p, a in mornings if p and a]
         print()
         print(f"mornings    {len(mornings)} projected at {args.morning}:00")
+        if args.verbose:
+            for now, p, a in mornings:
+                shown_p = f"{p.astimezone(zone):%H:%M}" if p else "  -  "
+                shown_a = f"{a.astimezone(zone):%H:%M}" if a else "  -  "
+                print(f"  {now.astimezone(zone):%m-%d}  full predicted {shown_p}  actual {shown_a}")
         if both:
             minutes = sorted((p - a).total_seconds() / 60 for p, a in both)
             median = minutes[len(minutes) // 2]
