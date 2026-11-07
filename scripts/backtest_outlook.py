@@ -52,7 +52,7 @@ from analysis.profile import (  # noqa: E402
     standby_w,
 )
 
-from tests.synth import replay  # noqa: E402
+from tests.synth import diagnostics  # noqa: E402
 
 #: Points further apart than this are not interpolated between: a charge level
 #: missing for longer is unknown, not a straight line.
@@ -545,9 +545,9 @@ def main() -> int:
     global RAW  # noqa: PLW0603
     RAW = args.raw
 
-    data = replay.load(args.diagnostics)
+    data = diagnostics.load(args.diagnostics)
     data = data.get("data", data)
-    buckets = replay.buckets_from(data["window"])
+    buckets = diagnostics.buckets_from(data["window"])
     options = (data.get("entry") or {}).get("options") or {}
 
     capacity = args.capacity or options.get("battery_capacity_kwh")

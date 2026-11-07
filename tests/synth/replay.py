@@ -13,39 +13,21 @@ behaviour the corpus turned out not to contain.
 
 from __future__ import annotations
 
-import json
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from analysis.model import (
     AnalysisRequest,
     Answer,
-    Bucket,
-    BucketSource,
     ChannelSpec,
     DeclaredTopology,
-    Quality,
     Role,
 )
 
-#: The reverse of `coordinator._QUALITY_CODE` / `_SOURCE_CODE`. Deliberately not
-#: imported from there: this module must stay importable with Home Assistant
-#: absent, and reading the codes out of the file being replayed would let a
-#: renamed code pass silently. A mismatch should fail here.
-_QUALITY = {
-    "O": Quality.OK,
-    "M": Quality.MISSING,
-    "R": Quality.RESET_SUSPECT,
-    "D": Quality.DERIVED_FROM_MEAN,
-    "S": Quality.STALE,
-}
+# The window reader lives on its own, so the battery outlook's backtest can use
+# it without importing anything of the engine's.
+from tests.synth.diagnostics import _QUALITY, _SOURCE, buckets_from, load
 
-_SOURCE = {
-    "i": BucketSource.OWN_INTEGRAL,
-    "s": BucketSource.LTS_SUM,
-    "m": BucketSource.LTS_MEAN,
-}
+__all__ = ["buckets_from", "load", "payload_from", "request_from", "specs_from"]
 
 _ROLES = {role.key: role for role in Role}
 
@@ -98,35 +80,6 @@ def payload_from(request: AnalysisRequest) -> dict[str, Any]:
             },
         }
     }
-
-
-def load(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def buckets_from(window: dict[str, Any]) -> tuple[Bucket, ...]:
-    """The `window` block of a diagnostics file, as buckets.
-
-    Raises rather than guessing on an unknown code. A file written by a version
-    whose codes have moved is not a file this can replay, and silently mapping
-    an unrecognised quality to OK would produce a confident wrong answer — the
-    exact failure this module exists to prevent.
-    """
-    keys: list[str] = window["keys"]
-    out: list[Bucket] = []
-    for start, seconds, values, quality, source in window["rows"]:
-        if len(quality) != len(keys) or len(source) != len(keys):
-            raise ValueError(f"{start}: {len(keys)} channels, {len(quality)}/{len(source)} codes")
-        out.append(
-            Bucket(
-                start_utc=datetime.fromisoformat(start),
-                seconds=seconds,
-                wh=dict(zip(keys, values, strict=True)),
-                quality={k: _QUALITY[c] for k, c in zip(keys, quality, strict=True)},
-                source={k: _SOURCE[c] for k, c in zip(keys, source, strict=True)},
-            )
-        )
-    return tuple(out)
 
 
 def specs_from(payload: dict[str, Any]) -> tuple[ChannelSpec, ...]:

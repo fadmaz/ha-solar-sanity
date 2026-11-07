@@ -21,14 +21,13 @@ import re
 
 import pytest
 
-from tests.analysis.test_invariants import TestNoCurrency
+from tests.analysis.test_purity import FORBIDDEN
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "solar_sanity"
 
-#: The one expression, borrowed rather than restated. A rule written down twice
-#: is a rule that gets loosened once.
-FORBIDDEN = TestNoCurrency.FORBIDDEN
+#: The one expression, borrowed rather than restated (``FORBIDDEN`` above). A
+#: rule written down twice is a rule that gets loosened once.
 
 
 def _copy_files() -> list[pathlib.Path]:
