@@ -18,6 +18,7 @@
  * two drift.
  */
 
+import { findInstallations, hasOutlook } from "./battery-model";
 import { isStatusEntity } from "./status-card";
 import type { HomeAssistant, LovelaceCardConfig } from "./types/hass";
 
@@ -41,12 +42,24 @@ export function installations(hass: HomeAssistant | undefined): string[] {
 export function buildCards(hass: HomeAssistant | undefined): LovelaceCardConfig[] {
   const found = installations(hass);
 
+  // The battery first wherever there is one: it is the card with something to
+  // say every evening. One per installation, each pinned to its device, when
+  // there is more than one, for the same reason as the status card below.
+  const batteries = findInstallations(hass).filter(hasOutlook);
+  const battery: LovelaceCardConfig[] =
+    batteries.length > 1
+      ? batteries.map((installation) => ({
+          type: "custom:solar-sanity-battery-card",
+          device_id: installation.deviceId,
+        }))
+      : batteries.map(() => ({ type: "custom:solar-sanity-battery-card" }));
+
   const status: LovelaceCardConfig[] =
     found.length > 1
       ? found.map((entity) => ({ type: "custom:solar-sanity-card", entity }))
       : [{ type: "custom:solar-sanity-card" }];
 
-  return [...status, { type: "custom:solar-sanity-forecast-card" }];
+  return [...battery, ...status, { type: "custom:solar-sanity-forecast-card" }];
 }
 
 /** Fills a view. Selected with `strategy: {type: "custom:solar-sanity"}`. */

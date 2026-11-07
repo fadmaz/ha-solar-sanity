@@ -46,6 +46,7 @@
       }
       main {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 16px;
         max-width: 560px;
       }
@@ -82,9 +83,52 @@
         state: kwh,
       }));
 
+      // A synthetic battery: 41% now, charging through the afternoon, down
+      // through the night to just above a 35% reserve, then the sun again.
+      const HOUR = 3_600_000;
+      const now = Date.now();
+      const top = Math.floor(now / HOUR) * HOUR;
+      const evening = top + 5 * HOUR;
+      const morning = top + 20 * HOUR;
+      const curve = (t) => {
+        if (t <= evening) return 41 + (74 - 41) * ((t - now) / (evening - now));
+        if (t <= morning) return 74 - (74 - 35.4) * ((t - evening) / (morning - evening));
+        return Math.min(35.4 + 8 * ((t - morning) / HOUR), 92);
+      };
+      const trajectory = [now, ...Array.from({ length: 36 }, (_, i) => top + (i + 1) * HOUR)].map(
+        (t) => ({ at: new Date(t).toISOString(), soc: Math.round(curve(t) * 10) / 10 }),
+      );
+      const iso = (t) => new Date(t).toISOString();
+      const outlook = {
+        "sensor.battery_full_at": ["battery_full_at", "unknown", { target_pct: 100 }],
+        "sensor.battery_reaches_reserve_at": ["battery_reserve_at", "unknown", { reserve_pct: 35 }],
+        "sensor.lowest_battery_before_sunrise": [
+          "battery_lowest_before_sunrise",
+          "35.4",
+          {
+            at: iso(morning),
+            night_from: iso(evening),
+            takeover_at: iso(morning),
+            soc_pct: 41,
+            reserve_pct: 35,
+            target_pct: 100,
+            production_from: "forecast: Forecast.Solar",
+            trajectory,
+          },
+        ],
+        "sensor.safe_average_load_tonight": ["safe_average_load", "0.76", { until: iso(morning) }],
+        "sensor.spare_solar": ["spare_solar", "1.8", { day_from: iso(now) }],
+      };
+      const states = {};
+      const entities = {};
+      for (const [id, [key, state, attributes]] of Object.entries(outlook)) {
+        states[id] = { entity_id: id, state, attributes, last_updated: "" };
+        entities[id] = { entity_id: id, platform: "solar_sanity", translation_key: key, device_id: "harness" };
+      }
+
       const hass = {
-        states: {},
-        entities: {},
+        states,
+        entities,
         config: { state: "RUNNING" },
         themes: { darkMode: params.get("theme") === "dark" },
         language: "en",
@@ -99,7 +143,10 @@
       window.harnessHass = hass;
 
       const cards = document.getElementById("cards");
-      for (const [title, type] of [["Forecast card", "solar-sanity-forecast-card"]]) {
+      for (const [title, type] of [
+        ["Battery card", "solar-sanity-battery-card"],
+        ["Forecast card", "solar-sanity-forecast-card"],
+      ]) {
         const heading = document.createElement("h1");
         heading.textContent = title;
         const card = document.createElement(type);

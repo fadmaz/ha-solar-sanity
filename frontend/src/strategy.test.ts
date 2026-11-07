@@ -44,6 +44,49 @@ describe("installations", () => {
   });
 });
 
+const outlookOf = (device: string) => ({
+  [`sensor.lowest_${device}`]: {
+    entity_id: `sensor.lowest_${device}`,
+    platform: "solar_sanity",
+    translation_key: "battery_lowest_before_sunrise",
+    device_id: device,
+  },
+});
+
+describe("buildCards with a battery outlook", () => {
+  it("puts the battery first, where there is one", () => {
+    const cards = buildCards({
+      ...hass([ours("sensor.solar_sanity_status")]),
+      entities: outlookOf("dev-a"),
+    } as HomeAssistant);
+
+    expect(cards.map((c) => c.type)).toEqual([
+      "custom:solar-sanity-battery-card",
+      "custom:solar-sanity-card",
+      "custom:solar-sanity-forecast-card",
+    ]);
+    expect(cards[0]!.device_id).toBeUndefined();
+  });
+
+  it("pins each battery card to its house when there are two", () => {
+    const cards = buildCards({
+      ...hass([]),
+      entities: { ...outlookOf("dev-b"), ...outlookOf("dev-a") },
+    } as HomeAssistant);
+
+    expect(cards.filter((c) => c.type === "custom:solar-sanity-battery-card").map((c) => c.device_id)).toEqual([
+      "dev-a",
+      "dev-b",
+    ]);
+  });
+
+  it("adds no battery card to a house without an outlook", () => {
+    const cards = buildCards(hass([ours("sensor.solar_sanity_status")]));
+
+    expect(cards.some((c) => c.type === "custom:solar-sanity-battery-card")).toBe(false);
+  });
+});
+
 describe("buildCards", () => {
   it("puts the verdict first", () => {
     // The forecast is what you look at when the verdict is boring. Putting it

@@ -6,19 +6,28 @@
  * `mode:` option on a single card never does.
  */
 
-// Imported for its registrations: both card editors. `getConfigElement` on
+// Imported for its registrations: the card editors. `getConfigElement` on
 // each card creates one by tag name, which only works once the module has run.
 import "./editors";
+import { SolarSanityBatteryCard } from "./battery-card";
 import { SolarSanityForecastCard } from "./forecast-card";
 import { SolarSanityCard } from "./status-card";
 // Imported for its registrations: two strategies and one dashboard entry.
 import "./strategy";
 import { VERSION } from "./types/hass";
 
-export { SolarSanityCard, SolarSanityForecastCard };
+export { SolarSanityBatteryCard, SolarSanityCard, SolarSanityForecastCard };
 
 window.customCards = window.customCards ?? [];
 window.customCards.push(
+  {
+    type: "solar-sanity-battery-card",
+    name: "Solar Sanity: battery",
+    description:
+      "When your battery will be full, how low it will go tonight, and how much the house can use until the sun is back.",
+    preview: true,
+    documentationURL: "https://github.com/fadmaz/ha-solar-sanity",
+  },
   {
     type: "solar-sanity-card",
     name: "Solar Sanity",
