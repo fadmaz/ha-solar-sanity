@@ -32,10 +32,13 @@ a time, from now to the end of the forecast:
 Beside them sits the **forecast archive**. Each selected solar forecast provider is recorded
 as it is issued, in two external statistic series: a rolling one, and a write-once day-ahead
 one. The day-ahead series is scored against what the roof produced
-(`forecast_bias_<provider>`, `expected_tomorrow_corrected`).
+(`forecast_bias_<provider>`), and the battery outlook learns its forecast scale from it.
+`expected_tomorrow_corrected` moves tomorrow by that scale, or by a stated score where there
+is no battery.
 
-A Lit card renders the outlook (`solar-sanity-battery-card`) and the archived day-ahead
-forecast (`solar-sanity-forecast-card`).
+A Lit card renders the outlook (`solar-sanity-battery-card`), and another renders tomorrow's
+current forecast from the rolling series, with what the roof is expected to make of it
+(`solar-sanity-forecast-card`).
 
 Two design rules shape everything:
 - **No answer is an unknown with a reason, never a guess.** A missing hour is never read as
@@ -154,7 +157,10 @@ because `CoordinatorEntity` writes only on a coordinator update and the refresh 
 - Unique ids are `f"{entry.entry_id}_{key}"`.
 - Sensors:
   - `expected_tomorrow` and `expected_tomorrow_corrected`, both `TOTAL`, so the forecast
-    is recorded;
+    is recorded. The corrected one corrects the provider the uncorrected one came from and
+    no other, by the learned forecast scale first and a stated score second
+    (`analysis.forecast.correction`), and says which in its attributes: `provider`,
+    `forecast_statistic_id`, `factor`, `basis`, `days`, or `reason` while unknown;
   - one `forecast_bias_<provider>` per configured provider, created because the provider is
     configured, not because a figure exists yet;
   - the five outlook sensors (see 1).
@@ -401,9 +407,17 @@ pushes two entries onto `window.customCards`: `solar-sanity-battery-card` and
 a subclass of the battery card, so dashboards built before 0.30.0 still render. It is not
 offered in the picker, and it ignores the old `entity:` setting.
 
-**`solar-sanity-forecast-card`** draws one SVG chart per provider of the archived day-ahead
-forecast, with a hidden screen-reader table. The table sits in a hidden wrapper, because a
-table ignores a 1-pixel width.
+**`solar-sanity-forecast-card`** draws one SVG chart per provider of tomorrow's forecast,
+with a hidden screen-reader table. The table sits in a hidden wrapper, because a table
+ignores a 1-pixel width. Providers are found by their day-ahead archive, whose metadata
+carries the name and whose id the `provider` option stores; the hours are read from the
+same provider's rolling archive, which for tomorrow is simply the forecast as it stands.
+Until 0.31.0 it drew the day-ahead rows, which for tomorrow are the first ones seen, about
+two days old: 48.2 kWh beside a sensor reading 34.6. "Never `latest`" is a rule for hours
+that have passed. Under each total, "From your roof" is that total times the `factor` of
+the one `expected_tomorrow_corrected` sensor naming the same rolling archive; nothing when
+none does, or when two installations do. It reads again every 30 minutes, keeping what is
+on screen meanwhile and through a failed refresh.
 
 **Editors** wrap Home Assistant's `<ha-form>`: a device picker filtered to the integration,
 and a provider picker read from `recorder/list_statistic_ids`.
@@ -420,7 +434,9 @@ the forecast card.
 | Trajectory, starting charge, reserve, target, night window | attributes of `battery_lowest_before_sunrise` |
 | Full and reserve times | the states of `battery_full_at` and `battery_reserve_at` |
 | Safe load, spare sun | the states of `safe_average_load` and `spare_solar`, with their `until` and `day_from` attributes |
-| Day-ahead forecast | `recorder/statistics_during_period` on `solar_sanity:dayahead_*` |
+| Forecast providers and their names | `recorder/list_statistic_ids`, the `solar_sanity:dayahead_*` ids |
+| Tomorrow's forecast | `recorder/statistics_during_period` on the matching `solar_sanity:forecast_*` ids |
+| What the roof makes of it | the `factor` and `days` attributes of `expected_tomorrow_corrected`, matched on `forecast_statistic_id` |
 
 ### 6.3 Build, serve, cache-bust
 
@@ -435,7 +451,7 @@ Vitest under happy-dom, tests beside the code. They cover:
 - discovery through the registry and the headline cases;
 - the chart geometry, and that every chart element is in the SVG namespace;
 - every card state, and the legacy tag;
-- the forecast card's latch and midnight roll;
+- the forecast card's latch, half-hourly refresh and midnight roll;
 - editor events escaping the shadow root.
 
 `bundle.smoke.test.ts` loads the built file and checks the registered tags, the picker

@@ -39,6 +39,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
 
 from ._local_time import local_day
+from .analysis.forecast import Correction, correction
 from .analysis.model import Bucket, BucketSource, ChannelSpec, Quality, Role
 from .battery_outlook import BatteryOutlook
 from .const import (
@@ -168,8 +169,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         self._suspect: set[str] = set()
         #: When sampling began, so a partial first hour is labelled honestly.
         self._first_sample_at: datetime | None = None
-        #: Latest forecast total for tomorrow, in kWh.
+        #: Latest forecast total for tomorrow, in kWh, and the provider it is
+        #: from. The corrected figure corrects this provider and no other.
         self._expected_tomorrow_kwh: float | None = None
+        self._expected_tomorrow_provider: str | None = None
         #: Each provider's latest forecast, in kWh per UTC hour, as the battery
         #: outlook reads it. Held in memory only: it is re-captured every thirty
         #: minutes, and the archive keeps the history.
@@ -633,6 +636,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         forecasts = await async_get_solar_forecasts(self.hass, entry_ids)
         written = 0
         tomorrow_kwh: float | None = None
+        tomorrow_provider: str | None = None
         points: dict[str, dict[datetime, float]] = {}
         for entry_id, payload in forecasts.items():
             provider = self.hass.config_entries.async_get_entry(entry_id)
@@ -653,8 +657,11 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             # this should prefer whichever provider has been most accurate here.
             if tomorrow_kwh is None:
                 tomorrow_kwh = self._sum_for_tomorrow(wh_hours)
+                if tomorrow_kwh is not None:
+                    tomorrow_provider = entry_id
 
         self._expected_tomorrow_kwh = tomorrow_kwh
+        self._expected_tomorrow_provider = tomorrow_provider
         if points:
             self.forecast_points = points
             self.forecast_captured_at = dt_util.utcnow()
@@ -906,31 +913,80 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
 
     # -- reporting ----------------------------------------------------------
 
+    def _tomorrow_correction(self) -> Correction | None:
+        """The correction for the provider tomorrow's figure came from.
+
+        That provider and no other. This once took the first provider with a
+        stated bias, whichever it was, and multiplied the *first* provider's
+        forecast by it: two installations' worth of providers could produce a
+        figure no provider issued and no scoring covered.
+
+        Which correction, and why the battery outlook's comes first, is
+        ``analysis.forecast.correction``'s to say. A bias computed but not
+        stated is never used: eleven days of arithmetic is not yet an answer,
+        and multiplying tomorrow by it would launder that distinction into a
+        number people plan around.
+        """
+        provider = self._expected_tomorrow_provider
+        if provider is None:
+            return None
+        learned = self.battery.scale_for(provider)
+        scored = next((s.bias for s in self.forecast_scores if s.entry_id == provider), None)
+        return correction(
+            None if learned is None else (learned.factor, learned.days),
+            None if scored is None else scored.reportable_pct,
+            0 if scored is None else scored.days,
+        )
+
     @property
     def expected_tomorrow_corrected_kwh(self) -> float | None:
-        """Tomorrow's forecast, adjusted by the provider's measured habit.
+        """Tomorrow's forecast, moved by what this roof has delivered against it.
 
-        ``None`` until there is a correction worth applying, and the decision
-        about *worth* is not made here. ``Bias`` separates the figure it
-        measured from the figure it will state, and only the second is used —
-        a bias computed from eleven days is real arithmetic and not yet an
-        answer, and multiplying tomorrow by it would launder that distinction
-        into a number people plan around.
-
-        One provider, deliberately. Averaging two forecasts and then correcting
-        the average produces a figure no provider issued and no scoring covers.
-        Where several are configured the first with a stateable bias is used, so
-        the number on the card always belongs to one named source.
+        ``None`` until there is a correction worth applying. On the reference
+        installation that was every day for a month: its forecast runs at about
+        twice what the roof delivers, but the gap grows with the size of the
+        day, so the scored bias was never stated, while the battery outlook had
+        learned 0.52 from the same archive within three days.
         """
         base = self.expected_tomorrow_kwh
-        if base is None:
+        found = self._tomorrow_correction()
+        if base is None or found is None:
             return None
+        return found.apply(base)
 
-        for score in self.forecast_scores:
-            percent = score.bias.reportable_pct
-            if percent:
-                return base * (1.0 + percent / 100.0)
-        return None
+    @property
+    def expected_tomorrow_corrected_attrs(self) -> dict[str, Any]:
+        """Which provider was corrected, by what, and on what evidence.
+
+        ``forecast_statistic_id`` is the rolling archive of the provider this
+        figure corrects: the forecast card matches its own panels on it, so it
+        can show the correction under the right provider.
+        """
+        provider = self._expected_tomorrow_provider
+        if provider is None:
+            return {"reason": "No forecast for tomorrow has been captured yet."}
+        entry = self.hass.config_entries.async_get_entry(provider)
+        attrs: dict[str, Any] = {
+            "provider": entry.title if entry is not None else provider,
+            "forecast_statistic_id": forecast_statistic_id(provider),
+        }
+        found = self._tomorrow_correction()
+        if found is not None:
+            attrs.update(factor=found.factor, basis=found.basis, days=found.days)
+            return attrs
+        if self.battery.configured:
+            attrs["reason"] = (
+                "The battery outlook has not learned this roof yet. It needs "
+                "three days with room in the battery."
+            )
+        else:
+            scored = next((s.bias for s in self.forecast_scores if s.entry_id == provider), None)
+            attrs["reason"] = (
+                scored.reason
+                if scored is not None and scored.reason
+                else "This provider has not been compared with the roof yet."
+            )
+        return attrs
 
     @property
     def expected_tomorrow_kwh(self) -> float | None:

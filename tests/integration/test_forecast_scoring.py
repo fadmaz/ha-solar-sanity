@@ -324,23 +324,31 @@ class TestTheSensorExistsBecauseAProviderDoes:
 
 
 class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
-    """The decision about *when* a bias is worth applying is not made here.
+    """Which correction tomorrow is moved by, and which provider it belongs to.
 
+    The decision about *when* a bias is worth applying is not made here.
     ``Bias`` separates the figure it measured from the figure it will state, and
     only the second is used. A bias computed from eleven days is real arithmetic
     and not yet an answer, and multiplying tomorrow by it would launder that
     distinction into a number people plan around.
+
+    The provider rule is: the one the uncorrected figure came from. Before
+    0.31.0 the first provider with a stated bias was used, whichever it was, and
+    multiplied the first provider's forecast.
     """
 
-    async def test_no_stateable_bias_means_no_corrected_figure(
+    async def test_no_correction_means_no_figure_and_says_why(
         self,
         hass: HomeAssistant,
         enable_custom_integrations: None,
         entry: MockConfigEntry,
     ) -> None:
         coordinator = await _coordinator(hass, entry)
+        coordinator._expected_tomorrow_kwh = 20.0
+        coordinator._expected_tomorrow_provider = "x"
 
         assert coordinator.expected_tomorrow_corrected_kwh is None
+        assert coordinator.expected_tomorrow_corrected_attrs.get("reason")
 
     async def test_a_stateable_bias_moves_tomorrow_by_exactly_it(
         self,
@@ -353,6 +361,7 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
 
         coordinator = await _coordinator(hass, entry)
         coordinator._expected_tomorrow_kwh = 20.0
+        coordinator._expected_tomorrow_provider = "x"
         coordinator.forecast_scores = (
             ProviderScore(
                 entry_id="x",
@@ -361,11 +370,33 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
             ),
         )
 
-        if coordinator.expected_tomorrow_kwh is None:
-            pytest.skip("no forecast to correct on this fixture")
-        assert coordinator.expected_tomorrow_corrected_kwh == pytest.approx(
-            coordinator.expected_tomorrow_kwh * 0.9
+        assert coordinator.expected_tomorrow_corrected_kwh == pytest.approx(18.0)
+        attrs = coordinator.expected_tomorrow_corrected_attrs
+        assert (attrs["factor"], attrs["basis"], attrs["days"]) == (0.9, "scored", 40)
+
+    async def test_another_providers_bias_is_never_applied(
+        self,
+        hass: HomeAssistant,
+        enable_custom_integrations: None,
+        entry: MockConfigEntry,
+    ) -> None:
+        """The regression. A figure built from one provider's forecast and
+        another's habit is a number no provider issued and no scoring covers."""
+        from custom_components.solar_sanity.analysis.forecast import Bias
+        from custom_components.solar_sanity.scoring import ProviderScore
+
+        coordinator = await _coordinator(hass, entry)
+        coordinator._expected_tomorrow_kwh = 20.0
+        coordinator._expected_tomorrow_provider = "x"
+        coordinator.forecast_scores = (
+            ProviderScore(
+                entry_id="y",
+                name="Other provider",
+                bias=Bias(days=40, value=-0.1, reportable_pct=-10),
+            ),
         )
+
+        assert coordinator.expected_tomorrow_corrected_kwh is None
 
     async def test_a_measured_but_unstateable_bias_is_not_applied(
         self,
@@ -379,6 +410,8 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
         from custom_components.solar_sanity.scoring import ProviderScore
 
         coordinator = await _coordinator(hass, entry)
+        coordinator._expected_tomorrow_kwh = 20.0
+        coordinator._expected_tomorrow_provider = "x"
         coordinator.forecast_scores = (
             ProviderScore(
                 entry_id="x",
@@ -388,6 +421,45 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
         )
 
         assert coordinator.expected_tomorrow_corrected_kwh is None
+
+    async def test_the_battery_outlooks_scale_wins_and_is_published(
+        self,
+        hass: HomeAssistant,
+        enable_custom_integrations: None,
+        entry: MockConfigEntry,
+    ) -> None:
+        """The reference installation: a month of unknown, because the bias was
+        never stated while the outlook had learned 0.52 from the same archive.
+        The card finds its panel by ``forecast_statistic_id``."""
+        from custom_components.solar_sanity.analysis.forecast import Bias
+        from custom_components.solar_sanity.analysis.profile import ForecastScale
+        from custom_components.solar_sanity.scoring import ProviderScore
+        from custom_components.solar_sanity.statistics_source import forecast_statistic_id
+
+        coordinator = await _coordinator(hass, entry)
+        coordinator._expected_tomorrow_kwh = 34.61
+        coordinator._expected_tomorrow_provider = "x"
+        coordinator.battery._scales = {"x": ForecastScale(factor=0.5213, hours=143, days=15)}
+        coordinator.forecast_scores = (
+            ProviderScore(
+                entry_id="x",
+                name="Provider",
+                bias=Bias(days=40, value=-0.1, reportable_pct=-10),
+            ),
+        )
+        coordinator.notify_live_entities()
+        await hass.async_block_till_done()
+
+        assert coordinator.expected_tomorrow_corrected_kwh == pytest.approx(18.0, abs=0.01)
+        state = next(
+            state
+            for state in hass.states.async_all("sensor")
+            if state.attributes.get("forecast_statistic_id") == forecast_statistic_id("x")
+        )
+        assert float(state.state) == pytest.approx(18.0, abs=0.01)
+        assert state.attributes["factor"] == 0.52
+        assert state.attributes["basis"] == "learned"
+        assert state.attributes["days"] == 15
 
 
 class TestTheRescoreService:

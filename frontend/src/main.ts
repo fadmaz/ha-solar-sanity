@@ -31,7 +31,7 @@ window.customCards.push(
     type: "solar-sanity-forecast-card",
     name: "Solar Sanity: tomorrow's forecast",
     description:
-      "What your forecast provider said a day ahead, kept as it was issued rather than as it was revised.",
+      "Tomorrow's solar forecast as it stands, and how much of it your roof is expected to deliver.",
     preview: true,
     documentationURL: "https://github.com/fadmaz/ha-solar-sanity",
   },

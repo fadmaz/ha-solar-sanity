@@ -365,3 +365,65 @@ def _snap(value: float) -> int:
     if snapped == 0:
         return -FORECAST_ROUNDING if points < 0 else FORECAST_ROUNDING
     return snapped
+
+
+#: Decimal places a correction factor is stated to. The same rounding as the
+#: battery outlook's ``forecast_scale`` attribute, so the two read alike, and the
+#: corrected figure is computed from the rounded factor so anyone can redo the
+#: multiplication from what the attributes say.
+CORRECTION_DECIMALS = 2
+
+
+@dataclass(frozen=True, slots=True)
+class Correction:
+    """What tomorrow's forecast is multiplied by, and where that came from.
+
+    ``basis`` is ``"learned"`` for the battery outlook's scale and ``"scored"``
+    for a stated bias; ``days`` is how many days it rests on.
+    """
+
+    factor: float
+    basis: str
+    days: int
+
+    def apply(self, kwh: float) -> float:
+        return round(kwh * self.factor, 2)
+
+
+def correction(
+    scale: tuple[float, int] | None,
+    bias_pct: int | None,
+    bias_days: int,
+) -> Correction | None:
+    """The one correction to apply to a provider's forecast, if there is one.
+
+    The battery outlook's learned scale first, then a stated bias, then nothing.
+
+    The scale comes first because it is the number the outlook already projects
+    with, so the corrected forecast and the battery sensors cannot disagree about
+    the same sun. It is also steadier: on a house with a battery it exists after
+    three days and stays, where a stated bias needs twenty-one and comes and goes
+    with the weather, and this figure is recorded as a statistic, where a source
+    that flips is a history graph that jumps for no reason.
+
+    The bias remains the correction for a house without a battery, which has no
+    scale. It is measured on whole days, so a house that cannot export, whose
+    production stops when the battery is full, usually never states one: the
+    reference installation's gap grows with the size of the day, and the scorer
+    refuses it.
+
+    What the scale does not know: it is learned only on hours the battery had
+    room. On a house that cannot export it overstates a day the battery fills,
+    because the forecast sun that day has nowhere to go. On the reference
+    installation that is 0.52 against a whole-day median of about 0.41.
+    """
+    if scale is not None:
+        factor, days = scale
+        return Correction(factor=round(factor, CORRECTION_DECIMALS), basis="learned", days=days)
+    if bias_pct is not None and bias_pct != 0:
+        return Correction(
+            factor=round(1.0 + bias_pct / 100.0, CORRECTION_DECIMALS),
+            basis="scored",
+            days=bias_days,
+        )
+    return None

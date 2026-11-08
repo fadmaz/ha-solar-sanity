@@ -1,22 +1,28 @@
 /**
- * Tomorrow's forecast, as it was issued rather than as it has been revised.
+ * Tomorrow's forecast as it stands, and what this roof is expected to make of it.
  *
- * The scope is deliberately narrow and will stay narrow until there is data to
- * widen it with. What this card shows is one curve: what a provider said a day
- * ahead about tomorrow, drawn from the archive the integration writes once per
- * hour at real lead time and never revises.
+ * One curve per provider: its latest forecast for tomorrow, read from the
+ * archive the integration rewrites on every capture. That is the same figure
+ * as the "Forecast tomorrow" sensor and the one the battery outlook projects
+ * with. Until 0.31.0 this card drew the day-ahead archive instead, whose rows
+ * for a day two days out are the first ones seen and never revised, and showed
+ * 48.2 kWh for a Monday the sensor beside it put at 34.6.
+ *
+ * Under each total, when the integration has one, a second figure: the same
+ * forecast moved by what this roof has delivered against that provider, read
+ * from the `expected_tomorrow_corrected` sensor's factor. Multiplied here, from
+ * the panel's own total, rather than copied from the sensor's state, because
+ * this card's "tomorrow" is the browser's day and the sensor's is Home
+ * Assistant's.
  *
  * What it does not show, and why:
  *
- *  - **Accuracy.** Nothing scores forecasts yet. A number here would have to be
- *    computed from the rolling archive, which holds the *latest* revision of
- *    every hour — so for any hour already past it holds a figure issued minutes
- *    after that hour ended. Scoring that flatters every provider equally and
- *    means nothing.
+ *  - **A score.** The day-ahead archive is what scoring reads, and the
+ *    `<provider> accuracy` sensor carries that figure and its reasons. A
+ *    second, shorter version of it here would only disagree with the first.
  *  - **Forecast against actual, as a shortfall.** On a system whose generation
  *    is measured before the inverter, or which exports through a meter nobody
- *    reads, the gap between a forecast and a sensor is not forecast error. Two
- *    lines and no third quantity.
+ *    reads, the gap between a forecast and a sensor is not forecast error.
  *  - **Anything in currency.** Never, anywhere in this product.
  */
 
@@ -25,8 +31,9 @@ import { customElement, property, state } from "lit/decorators.js";
 
 import { areaPath, hourLabels, linePath, niceTicks, round, scaleLinear } from "./chart";
 import {
-  loadDayAhead,
+  loadCurrentForecast,
   peak,
+  roofFactor,
   tomorrow,
   total,
   type Hour,
@@ -50,6 +57,16 @@ import type {
  */
 const RETRY_AFTER_MS = 5 * 60_000;
 
+/**
+ * How long a forecast on screen is kept before it is read again.
+ *
+ * The integration captures every thirty minutes (`FORECAST_CAPTURE_INTERVAL`)
+ * and the provider revises tomorrow through the day. Reading only once a day,
+ * as this card did while it drew a series that never changes, would let a wall
+ * tablet drift from the sensor beside it by the evening.
+ */
+const REFRESH_AFTER_MS = 30 * 60_000;
+
 const WIDTH = 600;
 const HEIGHT = 180;
 const PAD_START = 34;
@@ -63,6 +80,8 @@ interface ForecastCardConfig extends LovelaceCardConfig {
 
 interface Panel {
   label: string;
+  /** The archive the hours came from, which the roof figure is matched on. */
+  latestId: string;
   hours: Hour[];
   kwh: number;
   line: string;
@@ -83,6 +102,7 @@ export function buildPanel(day: ProviderDay): Panel {
 
   return {
     label: day.label,
+    latestId: day.latestId,
     hours,
     kwh: total(hours),
     line: linePath(points),
@@ -109,6 +129,8 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   private _failedAt = 0;
   /** A load in progress, so a burst of hass updates does not start five. */
   private _inflight?: Promise<void>;
+  /** When what is on screen was read, so it can be read again. */
+  private _loadedAt = 0;
 
   public setConfig(config: ForecastCardConfig): void {
     // Authoring errors only. Anything the data might do at runtime is a
@@ -182,7 +204,11 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
     // Nothing to ask until the recorder can answer.
     if (this.hass.config.state !== "RUNNING") return;
 
-    if (this._days === undefined && !this._failed && !this._inflight) {
+    if (this._inflight) return;
+    if (this._days === undefined) {
+      if (!this._failed) void this._load();
+    } else if (Date.now() - this._loadedAt > REFRESH_AFTER_MS) {
+      // What is on screen stays there while it is read again.
       void this._load();
     }
   }
@@ -198,7 +224,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   private async _loadOnce(day: Date): Promise<void> {
     if (!this.hass) return;
     try {
-      const days = await loadDayAhead(this.hass, day);
+      const days = await loadCurrentForecast(this.hass, day);
       // The day may have moved while this was in flight. A request started at
       // 23:59:59 answers about the day that has just become today, and
       // publishing it would leave the card showing yesterday's forecast under
@@ -208,8 +234,16 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       this._days = this._config?.provider
         ? days.filter((d) => d.statisticId === this._config!.provider)
         : days;
+      this._loadedAt = Date.now();
       this._failedDuring = undefined;
     } catch {
+      // A failed refresh leaves what is already on screen alone: half an hour
+      // old is still the forecast, and a blip should not replace it with an
+      // apology. It is tried again after the same interval.
+      if (this._days !== undefined) {
+        this._loadedAt = Date.now();
+        return;
+      }
       // The recorder can be disabled, and a card is not the place to explain a
       // stack trace. What the reader needs is one sentence and no red box.
       this._failed = true;
@@ -246,8 +280,8 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
 
     if (withData.length === 0) {
       return this._note(
-        "This record starts today",
-        "Nothing was forecast for tomorrow far enough ahead to count yet. An hour is kept once it is at least twelve hours away, so tomorrow fills in through the evening.",
+        "No forecast for tomorrow yet",
+        "Solar Sanity records each provider's forecast every half hour, so tomorrow appears with the next one the provider publishes.",
       );
     }
 
@@ -260,8 +294,9 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
           </header>
           ${withData.map((panel) => this._panel(panel))}
           <p class="footnote">
-            What was forecast a day ahead. Scoring it against what actually
-            happens needs a completed day first.
+            The provider's latest forecast, which it revises through the day.
+            What was forecast a day ahead is kept separately, to compare with
+            what happens.
           </p>
         </div>
       </ha-card>
@@ -303,6 +338,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
           <span class="provider">${panel.label}</span>
           <span class="total"><bdi>${panel.kwh.toFixed(1)} kWh</bdi></span>
         </div>
+        ${this._roof(panel)}
         <svg
           class="chart"
           viewBox="0 0 ${WIDTH} ${HEIGHT}"
@@ -341,6 +377,26 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
         </table>
         </div>
       </section>
+    `;
+  }
+
+  /**
+   * What this roof is expected to make of the forecast, when the integration
+   * has learned it. Nothing at all otherwise: an empty row would read as zero.
+   */
+  private _roof(panel: Panel): TemplateResult | typeof nothing {
+    const roof = roofFactor(this.hass, panel.latestId);
+    if (!roof) return nothing;
+    const share = Math.round(roof.factor * 100);
+    const over = roof.days ? ` over the last ${roof.days} days` : "";
+    return html`
+      <div class="heading roof">
+        <span class="provider">From your roof</span>
+        <span class="expect"><bdi>≈ ${(panel.kwh * roof.factor).toFixed(1)} kWh</bdi></span>
+      </div>
+      <p class="why">
+        Your roof has delivered about <bdi>${share}%</bdi> of this forecast${over}.
+      </p>
     `;
   }
 
@@ -403,11 +459,22 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       color: var(--secondary-text-color);
       font-size: var(--ha-font-size-m, 0.875rem);
     }
-    .total {
+    .total,
+    .expect {
       color: var(--primary-text-color);
       font-size: var(--ha-font-size-l, 1rem);
       font-weight: var(--ha-font-weight-medium, 500);
       font-variant-numeric: tabular-nums;
+    }
+    .expect {
+      font-size: var(--ha-font-size-m, 0.875rem);
+    }
+    .why {
+      margin: 0;
+      color: var(--secondary-text-color);
+      font-size: var(--ha-font-size-s, 0.75rem);
+      line-height: 1.45;
+      text-align: start;
     }
     .chart {
       width: 100%;

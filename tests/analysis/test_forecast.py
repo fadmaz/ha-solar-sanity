@@ -23,6 +23,7 @@ from analysis.forecast import (
     MEAN_TOLERANCE_FACTOR,
     ForecastDay,
     build_days,
+    correction,
     eligible,
     estimate,
 )
@@ -390,3 +391,41 @@ class TestDeterminism:
         second = estimate(paired(40, factor=0.8, jitter=0.05))
 
         assert first == second
+
+
+class TestTheCorrectionForTomorrow:
+    """Which correction tomorrow's forecast is moved by.
+
+    Written after the reference installation's dashboard showed "Expected
+    tomorrow (corrected)" as unknown for a month: its scored bias was measured
+    (29 days, -0.59) but never stated, because the gap grew with the size of the
+    day, while the battery outlook had learned 0.52 from the same archive.
+    """
+
+    def test_the_learned_scale_wins_over_a_stated_bias(self) -> None:
+        found = correction((0.5213, 15), -40, 30)
+
+        assert found is not None
+        assert (found.factor, found.basis, found.days) == (0.52, "learned", 15)
+
+    def test_a_stated_bias_is_used_when_nothing_was_learned(self) -> None:
+        """A house without a battery has no scale, and this is its only route."""
+        found = correction(None, -10, 40)
+
+        assert found is not None
+        assert (found.factor, found.basis, found.days) == (0.9, "scored", 40)
+
+    def test_a_bias_that_was_not_stated_is_not_applied(self) -> None:
+        assert correction(None, None, 11) is None
+
+    def test_nothing_learned_and_nothing_stated_is_no_correction(self) -> None:
+        assert correction(None, None, 0) is None
+
+    def test_the_figure_is_computed_from_the_factor_as_stated(self) -> None:
+        """Anyone can redo the multiplication from the attributes: the owner's
+        34.61 kWh at a learned 0.5213 is shown as 0.52, and gives 18.0."""
+        found = correction((0.5213, 15), None, 0)
+
+        assert found is not None
+        assert found.apply(34.61) == pytest.approx(round(34.61 * 0.52, 2))
+        assert found.apply(34.61) == pytest.approx(18.0, abs=0.01)

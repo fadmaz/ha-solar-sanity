@@ -1,14 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildPanel, SolarSanityForecastCard } from "./forecast-card";
-import { DAYAHEAD_PREFIX, type ProviderDay, tomorrow } from "./forecast-data";
+import { DAYAHEAD_PREFIX, FORECAST_PREFIX, type ProviderDay, tomorrow } from "./forecast-data";
 import type { HomeAssistant } from "./types/hass";
 
 const ID = `${DAYAHEAD_PREFIX}01ABC`;
+const LATEST = `${FORECAST_PREFIX}01ABC`;
+
+/** Hours of tomorrow from 08:00, on the same clock the card reads. */
+function tomorrowRows(values: number[]) {
+  const target = tomorrow(new Date());
+  return values.map((state, index) => ({
+    start: new Date(target.getFullYear(), target.getMonth(), target.getDate(), 8 + index).getTime(),
+    state,
+  }));
+}
+
+/** The reference installation's Monday: 34.61 kWh now, 48.2 when first seen. */
+const CURRENT = [2, 5, 8, 8, 7, 4.61];
+const FIRST_SEEN = [4, 8, 10, 10, 9, 7.2];
 
 function day(kwh: number[], label = "Forecast.Solar"): ProviderDay {
   return {
     statisticId: ID,
+    latestId: LATEST,
     label,
     hours: kwh.map((value, index) => ({
       start: new Date(2026, 7, 29, index),
@@ -132,7 +147,7 @@ describe("the card", () => {
     } as unknown as Partial<HomeAssistant>);
 
     const rendered = await text();
-    expect(rendered).toContain("This record starts today");
+    expect(rendered).toContain("No forecast for tomorrow yet");
     expect(rendered).not.toContain("No solar forecast to keep");
   });
 
@@ -166,7 +181,7 @@ describe("the card", () => {
         Promise.resolve(
           msg.type === "recorder/list_statistic_ids"
             ? [{ statistic_id: ID, name: "Forecast.Solar forecast, a day ahead" }]
-            : { [ID]: rows },
+            : { [LATEST]: rows },
         ),
       ),
     } as unknown as Partial<HomeAssistant>);
@@ -184,6 +199,82 @@ describe("the card", () => {
     for (const element of drawn) {
       expect(element.namespaceURI).toBe("http://www.w3.org/2000/svg");
     }
+  });
+
+  it("shows tomorrow as it is forecast now, not as it was first seen", async () => {
+    // The reference installation's card said 48.2 kWh for a Monday while the
+    // "Forecast tomorrow" sensor beside it said 34.6: the day-ahead rows for a
+    // day two days out are the first ones seen, and are never revised.
+    card.hass = hass({
+      callWS: vi.fn((msg: { type: string }) =>
+        Promise.resolve(
+          msg.type === "recorder/list_statistic_ids"
+            ? [{ statistic_id: ID, name: "Forecast.Solar forecast, a day ahead" }]
+            : { [ID]: tomorrowRows(FIRST_SEEN), [LATEST]: tomorrowRows(CURRENT) },
+        ),
+      ),
+    } as unknown as Partial<HomeAssistant>);
+
+    const rendered = await text();
+    expect(rendered).toContain("34.6 kWh");
+    expect(rendered).not.toContain("48.2");
+  });
+
+  const corrected = (state: string, attributes: Record<string, unknown>, id = "sensor.c") => ({
+    entities: {
+      [id]: {
+        entity_id: id,
+        platform: "solar_sanity",
+        translation_key: "expected_tomorrow_corrected",
+      },
+    },
+    states: { [id]: { entity_id: id, state, attributes, last_updated: "" } },
+  });
+
+  const withForecast = (extra: Record<string, unknown>) =>
+    hass({
+      ...extra,
+      callWS: vi.fn((msg: { type: string }) =>
+        Promise.resolve(
+          msg.type === "recorder/list_statistic_ids"
+            ? [{ statistic_id: ID, name: "Forecast.Solar forecast, a day ahead" }]
+            : { [LATEST]: tomorrowRows(CURRENT) },
+        ),
+      ),
+    } as unknown as Partial<HomeAssistant>);
+
+  it("says what the roof is expected to make of it, from the learned factor", async () => {
+    // 34.61 x 0.52, multiplied here from the panel's own total.
+    card.hass = withForecast(
+      corrected("18.0", { forecast_statistic_id: LATEST, factor: 0.52, days: 15 }),
+    );
+
+    const rendered = await text();
+    expect(rendered).toContain("From your roof");
+    expect(rendered).toContain("18.0 kWh");
+    expect(rendered).toContain("52%");
+    expect(rendered).toContain("15 days");
+  });
+
+  it("leaves the roof out while there is nothing learned", async () => {
+    card.hass = withForecast(
+      corrected("unknown", { forecast_statistic_id: LATEST, reason: "Not learned yet." }),
+    );
+
+    const rendered = await text();
+    expect(rendered).toContain("34.6 kWh");
+    expect(rendered).not.toContain("From your roof");
+  });
+
+  it("leaves the roof out when two installations disagree about it", async () => {
+    const one = corrected("18.0", { forecast_statistic_id: LATEST, factor: 0.52 }, "sensor.a");
+    const two = corrected("25.0", { forecast_statistic_id: LATEST, factor: 0.72 }, "sensor.b");
+    card.hass = withForecast({
+      entities: { ...one.entities, ...two.entities },
+      states: { ...one.states, ...two.states },
+    });
+
+    expect(await text()).not.toContain("From your roof");
   });
 
   it("never claims an accuracy it has not measured", async () => {
@@ -336,7 +427,64 @@ describe("staying honest over time", () => {
     await settle(card);
 
     const heading = card.shadowRoot?.querySelector("h2")?.textContent?.trim();
-    expect(["Tomorrow", "Today", "Forecast", "This record starts today"]).toContain(heading);
+    expect(["Tomorrow", "Today", "Forecast", "No forecast for tomorrow yet"]).toContain(heading);
+  });
+
+  it("reads the forecast again every half hour, and keeps it on screen meanwhile", async () => {
+    // It used to read once a day, which was right for a series that is never
+    // revised and wrong for one the provider revises all day: a wall tablet
+    // would drift from the sensor beside it by the evening. A refresh that
+    // fails keeps what is shown rather than replacing it with an apology.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 8, 10, 0));
+    try {
+      const calls: string[] = [];
+      let refuse = false;
+      const card = document.createElement("solar-sanity-forecast-card") as SolarSanityForecastCard;
+      card.setConfig({ type: "custom:solar-sanity-forecast-card" });
+      document.body.append(card);
+      const make = () =>
+        ({
+          states: {},
+          config: { state: "RUNNING" },
+          language: "en",
+          callWS: vi.fn((msg: { type: string }) => {
+            calls.push(msg.type);
+            if (refuse) return Promise.reject(new Error("websocket blip"));
+            return Promise.resolve(
+              msg.type === "recorder/list_statistic_ids"
+                ? [{ statistic_id: ID2 }]
+                : { [LATEST]: tomorrowRows(CURRENT) },
+            );
+          }),
+        }) as unknown as HomeAssistant;
+      const step = async () => {
+        await card.updateComplete;
+        await vi.advanceTimersByTimeAsync(1);
+        await card.updateComplete;
+      };
+      const asked = () => calls.filter((c) => c === "recorder/list_statistic_ids").length;
+
+      card.hass = make();
+      await step();
+      expect(card.shadowRoot?.textContent ?? "").toContain("34.6 kWh");
+      expect(asked()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      card.hass = make();
+      await step();
+      expect(asked()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(25 * 60_000);
+      refuse = true;
+      card.hass = make();
+      await step();
+      expect(asked()).toBe(2);
+      expect(card.shadowRoot?.textContent ?? "").toContain("34.6 kWh");
+      expect(card.shadowRoot?.textContent ?? "").not.toContain("Cannot read the record");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reloads when the day moves under it", async () => {

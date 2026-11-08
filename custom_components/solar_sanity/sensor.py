@@ -59,7 +59,8 @@ SENSORS: tuple[SolarSanitySensorDescription, ...] = (
     ),
     # `state_class: TOTAL` for the same reason as the uncorrected figure above:
     # a forecast nobody records is a forecast nobody can score, and this one is
-    # the better of the two to keep.
+    # the better of the two to keep. The attributes say which provider it
+    # corrects and by what, and the forecast card reads the factor from them.
     SolarSanitySensorDescription(
         key="expected_tomorrow_corrected",
         translation_key="expected_tomorrow_corrected",
@@ -68,6 +69,7 @@ SENSORS: tuple[SolarSanitySensorDescription, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         state_class=SensorStateClass.TOTAL,
         value_fn=lambda coordinator: coordinator.expected_tomorrow_corrected_kwh,
+        attrs_fn=lambda coordinator: coordinator.expected_tomorrow_corrected_attrs,
     ),
 )
 
