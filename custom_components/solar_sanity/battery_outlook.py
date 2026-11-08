@@ -169,6 +169,14 @@ class BatteryOutlook:
     def configured(self) -> bool:
         return self.settings is not None
 
+    def scale_for(self, provider_entry_id: str) -> ForecastScale | None:
+        """The learned scale for one provider, or ``None`` before there is one.
+
+        Read by the corrected tomorrow forecast, so that figure uses the same
+        correction this projection does rather than a second opinion.
+        """
+        return self._scales.get(provider_entry_id)
+
     @callback
     def async_track(self) -> Callable[[], None]:
         """Recompute soon after the charge level changes.
