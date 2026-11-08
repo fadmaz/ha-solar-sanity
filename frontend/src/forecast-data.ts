@@ -1,23 +1,53 @@
 /**
- * Reading the day-ahead forecast archive, without a bespoke API.
+ * Reading the forecast archives, without a bespoke API.
  *
- * The archive is written as Home Assistant *external statistics*, which means
- * Home Assistant's own `recorder/list_statistic_ids` and
- * `recorder/statistics_during_period` can already read it — both of them
- * non-admin, both of them stable. The integration needs no WebSocket command of
- * its own, and this card needs no version handshake with it.
+ * Each provider has two archives, written as Home Assistant *external
+ * statistics*, so Home Assistant's own `recorder/list_statistic_ids` and
+ * `recorder/statistics_during_period` can already read them — both non-admin,
+ * both stable. The integration needs no WebSocket command of its own, and this
+ * card needs no version handshake with it.
+ *
+ *  - `solar_sanity:dayahead_<key>`: each hour as first seen at least twelve
+ *    hours ahead, and never revised. What scoring and learning read. It is
+ *    also how the providers are *found*: its metadata carries the provider's
+ *    name, and the card's `provider` option has always stored this id.
+ *  - `solar_sanity:forecast_<key>`: each hour's latest revision, rewritten on
+ *    every capture. What the card *draws*. For an hour that has passed it
+ *    holds a figure issued minutes before, which is why nothing grades
+ *    against it; for tomorrow, every hour of which is still to come, it is
+ *    simply the forecast as it stands. Until 0.31.0 the card drew the
+ *    day-ahead series instead and showed 48.2 kWh for a Monday whose current
+ *    forecast, on the sensor beside it, was 34.6: the day-ahead rows for a day
+ *    two days out are the first ones seen, about two days old.
  *
  * Only `state` is ever read. Each row's `state` is the kWh we wrote for that
  * hour; `sum` is a running total across a horizon that gets rewritten many
  * times a day, so differencing it says nothing about any hour.
  *
- * Everything here except `loadDayAhead` is pure, which is where the tests are.
+ * Everything here except `loadCurrentForecast` is pure, which is where the
+ * tests are.
  */
 
 import type { HomeAssistant } from "./types/hass";
 
 /** External statistic ids under this prefix hold what was forecast a day ahead. */
 export const DAYAHEAD_PREFIX = "solar_sanity:dayahead_";
+
+/** And under this one, each hour's latest revision. */
+export const FORECAST_PREFIX = "solar_sanity:forecast_";
+
+/** The integration this card's sensors belong to. */
+const PLATFORM = "solar_sanity";
+
+/** The sensor that says what this roof delivers against a provider's forecast. */
+const CORRECTED_KEY = "expected_tomorrow_corrected";
+
+/** The latest-revision archive belonging to a day-ahead one. */
+export function latestIdFor(dayAheadId: string): string {
+  return dayAheadId.startsWith(DAYAHEAD_PREFIX)
+    ? FORECAST_PREFIX + dayAheadId.slice(DAYAHEAD_PREFIX.length)
+    : dayAheadId;
+}
 
 /** The suffix the integration puts on its day-ahead metadata name. */
 const NAME_SUFFIX = " forecast, a day ahead";
@@ -109,19 +139,25 @@ export function peak(hours: readonly Hour[]): number {
 
 /** One provider's day. */
 export interface ProviderDay {
+  /** The day-ahead archive's id: how the provider is found and configured. */
   statisticId: string;
+  /** The latest-revision archive's id: where the hours were read from. */
+  latestId: string;
   label: string;
   hours: Hour[];
 }
 
 /**
- * Every day-ahead archive's forecast for one local day.
+ * Every provider's current forecast for one local day.
  *
  * Two round trips, both to Home Assistant's own commands. Returns an empty list
  * when there is no archive at all, which the card must distinguish from an
  * archive that holds nothing for this particular day.
  */
-export async function loadDayAhead(hass: HomeAssistant, day: Date): Promise<ProviderDay[]> {
+export async function loadCurrentForecast(
+  hass: HomeAssistant,
+  day: Date,
+): Promise<ProviderDay[]> {
   const all = await hass.callWS<ArchiveMeta[]>({
     type: "recorder/list_statistic_ids",
     statistic_type: "sum",
@@ -133,19 +169,57 @@ export async function loadDayAhead(hass: HomeAssistant, day: Date): Promise<Prov
   if (archives.length === 0) return [];
 
   const { start, end } = localDayBounds(day);
+  const latest = archives.map((meta) => latestIdFor(meta.statistic_id));
   const rows = await hass.callWS<Record<string, StatisticRow[]>>({
     type: "recorder/statistics_during_period",
     start_time: start.toISOString(),
     end_time: end.toISOString(),
-    statistic_ids: archives.map((meta) => meta.statistic_id),
+    statistic_ids: latest,
     period: "hour",
     types: ["state"],
     units: { energy: "kWh" },
   });
 
-  return archives.map((meta) => ({
+  return archives.map((meta, index) => ({
     statisticId: meta.statistic_id,
+    latestId: latest[index]!,
     label: providerLabel(meta),
-    hours: hoursOn(toHours(rows?.[meta.statistic_id]), day),
+    hours: hoursOn(toHours(rows?.[latest[index]!]), day),
   }));
+}
+
+/** What this roof has delivered against one provider's forecast. */
+export interface RoofFactor {
+  /** Multiplies the forecast; 0.52 means about half of it arrives. */
+  factor: number;
+  /** How many days that rests on. */
+  days?: number;
+}
+
+/**
+ * The factor the `expected_tomorrow_corrected` sensor applies to this
+ * provider, or nothing.
+ *
+ * Found through the entity registry, by integration and translation key, so a
+ * renamed entity is still found, and matched to the panel by the archive id the
+ * sensor names. Only an answer when exactly one sensor gives one: two Solar
+ * Sanity installations can share a provider and learn different factors, and
+ * picking either would put one house's roof under the other's forecast.
+ */
+export function roofFactor(
+  hass: HomeAssistant | undefined,
+  latestId: string,
+): RoofFactor | undefined {
+  const found: RoofFactor[] = [];
+  for (const entry of Object.values(hass?.entities ?? {})) {
+    if (entry.platform !== PLATFORM || entry.translation_key !== CORRECTED_KEY) continue;
+    const state = hass?.states[entry.entity_id];
+    if (!state || state.attributes.forecast_statistic_id !== latestId) continue;
+    if (!Number.isFinite(Number.parseFloat(state.state))) continue;
+    const factor = state.attributes.factor;
+    if (typeof factor !== "number" || !Number.isFinite(factor) || factor <= 0) continue;
+    const days = state.attributes.days;
+    found.push({ factor, days: typeof days === "number" ? days : undefined });
+  }
+  return found.length === 1 ? found[0] : undefined;
 }

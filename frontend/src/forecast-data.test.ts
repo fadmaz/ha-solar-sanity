@@ -3,18 +3,22 @@ import { describe, expect, it, vi } from "vitest";
 import type { HomeAssistant } from "./types/hass";
 import {
   DAYAHEAD_PREFIX,
+  FORECAST_PREFIX,
   dayAheadArchives,
   hoursOn,
-  loadDayAhead,
+  latestIdFor,
+  loadCurrentForecast,
   localDayBounds,
   peak,
   providerLabel,
+  roofFactor,
   toHours,
   tomorrow,
   total,
 } from "./forecast-data";
 
 const ID = `${DAYAHEAD_PREFIX}01ABC`;
+const LATEST = `${FORECAST_PREFIX}01ABC`;
 
 describe("dayAheadArchives", () => {
   it("keeps only the day-ahead archives", () => {
@@ -181,7 +185,7 @@ describe("total and peak", () => {
   });
 });
 
-describe("loadDayAhead", () => {
+describe("loadCurrentForecast", () => {
   const hass = (responses: Record<string, unknown>) =>
     ({
       callWS: vi.fn((msg: { type: string }) => Promise.resolve(responses[msg.type])),
@@ -192,11 +196,14 @@ describe("loadDayAhead", () => {
     // with an empty list is an error rather than an empty answer.
     const ha = hass({ "recorder/list_statistic_ids": [] });
 
-    expect(await loadDayAhead(ha, new Date(2026, 7, 29))).toEqual([]);
+    expect(await loadCurrentForecast(ha, new Date(2026, 7, 29))).toEqual([]);
     expect(ha.callWS).toHaveBeenCalledTimes(1);
   });
 
-  it("asks only for the day-ahead ids", async () => {
+  it("finds providers by their day-ahead archives and reads their latest ones", async () => {
+    // Tomorrow's day-ahead rows are the first ones seen, about two days old:
+    // the reference installation's card showed 48.2 kWh beside a sensor
+    // reading 34.6 for the same Monday.
     const ha = hass({
       "recorder/list_statistic_ids": [
         { statistic_id: ID, name: "Forecast.Solar forecast, a day ahead" },
@@ -205,11 +212,11 @@ describe("loadDayAhead", () => {
       "recorder/statistics_during_period": {},
     });
 
-    await loadDayAhead(ha, new Date(2026, 7, 29));
+    await loadCurrentForecast(ha, new Date(2026, 7, 29));
     const second = (ha.callWS as unknown as { mock: { calls: [{ statistic_ids: string[] }][] } })
       .mock.calls[1]![0];
 
-    expect(second.statistic_ids).toEqual([ID]);
+    expect(second.statistic_ids).toEqual([LATEST]);
   });
 
   it("reads state, by the hour, in kWh", async () => {
@@ -218,7 +225,7 @@ describe("loadDayAhead", () => {
       "recorder/statistics_during_period": {},
     });
 
-    await loadDayAhead(ha, new Date(2026, 7, 29));
+    await loadCurrentForecast(ha, new Date(2026, 7, 29));
     const second = (
       ha.callWS as unknown as {
         mock: { calls: [{ types: string[]; period: string; units: unknown }][] };
@@ -238,7 +245,7 @@ describe("loadDayAhead", () => {
       "recorder/statistics_during_period": {},
     });
 
-    const days = await loadDayAhead(ha, new Date(2026, 7, 29));
+    const days = await loadCurrentForecast(ha, new Date(2026, 7, 29));
 
     expect(days).toHaveLength(1);
     expect(days[0]!.label).toBe("X");
@@ -249,15 +256,95 @@ describe("loadDayAhead", () => {
     const ha = hass({
       "recorder/list_statistic_ids": [{ statistic_id: ID }],
       "recorder/statistics_during_period": {
-        [ID]: [
+        [LATEST]: [
           { start: new Date(2026, 7, 28, 12).getTime(), state: 9 },
           { start: new Date(2026, 7, 29, 12).getTime(), state: 4 },
         ],
       },
     });
 
-    const days = await loadDayAhead(ha, new Date(2026, 7, 29));
+    const days = await loadCurrentForecast(ha, new Date(2026, 7, 29));
 
     expect(days[0]!.hours.map((h) => h.kwh)).toEqual([4]);
+  });
+});
+
+describe("latestIdFor", () => {
+  it("names the latest-revision archive of the same provider", () => {
+    expect(latestIdFor(ID)).toBe(LATEST);
+  });
+
+  it("leaves an id it does not recognise alone", () => {
+    expect(latestIdFor("sensor.other")).toBe("sensor.other");
+  });
+});
+
+describe("loadCurrentForecast keeps the configured id", () => {
+  it("so a card set to one provider before 0.31.0 still finds it", async () => {
+    const ha = {
+      callWS: vi.fn((msg: { type: string }) =>
+        Promise.resolve(
+          msg.type === "recorder/list_statistic_ids"
+            ? [{ statistic_id: ID }]
+            : { [ID]: [{ start: new Date(2026, 7, 29, 12).getTime(), state: 48 }] },
+        ),
+      ),
+    } as unknown as HomeAssistant;
+
+    const days = await loadCurrentForecast(ha, new Date(2026, 7, 29));
+
+    expect(days[0]!.statisticId).toBe(ID);
+    expect(days[0]!.latestId).toBe(LATEST);
+    // The day-ahead rows are never drawn, even when the recorder sends them.
+    expect(days[0]!.hours).toEqual([]);
+  });
+});
+
+describe("roofFactor", () => {
+  const sensor = (state: string, attributes: Record<string, unknown>, id = "sensor.corrected") => ({
+    entities: {
+      [id]: {
+        entity_id: id,
+        platform: "solar_sanity",
+        translation_key: "expected_tomorrow_corrected",
+      },
+    },
+    states: { [id]: { entity_id: id, state, attributes, last_updated: "" } },
+  });
+
+  it("reads the factor the corrected sensor applied to this provider", () => {
+    const ha = sensor("18.0", { forecast_statistic_id: LATEST, factor: 0.52, days: 15 });
+
+    expect(roofFactor(ha as unknown as HomeAssistant, LATEST)).toEqual({ factor: 0.52, days: 15 });
+  });
+
+  it("says nothing for another provider", () => {
+    const ha = sensor("18.0", { forecast_statistic_id: `${FORECAST_PREFIX}other`, factor: 0.52 });
+
+    expect(roofFactor(ha as unknown as HomeAssistant, LATEST)).toBeUndefined();
+  });
+
+  it("says nothing while the sensor is unknown", () => {
+    const ha = sensor("unknown", { forecast_statistic_id: LATEST, reason: "Not learned yet." });
+
+    expect(roofFactor(ha as unknown as HomeAssistant, LATEST)).toBeUndefined();
+  });
+
+  it("says nothing when two installations disagree about one provider", () => {
+    const one = sensor("18.0", { forecast_statistic_id: LATEST, factor: 0.52 }, "sensor.a");
+    const two = sensor("25.0", { forecast_statistic_id: LATEST, factor: 0.72 }, "sensor.b");
+    const ha = {
+      entities: { ...one.entities, ...two.entities },
+      states: { ...one.states, ...two.states },
+    };
+
+    expect(roofFactor(ha as unknown as HomeAssistant, LATEST)).toBeUndefined();
+  });
+
+  it("ignores another integration's sensor with the same attributes", () => {
+    const ha = sensor("18.0", { forecast_statistic_id: LATEST, factor: 0.52 });
+    ha.entities["sensor.corrected"]!.platform = "other";
+
+    expect(roofFactor(ha as unknown as HomeAssistant, LATEST)).toBeUndefined();
   });
 });
