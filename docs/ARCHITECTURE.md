@@ -152,6 +152,12 @@ greps for it.
 `notify_live_entities` is `async_update_listeners`. It is how every sensor is rewritten,
 because `CoordinatorEntity` writes only on a coordinator update and the refresh is six-hourly.
 
+Every function handed to a timer or a listener is `async def` or `@callback`. Home Assistant
+runs anything else in a worker thread, where `async_write_ha_state` raises for a custom
+integration. The two ticks above were plain functions until 0.31.1: the outlook was computed
+every five minutes, and its sensors were written only at setup and by the six-hourly refresh.
+`tests/test_event_loop_callbacks.py` walks the source for it.
+
 ### 3.5 Entities and the honesty rules
 
 - Unique ids are `f"{entry.entry_id}_{key}"`.

@@ -45,7 +45,7 @@ nights, not projections; mean absolute lowest error at most 5 points; reserve ca
 least 85%) is the bar for any change to it.
 
 Without Home Assistant installed, `tests/integration` is not collected and nine test modules
-skip, silently. At 0.31.0 that is 237 tests locally, plus 152 card tests; CI adds the integration tier. Say in the PR when the HA tier did not run locally. The `Unknown config option:
+skip, silently. At 0.31.1 that is 242 tests locally, plus 152 card tests; CI adds the integration tier. Say in the PR when the HA tier did not run locally. The `Unknown config option:
 asyncio_mode` warning on such a machine is expected.
 
 ## Branch, commit, PR and release conventions
@@ -116,6 +116,11 @@ Tests that grep source text, so the failure names nothing near the edit:
 
 Traps whose error message points elsewhere:
 
+- A function given to `async_track_time_interval`, a state listener or the bus must be `async def`
+  or `@callback`. A plain `def` runs in a worker thread, where `async_write_ha_state` raises; the
+  error lands in the log as a future nobody awaited, and the sensors just stop moving. Both ticks
+  in `__init__.py` were plain until 0.31.1. `tests/test_event_loop_callbacks.py` walks the source,
+  and a test that calls a refresh by hand cannot see it: fire the timer instead.
 - In tests/integration request `recorder_mock` before `hass`, request `enable_custom_integrations`
   yourself, and call `entry.add_to_hass(hass)`. The wrong fixture order fails as a bare
   `assert not [True]`.

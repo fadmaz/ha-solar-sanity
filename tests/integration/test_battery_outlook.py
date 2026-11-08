@@ -18,12 +18,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.const import (
+    BUCKET_INTERVAL,
     CONF_FORECAST_ENTRIES,
     DOMAIN,
+    LIVE_INTERVAL,
     OPT_BATTERY_CAPACITY_KWH,
     OPT_BATTERY_RESERVE_PCT,
     OPT_BATTERY_SOC,
@@ -121,6 +123,54 @@ async def test_the_sensors_are_created_before_the_charge_level_exists(
     _refresh(entry)
     await hass.async_block_till_done()
     assert hass.states.get(lowest).state == "unavailable"
+
+
+async def test_the_thirty_second_tick_writes_the_sensors_itself(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry_data: dict[str, Any],
+) -> None:
+    """The tick, not a refresh called by hand as the test above does.
+
+    Until 0.31.1 the tick was a plain function, which Home Assistant runs in a
+    worker thread, and writing state from there raises for a custom
+    integration. The test above passed throughout, while on the reference
+    installation the sensors stayed unavailable after a restart beside a
+    projection computed minutes earlier.
+    """
+    entry = await _loaded(hass, MockConfigEntry(domain=DOMAIN, data=entry_data, options=BATTERY))
+    lowest = _entity_id(hass, entry, "battery_lowest_before_sunrise")
+    assert lowest is not None
+    assert hass.states.get(lowest).state == "unavailable"
+
+    hass.states.async_set(SOC, "64", {"unit_of_measurement": "%", "device_class": "battery"})
+    async_fire_time_changed(hass, dt_util.utcnow() + LIVE_INTERVAL + timedelta(seconds=1))
+    await hass.async_block_till_done()
+
+    state = hass.states.get(lowest)
+    assert state.state == "unknown"
+    assert state.attributes["soc_pct"] == 64.0
+
+
+async def test_the_five_minute_tick_recomputes_without_a_new_reading(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry_data: dict[str, Any],
+) -> None:
+    """A battery holding one level still has an evening that moves on. The
+    five-minute tick recomputes whether or not the charge level changed, and
+    what it computes has to reach the sensors, not only the diagnostics."""
+    hass.states.async_set(SOC, "64", {"unit_of_measurement": "%", "device_class": "battery"})
+    entry = await _loaded(hass, MockConfigEntry(domain=DOMAIN, data=entry_data, options=BATTERY))
+    lowest = _entity_id(hass, entry, "battery_lowest_before_sunrise")
+    assert lowest is not None
+    before = hass.states.get(lowest).attributes["computed_at"]
+    assert before
+
+    async_fire_time_changed(hass, dt_util.utcnow() + BUCKET_INTERVAL + timedelta(seconds=1))
+    await hass.async_block_till_done()
+
+    assert hass.states.get(lowest).attributes["computed_at"] != before
 
 
 async def test_a_week_of_history_gives_a_night_outlook(
