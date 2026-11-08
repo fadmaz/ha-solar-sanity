@@ -18,7 +18,7 @@ import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -124,6 +124,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     # The battery outlook's quick tick: it recomputes only when the charge level
     # has moved since the last projection, so a sensor that reports every
     # second costs nothing. The five-minute tick below recomputes regardless.
+    #
+    # Both ticks are callbacks, so they run on the event loop. A plain function
+    # given to a timer runs in a worker thread instead, where writing an
+    # entity's state raises: until 0.31.1 both ticks were plain, so the outlook
+    # was computed every five minutes and its sensors were written only at
+    # setup and by the six-hourly refresh. It also closed hours in that thread
+    # while the power integrator wrote the same buckets from the loop. One
+    # computation is 2.3 ms on the reference installation's 721 hours.
+    @callback
     def _tripwire(_now: Any) -> None:
         coordinator.battery.refresh()
         coordinator.notify_live_entities()
@@ -135,6 +144,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     entry.async_on_unload(coordinator.async_track_power())
     entry.async_on_unload(coordinator.battery.async_track())
 
+    @callback
     def _sample(_now: Any) -> None:
         coordinator.accumulate()
         coordinator.battery.refresh(force=True)

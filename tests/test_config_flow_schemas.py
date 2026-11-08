@@ -331,7 +331,14 @@ class TestLiveSensorsAreNotFrozen:
         assert callable(SolarSanityCoordinator.notify_live_entities)
 
     def test_the_sampling_tick_refreshes_entities(self) -> None:
-        """The 5-minute tick must both sample and push state."""
+        """The 5-minute tick must both sample and push state.
+
+        Naming the notifier is not enough, and this test passed while it never
+        ran: until 0.31.1 the tick was a plain function, so Home Assistant ran
+        it in a worker thread and the write raised there. Where it runs is
+        checked in test_event_loop_callbacks.py, and the tick is fired in
+        tests/integration/test_battery_outlook.py.
+        """
         import inspect
 
         from custom_components.solar_sanity import async_setup_entry
