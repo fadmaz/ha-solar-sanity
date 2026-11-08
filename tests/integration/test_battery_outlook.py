@@ -144,6 +144,10 @@ async def test_the_thirty_second_tick_writes_the_sensors_itself(
     assert hass.states.get(lowest).state == "unavailable"
 
     hass.states.async_set(SOC, "64", {"unit_of_measurement": "%", "device_class": "battery"})
+    # State listeners are dispatched one loop turn later (call_soon in
+    # _async_dispatch_entity_id_event_soon). Without this the tick fires before
+    # the listener has marked the projection stale, and skips it, as it should.
+    await hass.async_block_till_done()
     async_fire_time_changed(hass, dt_util.utcnow() + LIVE_INTERVAL + timedelta(seconds=1))
     await hass.async_block_till_done()
 
