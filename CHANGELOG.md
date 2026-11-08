@@ -2,6 +2,34 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.31.1] - 2026-11-08
+
+The battery outlook's sensors now follow the battery. They were being written
+only when Home Assistant started and once every six hours.
+
+### Fixed
+
+- **The battery outlook's sensors move every few minutes again, as intended.**
+  The outlook was recomputed every five minutes, but the timers that should
+  then have written its sensors ran in a background thread, and Home Assistant
+  refuses a state write from there. So "Battery full at", "Lowest battery
+  before sunrise", "Safe average load tonight", "Spare solar" and the battery
+  card changed only at a restart and once every six hours. After a restart on
+  the reference installation the card said the charge level was not reporting,
+  while the diagnostics held a projection computed minutes before. An earlier
+  fix for the same symptom, in 0.1.5, never took effect, for the same reason.
+- Hours were closed in that same background thread while live power readings
+  were added to the same hour from Home Assistant's own loop. Both now happen on
+  the loop, so the two can no longer interleave.
+
+### Notes
+
+- Your Home Assistant log may hold errors saying that `solar_sanity` "calls
+  async_write_ha_state from a thread other than the event loop", repeated about
+  twice a minute. They stop with this release.
+- The outlook sensors now record a new state roughly every five minutes, which
+  is what they were designed to do.
+
 ## [0.31.0] - 2026-11-08
 
 Tomorrow now has one number. The forecast card, the "Forecast tomorrow" sensor
