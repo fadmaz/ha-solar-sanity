@@ -45,7 +45,7 @@ nights, not projections; mean absolute lowest error at most 5 points; reserve ca
 least 85%) is the bar for any change to it.
 
 Without Home Assistant installed, `tests/integration` is not collected and nine test modules
-skip, silently. At 0.30.0 that is 232 tests locally, plus 139 card tests; CI adds the integration tier. Say in the PR when the HA tier did not run locally. The `Unknown config option:
+skip, silently. At 0.31.0 that is 237 tests locally, plus 152 card tests; CI adds the integration tier. Say in the PR when the HA tier did not run locally. The `Unknown config option:
 asyncio_mode` warning on such a machine is expected.
 
 ## Branch, commit, PR and release conventions
@@ -110,7 +110,9 @@ Tests that grep source text, so the failure names nothing near the edit:
   service goes in services.yaml and both string files.
 - Learn and grade from the `dayahead` forecast series, never `latest`: for an elapsed hour
   `latest` holds the day's last capture, which on the reference installation was clear-sky-like
-  rather than anything a projection saw.
+  rather than anything a projection saw. The rule is about hours that have passed: the
+  forecast card draws tomorrow from `latest` on purpose, because every hour of tomorrow is
+  still to come and `dayahead` holds its first sighting, about two days old.
 
 Traps whose error message points elsewhere:
 

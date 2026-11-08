@@ -2,6 +2,55 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.31.0] - 2026-11-08
+
+Tomorrow now has one number. The forecast card, the "Forecast tomorrow" sensor
+and the battery outlook all work from the provider's current forecast, and the
+corrected forecast finally says what your roof is expected to make of it.
+
+### Changed
+
+- **The forecast card shows tomorrow as it is forecast now.** It used to show
+  the first forecast recorded for that day, about two days old and never
+  updated. On the reference installation that meant 48.2 kWh on the card beside
+  34.6 kWh on the sensor for the same Monday. It now draws the same forecast as
+  the sensor, and reads it again every half hour.
+- **"Expected tomorrow (corrected)" uses what the battery outlook learned.**
+  When you have a battery, it is tomorrow's forecast multiplied by the factor
+  the outlook projects with: how much of that provider's forecast your roof has
+  delivered on hours the battery had room. Without a battery it still uses the
+  provider's stated accuracy. If your house already had a stated accuracy and a
+  battery, the figure moves to the learned factor.
+- The card's description in the picker now says what it shows.
+
+### Added
+
+- **"From your roof" on the forecast card**: tomorrow's forecast moved by that
+  same factor, with how many days it rests on. It appears once a factor has been
+  learned, usually within three days.
+- `expected_tomorrow_corrected` gains the attributes `provider`,
+  `forecast_statistic_id`, `factor`, `basis` (`learned` or `scored`) and `days`,
+  and a `reason` while it is unknown.
+
+### Fixed
+
+- "Expected tomorrow (corrected)" stayed unknown on houses whose forecast gap
+  grows on sunny days. On a house that cannot export, the battery fills and
+  production stops, so whole days never agree on one percentage, and the
+  provider's accuracy is never stated. The reference installation saw unknown
+  for a month.
+- With more than one forecast provider, the corrected figure could multiply one
+  provider's forecast by another provider's accuracy. It now corrects only the
+  provider "Forecast tomorrow" shows.
+
+### Notes
+
+- The learned factor counts only hours with room in the battery. On a house
+  that cannot export it reads high on a day the battery fills: on the reference
+  installation 0.52, against about 0.41 over whole days.
+- The `<provider> accuracy` sensor is unchanged, and still says unknown, with
+  its reason, when the gap is not one steady percentage.
+
 ## [0.30.0] - 2026-11-07
 
 Solar Sanity is now a battery outlook. The energy-balance check, which told you

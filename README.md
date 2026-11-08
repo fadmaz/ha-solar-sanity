@@ -148,9 +148,12 @@ version-matched.
 Times are in Home Assistant's time zone. It finds its sensors in the entity
 registry, so renaming them does not lose them.
 
-**Solar Sanity: tomorrow's forecast** shows what your provider said a day ahead
-about tomorrow, drawn from the immutable series above. It is hand-rolled inline
-SVG, so it re-themes with no JavaScript.
+**Solar Sanity: tomorrow's forecast** shows your provider's forecast for
+tomorrow as it stands now, the same figure as the "Forecast tomorrow" sensor.
+Once Solar Sanity has learned how much of that provider's forecast your roof
+actually delivers, it adds a second line, "From your roof", with tomorrow moved
+by that factor. It reads the forecast again every half hour. It is hand-rolled
+inline SVG, so it re-themes with no JavaScript.
 
 Neither takes any configuration. Drop one on a dashboard and it finds its own
 data. Each has an editor for when there is a second installation to choose
@@ -229,7 +232,7 @@ quietly corrupt a shared forecast archive.
 | `sensor.*_safe_average_load_tonight` | The steadiest load the house can draw until the sun takes over |
 | `sensor.*_spare_solar` | Sunshine the battery will have no room for. Needs a forecast provider |
 | `sensor.*_forecast_tomorrow` | Tomorrow's forecast, with a `state_class`, so it is actually recorded |
-| `sensor.*_expected_tomorrow_corrected` | The same figure moved by the bias measured against your own roof. Empty until there is a correction worth applying |
+| `sensor.*_expected_tomorrow_corrected` | The same figure moved by what your roof has delivered against that provider: the battery outlook's learned forecast scale when there is a battery, otherwise the provider's stated accuracy. Its attributes name the provider, the `factor`, its `basis` (`learned` or `scored`) and the `days` behind it, or a `reason` while it is unknown |
 | `sensor.*_<provider>_accuracy` | One per configured provider: how close it has been, signed so negative means less than promised. Unknown until it is earned |
 
 **Download diagnostics** on the device page carries everything the outlook was
