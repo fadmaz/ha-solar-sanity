@@ -9,10 +9,11 @@ settings form that writes one store while the code reads another.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -21,6 +22,7 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
+from custom_components.solar_sanity.analysis.profile import ForecastScale, ScaleDay
 from custom_components.solar_sanity.const import (
     BUCKET_INTERVAL,
     CONF_FORECAST_ENTRIES,
@@ -337,5 +339,71 @@ async def test_the_forecast_is_scaled_by_what_the_roof_delivered(
     full = hass.states.get(_entity_id(hass, entry, "battery_full_at"))
     assert lowest.attributes["forecast_scale"] == 0.5
     assert full.attributes["forecast_scale"] == 0.5
+    # Every day delivered half, so every kind of day is scaled by half.
+    assert lowest.attributes["forecast_scale_today"] == 0.5
+    assert lowest.attributes["forecast_scale_tomorrow"] == 0.5
     report = await async_get_config_entry_diagnostics(hass, entry)
     assert report["outlook"]["forecast_scale"]["factor"] == 0.5
+    assert report["outlook"]["forecast_scale"]["tomorrow"] == pytest.approx(0.5)
+    assert report["outlook"]["forecast_scale"]["by_day"]
+
+
+#: Two sunny days and two cloudy ones: a third of 16 kWh, and 0.9 of 4 kWh.
+MIXED = ForecastScale(
+    factor=0.4467,
+    hours=32,
+    days=4,
+    by_day=(
+        ScaleDay(16_000.0, 16_000.0, 16_000.0 / 3),
+        ScaleDay(16_000.0, 16_000.0, 16_000.0 / 3),
+        ScaleDay(4_000.0, 4_000.0, 3_600.0),
+        ScaleDay(4_000.0, 4_000.0, 3_600.0),
+    ),
+)
+
+
+async def test_today_is_judged_by_the_archive_for_the_hours_gone(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry_data: dict[str, Any],
+) -> None:
+    """0.32.0. Forecast.Solar rewrites a day's elapsed hours as the day goes
+    on: on the reference installation its last capture of every day from 4 to
+    8 November added up to a clear sky, 72-74 kWh, whatever the weather. Here
+    the morning was forecast a day ahead at 500 Wh an hour and the current
+    forecast has rewritten it to 2 kWh. Today is a 10 kWh day (four hours gone
+    at 500 Wh, four to come at 2 kWh), not a 16 kWh one; tomorrow, every hour
+    still to come, is the current forecast's 16 kWh, not the archive's 4."""
+    entry = await _loaded(hass, MockConfigEntry(domain=DOMAIN, data=entry_data, options=BATTERY))
+    coordinator = entry.runtime_data.coordinator
+    battery = coordinator.battery
+    zone = dt_util.get_time_zone(hass.config.time_zone)
+    today = dt_util.utcnow().astimezone(zone).date()
+    tomorrow = today + timedelta(days=1)
+
+    def at(day: date, hour: int) -> datetime:
+        return datetime.combine(day, time(hour), tzinfo=zone).astimezone(UTC)
+
+    battery._scales = {"provider": MIXED}
+    battery._dayahead = {
+        "provider": {at(day, h): 500.0 for day in (today, tomorrow) for h in range(8, 16)}
+    }
+    coordinator.forecast_points = {
+        "provider": {at(day, h): 2.0 for day in (today, tomorrow) for h in range(8, 16)}
+    }
+
+    factors = battery.day_factors("provider", at(today, 12))
+
+    assert factors[today] == pytest.approx(MIXED.for_day(10_000.0))
+    assert factors[today] != pytest.approx(MIXED.for_day(16_000.0))
+    assert factors[tomorrow] == pytest.approx(MIXED.for_day(16_000.0))
+    assert battery.tomorrow_factor("provider", at(today, 12)) == factors[tomorrow]
+
+    # The corrected figure for tomorrow is scaled the same way: a third, not
+    # the overall 0.45.
+    coordinator._expected_tomorrow_provider = "provider"
+    coordinator._expected_tomorrow_kwh = 16.0
+    attrs = coordinator.expected_tomorrow_corrected_attrs
+    assert attrs["factor"] == round(MIXED.for_day(16_000.0), 2) == 0.35
+    assert attrs["basis"] == "learned"
+    assert coordinator.expected_tomorrow_corrected_kwh == 5.6

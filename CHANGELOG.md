@@ -2,6 +2,54 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.32.0] - 2026-11-09
+
+The forecast is corrected by how far it misses on days like the one ahead,
+learned from your own roof, instead of by one average for every day.
+
+### Changed
+
+- **A sunny day and a cloudy one are no longer corrected by the same amount.**
+  Solar Sanity already learned how much of the forecast your roof really
+  delivers, from the last fortnight's hours with room in the battery. That was
+  one figure for every day. A forecast made for an ideal roof misses by very
+  different amounts on different days. Dirty panels, shading, or a provider set
+  up for the wrong roof show most in full sun. On the reference installation
+  the roof delivered about a third of a sunny day's forecast, and roughly all
+  of a cloudy one's. The single figure was 26% too optimistic on sunny days and
+  11% too pessimistic on cloudy ones.
+
+  Each day is now corrected by a factor learned mostly from the days whose
+  forecast looked like it. That cut the error to 8% and 6%. Hour by hour, the
+  error in expected production fell from 42% to 36%. Each day was graded on
+  what had been learned before it.
+- **"Expected tomorrow (corrected)" and the forecast card's "From your roof"
+  use tomorrow's factor.** For the reference installation's 61 kWh forecast for
+  10 November that is about 0.43, so about 26 kWh rather than 33. The card now
+  says the figure is for days forecast like this one.
+- **The battery outlook projects today and tomorrow with their own factors.**
+  Replayed over the reference installation's last month:
+  - Tonight's lowest charge: mean error 2.5 points instead of 2.7, and worst
+    9.0 instead of 12.3.
+  - The reserve was called right on 75 of 82 nights instead of 74.
+  - "Full at", on the mornings it was called right: a median of 1 minute late
+    instead of 81 minutes early.
+
+### Added
+
+- `forecast_scale_today` and `forecast_scale_tomorrow` attributes on "Battery
+  full at", "Lowest battery before sunrise" and "Spare solar". `forecast_scale`
+  stays the overall figure.
+- The diagnostics download lists each day the factor was learned from, so
+  either factor can be recomputed by hand.
+
+### Notes
+
+- A roof whose forecast is off by the same amount every day sees no change.
+- Today is judged by the forecast its passed hours had a day ahead, not by the
+  provider's later rewrite of them. Forecast.Solar's last capture of a day added
+  up to a clear sky, 72-74 kWh, whatever the weather had been.
+
 ## [0.31.2] - 2026-11-09
 
 "Battery full at" and "Battery reaches reserve at" no longer jump between

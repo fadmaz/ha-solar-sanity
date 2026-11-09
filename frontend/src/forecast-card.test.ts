@@ -254,6 +254,26 @@ describe("the card", () => {
     expect(rendered).toContain("18.0 kWh");
     expect(rendered).toContain("52%");
     expect(rendered).toContain("15 days");
+    expect(rendered).not.toContain("days forecast like this one");
+  });
+
+  it("says a learned factor is for days like this one", async () => {
+    // 0.32.0: the outlook's factor is learned mostly from days forecast like
+    // tomorrow, about a third on a sunny day and nearly all on a cloudy one on
+    // the reference installation, so "of this forecast" alone would overclaim.
+    card.hass = withForecast(
+      corrected("12.5", {
+        forecast_statistic_id: LATEST,
+        factor: 0.36,
+        days: 14,
+        basis: "learned",
+      }),
+    );
+
+    const rendered = await text();
+    expect(rendered).toContain("12.5 kWh");
+    expect(rendered).toContain("days forecast like this one");
+    expect(rendered).toContain("36%");
   });
 
   it("leaves the roof out while there is nothing learned", async () => {

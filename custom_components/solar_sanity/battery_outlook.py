@@ -17,7 +17,7 @@ import logging
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.core import HomeAssistant, State, callback
@@ -120,6 +120,10 @@ class OutlookState:
     max_charge_w: float | None = None
     standby_w: float | None = None
     scale: ForecastScale | None = None
+    #: The factor the forecast was multiplied by today and tomorrow, each
+    #: learned mostly from days forecast like it (``ForecastScale.for_day``).
+    scale_today: float | None = None
+    scale_tomorrow: float | None = None
     load_profile: tuple[float | None, ...] = ()
     pv_profile: tuple[float | None, ...] = ()
     settings: dict[str, float] = field(default_factory=dict)
@@ -166,6 +170,10 @@ class BatteryOutlook:
         self.state = OutlookState()
         self._dirty = True
         self._scales: dict[str, ForecastScale | None] = {}
+        #: Each provider's day-ahead archive, in Wh per UTC hour, from the last
+        #: learn. It says what kind of day today was expected to be for the
+        #: hours that have already passed.
+        self._dayahead: dict[str, dict[datetime, float]] = {}
         self._learned_hour: datetime | None = None
 
     @property
@@ -183,6 +191,48 @@ class BatteryOutlook:
         correction this projection does rather than a second opinion.
         """
         return self._scales.get(provider_entry_id)
+
+    def day_factors(self, provider_entry_id: str, now: datetime) -> dict[date, float]:
+        """The factor for today and for tomorrow, each by the day forecast.
+
+        Keyed by local date; empty before there is a scale. A day is judged by
+        its whole forecast, taking for each hour the freshest figure still
+        meaningful: the current forecast for an hour to come, the day-ahead
+        archive for an hour that has passed or that the current forecast does
+        not reach. Never the current forecast for a passed hour: Forecast.Solar
+        rewrites a day's elapsed hours as the day goes on, and on the reference
+        installation its last capture of every day from 4 to 8 November added
+        up to 72-74 kWh, a clear sky, whatever the weather had been. Judged by
+        that, a cloudy afternoon would be scaled as a sunny one.
+
+        Later days keep the overall factor. The projection reaches them only
+        before sunrise, and a total the forecast covers only partly would make
+        a sunny day look like a cloudy one.
+        """
+        scale = self._scales.get(provider_entry_id)
+        if scale is None:
+            return {}
+        day_of = _local_date(self.coordinator.time_zone)
+        today = day_of(now)
+        tomorrow = today + timedelta(days=1)
+        hour = now.replace(minute=0, second=0, microsecond=0)
+        current = self.coordinator.forecast_points.get(provider_entry_id) or {}
+        archived = self._dayahead.get(provider_entry_id) or {}
+        totals = {today: 0.0, tomorrow: 0.0}
+        for when in set(current) | set(archived):
+            day = day_of(when)
+            if day not in totals:
+                continue
+            if when >= hour and when in current:
+                totals[day] += current[when] * 1000.0
+            else:
+                totals[day] += archived.get(when, 0.0)
+        return {day: scale.for_day(total) for day, total in totals.items()}
+
+    def tomorrow_factor(self, provider_entry_id: str, now: datetime) -> float | None:
+        """``day_factors`` for tomorrow's local date, or ``None`` without a scale."""
+        tomorrow = _local_date(self.coordinator.time_zone)(now) + timedelta(days=1)
+        return self.day_factors(provider_entry_id, now).get(tomorrow)
 
     @callback
     def async_track(self) -> Callable[[], None]:
@@ -218,6 +268,7 @@ class BatteryOutlook:
         if self._learned_hour == hour:
             return
         start = hour - timedelta(days=PROFILE_DAYS)
+        day_of = _local_date(self.coordinator.time_zone)
         soc_max: dict[datetime, float] = {}
         for row in await async_hourly_soc(self.hass, entity_id, start, hour):
             when = dt_util.parse_datetime(str(row.get("start")))
@@ -227,23 +278,34 @@ class BatteryOutlook:
         if not soc_max:
             return
         scales: dict[str, ForecastScale | None] = {}
+        dayahead: dict[str, dict[datetime, float]] = {}
         for entry_id in self.coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or []:
+            # A day either side of the fortnight: each day learned from is
+            # judged by its whole forecast, so the first one must be whole,
+            # and today and tomorrow are judged from the same archive.
             series = await async_forecast_series(
-                self.hass, dayahead_statistic_id(entry_id), start, hour
+                self.hass,
+                dayahead_statistic_id(entry_id),
+                start - timedelta(days=1),
+                hour + timedelta(days=2),
             )
             if series is None:
                 scales[entry_id] = self._scales.get(entry_id)
+                dayahead[entry_id] = self._dayahead.get(entry_id) or {}
                 continue
+            dayahead[entry_id] = {when: kwh * 1000.0 for when, kwh in series.items()}
             scales[entry_id] = forecast_scale(
                 self.coordinator.buckets,
-                {when: kwh * 1000.0 for when, kwh in series.items()},
+                dayahead[entry_id],
                 soc_max=soc_max,
                 full_pct=settings.target_pct,
                 pv=Role.PV.key,
                 grid=Role.GRID_IMPORT.key,
                 until=hour,
+                day_of=day_of,
             )
         self._scales = scales
+        self._dayahead = dayahead
         self._learned_hour = hour
 
     def refresh(self, *, force: bool = False, now: datetime | None = None) -> None:
@@ -320,8 +382,11 @@ class BatteryOutlook:
             base.reason = "learning_consumption"
             return base
 
-        provider, forecast, scale = self._forecast(now)
+        provider, forecast, scale, factors = self._forecast(now)
         base.scale = scale
+        today = _local_date(coordinator.time_zone)(now)
+        base.scale_today = factors.get(today)
+        base.scale_tomorrow = factors.get(today + timedelta(days=1))
         if forecast is None and not pv.ready:
             base.reason = "no_production_expectation"
             return base
@@ -398,19 +463,20 @@ class BatteryOutlook:
 
     def _forecast(
         self, now: datetime
-    ) -> tuple[str | None, dict[datetime, float] | None, ForecastScale | None]:
+    ) -> tuple[str | None, dict[datetime, float] | None, ForecastScale | None, dict[date, float]]:
         """The first configured provider with a fresh forecast reaching past now.
 
         In Wh per UTC hour, scaled by what this roof has delivered against that
         provider's day-ahead forecast (see ``profile.forecast_scale``). The scale
         is learned only from hours the battery had room in, so an inverter that
         turns production down when the battery is full does not teach it that
-        the sun is weaker than it is. Unscaled until there is enough to learn
-        from.
+        the sun is weaker than it is. Today and tomorrow each take the factor
+        for the kind of day forecast (``day_factors``); a later day, the overall
+        one. Unscaled until there is enough to learn from.
         """
         captured = self.coordinator.forecast_captured_at
         if captured is None or now - captured > FORECAST_MAX_AGE:
-            return None, None, None
+            return None, None, None, {}
         hour = now.replace(minute=0, second=0, microsecond=0)
         points = self.coordinator.forecast_points
         for entry_id in self.coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or []:
@@ -419,13 +485,19 @@ class BatteryOutlook:
                 continue
             provider = self.hass.config_entries.async_get_entry(entry_id)
             scale = self._scales.get(entry_id)
-            factor = 1.0 if scale is None else scale.factor
+            overall = 1.0 if scale is None else scale.factor
+            factors = self.day_factors(entry_id, now)
+            day_of = _local_date(self.coordinator.time_zone)
             return (
                 provider.title if provider is not None else entry_id,
-                {when: kwh * 1000.0 * factor for when, kwh in series.items()},
+                {
+                    when: kwh * 1000.0 * factors.get(day_of(when), overall)
+                    for when, kwh in series.items()
+                },
                 scale,
+                factors,
             )
-        return None, None, None
+        return None, None, None, {}
 
     def _anchor(self, now: datetime) -> tuple[float, float] | None:
         """This hour's measured production and consumption, in W, if trustworthy."""
@@ -439,6 +511,13 @@ class BatteryOutlook:
 
 def _utc_hour(when: datetime) -> int:
     return when.hour
+
+
+def _local_date(tz: tzinfo | None) -> Callable[[datetime], date]:
+    """The local date of a UTC instant, or the UTC date when no zone resolves."""
+    if tz is None:
+        return lambda when: when.date()
+    return lambda when: when.astimezone(tz).date()
 
 
 def _local_hour(tz: tzinfo | None) -> Callable[[datetime], int]:

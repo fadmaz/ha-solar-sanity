@@ -34,7 +34,7 @@ import sys
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -324,6 +324,9 @@ def effective_wh_per_pct(
 #: standby and forecast scale, to compare.
 RAW = False
 
+#: Set from the command line: one factor for every day, as before 0.32.0.
+ONE_FACTOR = False
+
 
 def learned(buckets: Sequence[Bucket], battery: BatterySettings, now: datetime) -> BatterySettings:
     """The battery as the integration would have seen it at ``now``."""
@@ -354,24 +357,43 @@ def scaled(
     soc: SocSeries,
     battery: BatterySettings,
     now: datetime,
+    *,
+    zone: ZoneInfo | None = None,
 ) -> dict[datetime, float] | None:
-    """The forecast scaled as the integration would have scaled it at ``now``."""
+    """The forecast scaled as the integration would have scaled it at ``now``.
+
+    Each local day by its own factor, learned mostly from the days whose
+    forecast looked like it, as ``ForecastScale.for_day`` does. Here every
+    day's total is its day-ahead total; the integration takes the current
+    forecast for hours still to come, which this archive does not hold.
+    """
     if forecast is None or RAW:
         return forecast
     hour = now.replace(minute=0, second=0, microsecond=0)
     since = hour - timedelta(days=PROFILE_DAYS)
+
+    def day_of(when: datetime) -> date:
+        return when.astimezone(zone).date() if zone is not None else when.date()
+
     scale = forecast_scale(
         buckets,
-        {when: wh for when, wh in forecast.items() if since <= when < hour},
+        forecast,
         soc_max={when: level for when, level in soc.maxima.items() if since <= when < hour},
         full_pct=battery.target_pct,
         pv="pv",
         grid="grid_import",
         until=hour,
+        day_of=day_of,
     )
     if scale is None:
         return forecast
-    return {when: wh * scale.factor for when, wh in forecast.items()}
+    if ONE_FACTOR:
+        return {when: wh * scale.factor for when, wh in forecast.items()}
+    totals: dict[date, float] = {}
+    for when, wh in forecast.items():
+        totals[day_of(when)] = totals.get(day_of(when), 0.0) + wh
+    factors = {day: scale.for_day(total) for day, total in totals.items()}
+    return {when: wh * factors[day_of(when)] for when, wh in forecast.items()}
 
 
 def local_hour_of(zone: ZoneInfo) -> Callable[[datetime], int]:
@@ -416,7 +438,7 @@ def replay_nights(
             now,
             load=load.wh,
             local_hour=local_hour,
-            pv_forecast=scaled(buckets, forecast, soc, battery, now),
+            pv_forecast=scaled(buckets, forecast, soc, battery, now, zone=zone),
             pv_profile=None if forecast is not None else pv.wh,
         )
         if not steps:
@@ -479,7 +501,7 @@ def replay_mornings(
             now,
             load=load.wh,
             local_hour=local_hour,
-            pv_forecast=scaled(buckets, forecast, soc, battery, now),
+            pv_forecast=scaled(buckets, forecast, soc, battery, now, zone=zone),
             pv_profile=None,
         )
         if not steps:
@@ -541,9 +563,15 @@ def main() -> int:
         action="store_true",
         help="replay as 0.28.0 did: no learned standby, no forecast scale",
     )
+    parser.add_argument(
+        "--one-factor",
+        action="store_true",
+        help="scale every day by one factor, as before 0.32.0",
+    )
     args = parser.parse_args()
-    global RAW  # noqa: PLW0603
+    global RAW, ONE_FACTOR  # noqa: PLW0603
     RAW = args.raw
+    ONE_FACTOR = args.one_factor
 
     data = diagnostics.load(args.diagnostics)
     data = data.get("data", data)
@@ -608,12 +636,18 @@ def main() -> int:
         shown = ", ".join(f"{lag:+d} h: r={r:.3f}" for lag, r in sorted(lags.items()))
         print(f"lag         {shown}")
         if not RAW:
-            now_scaled = scaled(buckets, forecast, soc, battery, end)
-            first = next(iter(forecast))
-            if now_scaled is not forecast and forecast[first]:
-                factor = now_scaled[first] / forecast[first]
+            now_scaled = scaled(buckets, forecast, soc, battery, end, zone=zone)
+            today = end.astimezone(zone).date()
+            shown = []
+            for name, day in (("today", today), ("tomorrow", today + timedelta(days=1))):
+                hours = [
+                    w for w, wh in forecast.items() if wh > 0 and w.astimezone(zone).date() == day
+                ]
+                if now_scaled is not forecast and hours:
+                    shown.append(f"{now_scaled[hours[0]] / forecast[hours[0]]:.2f} {name}")
+            if shown:
                 print(
-                    f"scale       forecast x {factor:.2f}, "
+                    f"scale       forecast x {', '.join(shown)}, by the kind of day, "
                     f"learned over the last {PROFILE_DAYS} days"
                 )
             else:

@@ -84,18 +84,82 @@ MIN_SCALE_DAYS = 3
 #: says that something is mapped wrong, and correcting by it would hide that.
 SCALE_BOUNDS = (0.1, 2.0)
 
+#: How far apart two days' forecast totals can be and still teach each other,
+#: as the natural log of their ratio. A day forecast at 1.8 times another's
+#: counts for e**-1 of it; at three times, for under a thirtieth. On the
+#: reference installation in October and November 2026 the roof delivered
+#: about a third of any forecast of 50 kWh or more, and anything from under
+#: half to over one and a half times a forecast under 20 kWh. One factor for
+#: every day was 26% optimistic on the sunny days and 11% pessimistic on the
+#: cloudy ones, graded each day on a factor learned before it. Weighted by this
+#: width, 8% and 6%, and the hourly error fell from 42% to 36%. Widths from 0.4
+#: to 0.8 all landed within a point of that, so this is not a tuned edge.
+SIMILAR_DAY_WIDTH = 0.6
+
+#: Days' worth of the overall ratio added to every day's own, so a day unlike
+#: any of the fortnight leans on the overall figure rather than on its one
+#: nearest neighbour. Without it, a 3.5 kWh day on the reference installation
+#: took the 1.6 of the one 12.5 kWh day in its fortnight.
+SCALE_PRIOR_DAYS = 0.5
+
+
+@dataclass(frozen=True, slots=True)
+class ScaleDay:
+    """One day the scale was learned from.
+
+    ``forecast_wh`` is the whole day's day-ahead forecast: what kind of day the
+    provider expected. ``predicted_wh`` and ``delivered_wh`` cover only the
+    hours that taught, those the battery had room in.
+    """
+
+    forecast_wh: float
+    predicted_wh: float
+    delivered_wh: float
+
 
 @dataclass(frozen=True, slots=True)
 class ForecastScale:
     """How far a provider's forecast runs from what this roof delivers.
 
-    ``factor`` multiplies the forecast. ``hours`` and ``days`` are how much it
+    ``factor`` is the ratio over every hour learned from. ``for_day`` is the
+    one applied: the same ratio, learned mostly from the days whose forecast
+    looked like the day being scaled. ``hours`` and ``days`` are how much it
     rests on, carried for the diagnostics and the attributes.
     """
 
     factor: float
     hours: int
     days: int
+    by_day: tuple[ScaleDay, ...] = ()
+
+    def for_day(self, forecast_wh: float | None) -> float:
+        """The factor for a day whose whole forecast is ``forecast_wh``.
+
+        A provider that runs high runs high by different amounts on different
+        days. Forecast.Solar on the reference installation was about right
+        under cloud and nearly three times the roof in full sun, so a single
+        factor overstated every sunny day and understated every cloudy one.
+        Each day learned from is weighted by how close its forecast total is
+        to this one's (``SIMILAR_DAY_WIDTH``), with ``SCALE_PRIOR_DAYS`` of the
+        overall ratio mixed in. Without a total, or without days, the overall
+        ratio.
+        """
+        if forecast_wh is None or forecast_wh <= 0 or not self.by_day:
+            return self.factor
+        count = len(self.by_day)
+        delivered = SCALE_PRIOR_DAYS * sum(day.delivered_wh for day in self.by_day) / count
+        predicted = SCALE_PRIOR_DAYS * sum(day.predicted_wh for day in self.by_day) / count
+        for day in self.by_day:
+            if day.forecast_wh <= 0:
+                continue
+            distance = math.log(day.forecast_wh / forecast_wh) / SIMILAR_DAY_WIDTH
+            weight = math.exp(-distance * distance)
+            delivered += weight * day.delivered_wh
+            predicted += weight * day.predicted_wh
+        if predicted <= 0:
+            return self.factor
+        low, high = SCALE_BOUNDS
+        return min(max(delivered / predicted, low), high)
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,6 +347,7 @@ def forecast_scale(
     grid: str,
     until: datetime,
     days: int = PROFILE_DAYS,
+    day_of: Callable[[datetime], date] | None = None,
 ) -> ForecastScale | None:
     """What the panels delivered over what the forecast said, hour by hour.
 
@@ -301,12 +366,25 @@ def forecast_scale(
     supplying the house, or when the charge level is not known: in any of
     them, production may have been turned down to what was used, and the sun
     was not the limit.
+
+    Each day's hours are also kept apart, with the day's whole forecast, so
+    ``ForecastScale.for_day`` can learn mostly from days like the one it
+    scales. ``day_of`` names the day an hour belongs to, the installation's
+    local date, injected like the hour in ``hourly_profile``; UTC without it.
+    A day's forecast is totalled over every hour ``forecast`` holds for it,
+    not only the hours that taught, so pass whole days: hours outside the
+    window are read for that total and never learned from.
     """
     since = until - timedelta(days=days)
+    day_key: Callable[[datetime], date] = day_of if day_of is not None else _utc_date
     by_hour = {bucket.start_utc: bucket for bucket in buckets if bucket.seconds == 3600}
-    predicted = delivered = 0.0
+    totals: dict[date, float] = {}
+    for when, expected in forecast.items():
+        if expected > 0:
+            key = day_key(when)
+            totals[key] = totals.get(key, 0.0) + expected
+    taught: dict[date, list[float]] = {}
     hours = 0
-    dates: set[date] = set()
     for when, expected in forecast.items():
         if not (since <= when < until) or expected <= 0:
             continue
@@ -318,14 +396,28 @@ def forecast_scale(
         imported = bucket.value(grid)
         if produced is None or (imported is not None and imported > QUIET_WH):
             continue
-        predicted += expected
-        delivered += produced
+        pair = taught.setdefault(day_key(when), [0.0, 0.0])
+        pair[0] += expected
+        pair[1] += produced
         hours += 1
-        dates.add(when.date())
-    if len(dates) < MIN_SCALE_DAYS or predicted <= 0:
+    predicted = sum(pair[0] for pair in taught.values())
+    delivered = sum(pair[1] for pair in taught.values())
+    if len(taught) < MIN_SCALE_DAYS or predicted <= 0:
         return None
     low, high = SCALE_BOUNDS
     ratio = delivered / predicted
     if not low <= ratio <= high:
         return None
-    return ForecastScale(factor=ratio, hours=hours, days=len(dates))
+    return ForecastScale(
+        factor=ratio,
+        hours=hours,
+        days=len(taught),
+        by_day=tuple(
+            ScaleDay(forecast_wh=totals[key], predicted_wh=pair[0], delivered_wh=pair[1])
+            for key, pair in sorted(taught.items())
+        ),
+    )
+
+
+def _utc_date(when: datetime) -> date:
+    return when.date()

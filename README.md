@@ -55,6 +55,13 @@ and reads five answers off that one projection:
   against what the forecast said a day ahead, over the last fortnight, counting
   only hours the battery had room in. On the installation it was built on, the
   forecast ran at twice the real output.
+- **How far it is off on a day like today, and like tomorrow**
+  (`forecast_scale_today`, `forecast_scale_tomorrow`): the same, learned mostly
+  from the days whose forecast looked like that one. A forecast is rarely off by
+  the same amount every day. Dirty panels, shading or a provider set up for
+  the wrong roof show most in full sun. On the installation it was built on,
+  the roof delivered about a third of a sunny day's forecast and nearly all of a
+  cloudy one's. These are the factors the outlook projects with.
 - **What the inverter draws for itself** (`inverter_standby_w`): power the house
   meter never sees, measured on the hours the battery carried the house alone in
   the dark.
@@ -155,8 +162,8 @@ registry, so renaming them does not lose them.
 **Solar Sanity: tomorrow's forecast** shows your provider's forecast for
 tomorrow as it stands now, the same figure as the "Forecast tomorrow" sensor.
 Once Solar Sanity has learned how much of that provider's forecast your roof
-actually delivers, it adds a second line, "From your roof", with tomorrow moved
-by that factor. It reads the forecast again every half hour. It is hand-rolled
+actually delivers on days forecast like tomorrow, it adds a second line, "From
+your roof", with tomorrow moved by that factor. It reads the forecast again every half hour. It is hand-rolled
 inline SVG, so it re-themes with no JavaScript.
 
 Neither takes any configuration. Drop one on a dashboard and it finds its own
@@ -236,7 +243,7 @@ quietly corrupt a shared forecast archive.
 | `sensor.*_safe_average_load_tonight` | The steadiest load the house can draw until the sun takes over |
 | `sensor.*_spare_solar` | Sunshine the battery will have no room for. Needs a forecast provider |
 | `sensor.*_forecast_tomorrow` | Tomorrow's forecast, with a `state_class`, so it is actually recorded |
-| `sensor.*_expected_tomorrow_corrected` | The same figure moved by what your roof has delivered against that provider: the battery outlook's learned forecast scale when there is a battery, otherwise the provider's stated accuracy. Its attributes name the provider, the `factor`, its `basis` (`learned` or `scored`) and the `days` behind it, or a `reason` while it is unknown |
+| `sensor.*_expected_tomorrow_corrected` | The same figure moved by what your roof has delivered against that provider: the battery outlook's learned factor for a day forecast like tomorrow when there is a battery, otherwise the provider's stated accuracy. Its attributes name the provider, the `factor`, its `basis` (`learned` or `scored`) and the `days` behind it, or a `reason` while it is unknown |
 | `sensor.*_<provider>_accuracy` | One per configured provider: how close it has been, signed so negative means less than promised. Unknown until it is earned |
 
 **Download diagnostics** on the device page carries everything the outlook was

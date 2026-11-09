@@ -194,6 +194,12 @@ export interface RoofFactor {
   factor: number;
   /** How many days that rests on. */
   days?: number;
+  /**
+   * True when learned by the battery outlook, which weights the days whose
+   * forecast looked like tomorrow's: a sunny day and a cloudy one are not
+   * corrected by the same amount.
+   */
+  byKindOfDay: boolean;
 }
 
 /**
@@ -219,7 +225,11 @@ export function roofFactor(
     const factor = state.attributes.factor;
     if (typeof factor !== "number" || !Number.isFinite(factor) || factor <= 0) continue;
     const days = state.attributes.days;
-    found.push({ factor, days: typeof days === "number" ? days : undefined });
+    found.push({
+      factor,
+      days: typeof days === "number" ? days : undefined,
+      byKindOfDay: state.attributes.basis === "learned",
+    });
   }
   return found.length === 1 ? found[0] : undefined;
 }

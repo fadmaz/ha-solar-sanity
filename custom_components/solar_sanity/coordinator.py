@@ -931,9 +931,13 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         if provider is None:
             return None
         learned = self.battery.scale_for(provider)
+        # Tomorrow's factor, not the overall one: learned mostly from the days
+        # whose forecast looked like tomorrow's, the same factor the outlook
+        # projects tomorrow with.
+        factor = self.battery.tomorrow_factor(provider, dt_util.utcnow())
         scored = next((s.bias for s in self.forecast_scores if s.entry_id == provider), None)
         return correction(
-            None if learned is None else (learned.factor, learned.days),
+            None if learned is None or factor is None else (factor, learned.days),
             None if scored is None else scored.reportable_pct,
             0 if scored is None else scored.days,
         )

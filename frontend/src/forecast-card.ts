@@ -395,7 +395,10 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
         <span class="expect"><bdi>≈ ${(panel.kwh * roof.factor).toFixed(1)} kWh</bdi></span>
       </div>
       <p class="why">
-        Your roof has delivered about <bdi>${share}%</bdi> of this forecast${over}.
+        ${roof.byKindOfDay
+          ? html`On days forecast like this one, your roof has delivered about
+              <bdi>${share}%</bdi> of the forecast${over}.`
+          : html`Your roof has delivered about <bdi>${share}%</bdi> of this forecast${over}.`}
       </p>
     `;
   }
