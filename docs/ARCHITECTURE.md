@@ -177,7 +177,14 @@ every five minutes, and its sensors were written only at setup and by the six-ho
     time: one factor for a day cannot move its peak;
   - one `forecast_bias_<provider>` per configured provider, created because the provider is
     configured, not because a figure exists yet;
-  - the five outlook sensors (see 1).
+  - the five outlook sensors (see 1), and three more since 0.34.0:
+    `battery_usable_energy` (`ENERGY_STORAGE`, `MEASUREMENT`: the one outlook sensor that
+    is a measurement), `expected_use_tonight`, and `spare_solar_power`, which is worked on
+    every write from the live readings (`OutlookSensorDescription.live_fn`) rather than
+    from the last refresh;
+  - `battery_lowest_before_sunrise` carries `power_sources`, the entity ids of the power
+    sensors the card shows live: mapped channels that report power, and the optional
+    `OPT_BATTERY_POWER` with its sign. Ids only; the card reads the states itself.
 
 The outlook sensors:
 - **When they exist.** They are created when `entry.options` holds both a charge-level
@@ -303,6 +310,16 @@ it understates the sun by day.
   begins at the deficit run leading into the dark and ends at the takeover: the first later
   step where production covers load.
 - **The safe load** is bisected on shortfall ≤ 1 Wh, which is monotone in the load.
+- **Tonight's use** (`Outlook.night_load_wh`) is the load plus the standby over the night
+  window's steps, from its start or now until the takeover; none without a takeover.
+- **Two figures about now** need no projection. `usable_energy_wh` is the charge above the
+  reserve after the discharge efficiency. `spare_power_w` works one moment the way
+  `simulate` works a step. The house and the standby come first, then the battery up to its
+  ceiling, and the rest is spare. The production it starts from is the live measured one,
+  unless the battery is full or charging at `CEILING_SHARE` of its ceiling: then an
+  inverter with nowhere to send a surplus holds production down, so the higher of the
+  measured and the corrected forecast (`roof_forecast().power_now_w`) stands. Held down
+  with no forecast, there is no answer.
 - **Times are published** rounded to 5 minutes, with a one-step hysteresis. A moment that
   has passed keeps its time.
 - **A narrow miss holds the published time** (`settle_full`, `settle_reserve`). When the
@@ -420,7 +437,10 @@ pushes two entries onto `window.customCards`: `solar-sanity-battery-card` and
 `solar-sanity-forecast-card`.
 
 **`solar-sanity-battery-card`** (`battery-card.ts`, logic in `battery-model.ts`):
-- **Discovery.** It finds the five outlook sensors through `hass.entities` by platform,
+- **Live flow.** One line of solar, house, battery and grid power, read from the entities
+  named in `power_sources`, in their own W or kW; a source not reporting is left out, and
+  a battery under 20 W is idle.
+- **Discovery.** It finds the outlook sensors through `hass.entities` by platform,
   translation key and device, never by entity id. With two installations it asks to be
   pinned (`device_id`) rather than guess.
 - **The headline** is chosen from the projection's own night, takeover, full and reserve
