@@ -97,6 +97,8 @@ class TestConfigFlowSchemas:
         from custom_components.solar_sanity.config_flow import SolarSanityOptionsFlow
         from custom_components.solar_sanity.const import (
             OPT_BATTERY_CAPACITY_KWH,
+            OPT_BATTERY_POWER,
+            OPT_BATTERY_POWER_CHARGING_POSITIVE,
             OPT_BATTERY_RESERVE_PCT,
             OPT_BATTERY_SOC,
             OPT_BATTERY_TARGET_PCT,
@@ -105,11 +107,15 @@ class TestConfigFlowSchemas:
         stub = SimpleNamespace(config_entry=SimpleNamespace(options={}, runtime_data=None))
         schema = vol.Schema(SolarSanityOptionsFlow._fields(stub))
 
+        # 0.34.0 added the battery power sensor and its sign, for the card's
+        # live line.
         assert _schema_keys(schema) == {
             OPT_BATTERY_SOC,
             OPT_BATTERY_CAPACITY_KWH,
             OPT_BATTERY_RESERVE_PCT,
             OPT_BATTERY_TARGET_PCT,
+            OPT_BATTERY_POWER,
+            OPT_BATTERY_POWER_CHARGING_POSITIVE,
         }
 
 
