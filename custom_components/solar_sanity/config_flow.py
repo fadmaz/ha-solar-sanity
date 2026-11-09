@@ -45,6 +45,8 @@ from .const import (
     DEFAULT_TARGET_PCT,
     DOMAIN,
     OPT_BATTERY_CAPACITY_KWH,
+    OPT_BATTERY_POWER,
+    OPT_BATTERY_POWER_CHARGING_POSITIVE,
     OPT_BATTERY_RESERVE_PCT,
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
@@ -548,5 +550,18 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
         fields[vol.Optional(OPT_BATTERY_CAPACITY_KWH)] = _capacity_selector()
         fields[vol.Optional(OPT_BATTERY_RESERVE_PCT)] = _percent_selector(0, 95)
         fields[vol.Optional(OPT_BATTERY_TARGET_PCT)] = _percent_selector(10, 100)
+
+        # For the battery card's live flow only. The battery's mapped channels
+        # are often lifetime energy counters, as on the reference installation,
+        # and a counter cannot say what the battery is doing this second. The
+        # sign has a default rather than a suggested value: an unticked box
+        # saves as "no", so a form opened to change the capacity must not
+        # quietly flip the battery's direction.
+        fields[vol.Optional(OPT_BATTERY_POWER)] = selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class="power")
+        )
+        fields[vol.Optional(OPT_BATTERY_POWER_CHARGING_POSITIVE, default=True)] = (
+            selector.BooleanSelector()
+        )
 
         return fields

@@ -383,6 +383,10 @@ def _lowest_attrs(state: OutlookState) -> dict[str, Any]:
         # charging the battery, because the question it answers is whether the
         # battery alone would get the house there.
         "grid_charging_hours_14d": state.grid_charged_hours,
+        # Which sensors the card shows live as the flow between the sun, the
+        # house, the battery and the grid. Entity ids, not readings: the card
+        # reads them itself, and the recorder keeps no second copy of a power.
+        "power_sources": state.power_sources,
         "trajectory": (
             [{"at": when.isoformat(), "soc": round(soc, 1)} for when, soc in outlook.trajectory]
             if outlook
@@ -422,10 +426,17 @@ def _spare_attrs(state: OutlookState) -> dict[str, Any]:
 
 @dataclass(frozen=True, kw_only=True)
 class OutlookSensorDescription(SensorEntityDescription):
-    """A read-out of the battery outlook."""
+    """A read-out of the battery outlook.
+
+    ``live_fn`` and ``live_attrs_fn``, when given, are read from the coordinator
+    every time the sensor is written instead of from the last refresh: for a
+    figure about this second rather than about the night.
+    """
 
     value_fn: Callable[[OutlookState], StateType | datetime]
     attrs_fn: Callable[[OutlookState], dict[str, Any]]
+    live_fn: Callable[[SolarSanityCoordinator], StateType] | None = None
+    live_attrs_fn: Callable[[SolarSanityCoordinator], dict[str, Any]] | None = None
 
 
 def _lowest(state: OutlookState) -> StateType:
@@ -445,6 +456,61 @@ def _safe_load(state: OutlookState) -> StateType:
 def _spare(state: OutlookState) -> StateType:
     outlook = state.outlook
     return _kwh(outlook.spare_wh) if outlook is not None else None
+
+
+def _usable(state: OutlookState) -> StateType:
+    return _kwh(state.usable_wh)
+
+
+def _usable_attrs(state: OutlookState) -> dict[str, Any]:
+    return {
+        "reserve_pct": state.settings.get("reserve_pct"),
+        "capacity_kwh": state.settings.get("capacity_kwh"),
+    }
+
+
+def _tonight(state: OutlookState) -> StateType:
+    outlook = state.outlook
+    return _kwh(outlook.night_load_wh) if outlook is not None else None
+
+
+def _tonight_attrs(state: OutlookState) -> dict[str, Any]:
+    outlook = state.outlook
+    attrs: dict[str, Any] = {
+        "from": _iso(outlook.night_from) if outlook else None,
+        "until": _iso(outlook.takeover_at) if outlook else None,
+        "inverter_standby_w": _standby(state),
+    }
+    if outlook is None or outlook.night_load_wh is None:
+        attrs["reason"] = _why(state, "The sun does not take over within the forecast.")
+    return attrs
+
+
+def _tens(watts: float) -> int:
+    """To the nearest 10 W, so a load that flickers does not rewrite the state."""
+    return int(round(watts / 10.0) * 10)
+
+
+def _spare_power(coordinator: SolarSanityCoordinator) -> StateType:
+    found = coordinator.battery.spare_power()
+    return None if found is None else _tens(found[0])
+
+
+def _spare_power_attrs(coordinator: SolarSanityCoordinator) -> dict[str, Any]:
+    found = coordinator.battery.spare_power()
+    if found is not None:
+        _spare_w, potential, source = found
+        return {"potential_w": _tens(potential), "source": source}
+    state = coordinator.battery.state
+    if state.reason in ("soc_unavailable", "soc_stale"):
+        return {"reason": REASONS[state.reason]}
+    return {
+        "reason": (
+            "Needs the house's consumption reporting and, while the battery is "
+            "full or charging as fast as it can, a solar forecast: measured "
+            "production is then held down to what is used."
+        )
+    }
 
 
 #: No ``state_class`` on any of these. They are judgements about the future,
@@ -499,6 +565,44 @@ OUTLOOK_SENSORS: tuple[OutlookSensorDescription, ...] = (
         value_fn=_spare,
         attrs_fn=_spare_attrs,
     ),
+    # 0.34.0, three figures the owner asked for something to act on with. This
+    # one is a measurement of the battery now, not a forecast, so it is the one
+    # outlook sensor recorded as a statistic.
+    OutlookSensorDescription(
+        key="battery_usable_energy",
+        translation_key="battery_usable_energy",
+        icon="mdi:battery-arrow-down-outline",
+        device_class=SensorDeviceClass.ENERGY_STORAGE,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=_usable,
+        attrs_fn=_usable_attrs,
+    ),
+    OutlookSensorDescription(
+        key="expected_use_tonight",
+        translation_key="expected_use_tonight",
+        icon="mdi:home-clock-outline",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=1,
+        value_fn=_tonight,
+        attrs_fn=_tonight_attrs,
+    ),
+    # Worked from the live readings on every write, every thirty seconds, so an
+    # automation running an air conditioner on the sun sees the load it adds.
+    OutlookSensorDescription(
+        key="spare_solar_power",
+        translation_key="spare_solar_power",
+        icon="mdi:solar-power",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        suggested_display_precision=0,
+        value_fn=lambda _state: None,
+        attrs_fn=lambda _state: {},
+        live_fn=_spare_power,
+        live_attrs_fn=_spare_power_attrs,
+    ),
 )
 
 
@@ -516,7 +620,7 @@ class OutlookSensor(SolarSanityEntity, SensorEntity):
     #: not for the recorder: it is a kilobyte rewritten every five minutes. The
     #: starting charge and the time of the refresh change on every refresh too,
     #: and the charge-level sensor already records the first of them.
-    _unrecorded_attributes = frozenset({"trajectory", "soc_pct", "computed_at"})
+    _unrecorded_attributes = frozenset({"trajectory", "soc_pct", "computed_at", "potential_w"})
 
     def __init__(
         self,
@@ -533,8 +637,12 @@ class OutlookSensor(SolarSanityEntity, SensorEntity):
 
     @property
     def native_value(self) -> StateType | datetime:
+        if self.entity_description.live_fn is not None:
+            return self.entity_description.live_fn(self.coordinator)
         return self.entity_description.value_fn(self.coordinator.battery.state)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        if self.entity_description.live_attrs_fn is not None:
+            return self.entity_description.live_attrs_fn(self.coordinator)
         return self.entity_description.attrs_fn(self.coordinator.battery.state)

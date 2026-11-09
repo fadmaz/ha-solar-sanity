@@ -20,6 +20,9 @@ export const OUTLOOK_KEYS = [
   "battery_lowest_before_sunrise",
   "safe_average_load",
   "spare_solar",
+  "battery_usable_energy",
+  "expected_use_tonight",
+  "spare_solar_power",
 ] as const;
 export type OutlookKey = (typeof OUTLOOK_KEYS)[number];
 
@@ -64,7 +67,20 @@ export interface Point {
   soc: number;
 }
 
-/** What the five sensors say, read once per render. */
+/**
+ * The power sensors the card shows live, from the lowest-battery sensor's
+ * `power_sources` attribute: entity ids, read straight from `hass.states`.
+ */
+export interface PowerSources {
+  solar?: string;
+  house?: string;
+  grid?: string;
+  battery?: string;
+  /** Whether the battery's sensor reads positive while it charges. */
+  batteryChargingPositive: boolean;
+}
+
+/** What the outlook sensors say, read once per render. */
 export interface Outlook {
   /** Every outlook sensor is unavailable: the charge level is not reporting. */
   unavailable: boolean;
@@ -85,6 +101,14 @@ export interface Outlook {
   reservePct: number | null;
   targetPct: number | null;
   trajectory: Point[];
+  /** What the battery can still give before its reserve. */
+  usableKwh: number | null;
+  /** What the house will use from dusk until the sun takes over. */
+  tonightKwh: number | null;
+  tonightUntil: Date | null;
+  /** Solar power going to waste now, the battery full or at its ceiling. */
+  sparePowerW: number | null;
+  powerSources: PowerSources | null;
 }
 
 const NO_VALUE = new Set(["unknown", "unavailable", ""]);
@@ -123,9 +147,12 @@ export function readOutlook(hass: HomeAssistant, installation: Installation): Ou
   const reserve = get("battery_reserve_at");
   const safe = get("safe_average_load");
   const spare = get("spare_solar");
+  const usable = get("battery_usable_energy");
+  const tonight = get("expected_use_tonight");
+  const sparePower = get("spare_solar_power");
   const attrs = lowest?.attributes ?? {};
 
-  const present = [lowest, full, reserve, safe, spare].filter(
+  const present = [lowest, full, reserve, safe, spare, usable, tonight, sparePower].filter(
     (entity): entity is HassEntity => entity !== undefined,
   );
   const raw = Array.isArray(attrs.trajectory) ? (attrs.trajectory as unknown[]) : [];
@@ -158,7 +185,81 @@ export function readOutlook(hass: HomeAssistant, installation: Installation): Ou
     reservePct: asNumber(attrs.reserve_pct) ?? asNumber(reserve?.attributes.reserve_pct),
     targetPct: asNumber(attrs.target_pct) ?? asNumber(full?.attributes.target_pct),
     trajectory,
+    usableKwh: stateNumber(usable),
+    tonightKwh: stateNumber(tonight),
+    tonightUntil: asTime(tonight?.attributes.until),
+    sparePowerW: stateNumber(sparePower),
+    powerSources: readSources(attrs.power_sources),
   };
+}
+
+function readSources(raw: unknown): PowerSources | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const record = raw as Record<string, unknown>;
+  const id = (key: string): string | undefined =>
+    typeof record[key] === "string" && record[key] !== "" ? (record[key] as string) : undefined;
+  return {
+    solar: id("solar"),
+    house: id("house"),
+    grid: id("grid"),
+    battery: id("battery"),
+    batteryChargingPositive: record.battery_charging_positive !== false,
+  };
+}
+
+/** Watts as a person reads them: whole watts under a kilowatt, then kW. */
+export function power(watts: number): string {
+  const whole = Math.round(watts);
+  return Math.abs(whole) < 1000 ? `${whole} W` : `${(watts / 1000).toFixed(1)} kW`;
+}
+
+export interface FlowItem {
+  label: string;
+  value: string;
+}
+
+/**
+ * Below this a battery's reading is called idle: a BMS reports a few watts of
+ * its own housekeeping either way, and "charging 3 W" would be a false alarm.
+ */
+const IDLE_W = 20;
+
+/**
+ * The flow between the sun, the house, the battery and the grid, now.
+ *
+ * Read live from the sensors the integration named, in the units they report
+ * (W or kW; anything else is left out rather than guessed). A source not
+ * named, or not reporting a number, is left out, never shown as zero.
+ */
+export function powerFlow(hass: HomeAssistant, sources: PowerSources | null): FlowItem[] {
+  if (!sources) return [];
+  const read = (id: string | undefined): number | null => {
+    if (!id) return null;
+    const entity = hass.states[id];
+    const value = stateNumber(entity);
+    if (value === null) return null;
+    const unit = entity?.attributes.unit_of_measurement;
+    if (unit === "W") return value;
+    if (unit === "kW") return value * 1000;
+    return null;
+  };
+  const items: FlowItem[] = [];
+  const solar = read(sources.solar);
+  if (solar !== null) items.push({ label: "Solar", value: power(solar) });
+  const house = read(sources.house);
+  if (house !== null) items.push({ label: "House", value: power(house) });
+  const battery = read(sources.battery);
+  if (battery !== null) {
+    const charging = sources.batteryChargingPositive ? battery : -battery;
+    const value =
+      Math.abs(charging) < IDLE_W
+        ? "idle"
+        : `${charging > 0 ? "charging" : "discharging"} ${power(Math.abs(charging))}`;
+    items.push({ label: "Battery", value });
+  }
+  const grid = read(sources.grid);
+  if (grid !== null) items.push({ label: "Grid", value: power(grid) });
+  return items;
 }
 
 /** Time, formatted for the house rather than for the browser. */
@@ -316,7 +417,7 @@ export interface Figure {
   sub: string | null;
 }
 
-/** The three numbers under the headline. A dash, never a zero, for no answer. */
+/** The six numbers under the headline. A dash, never a zero, for no answer. */
 export function figures(outlook: Outlook, now: Date, clock: Clock): Figure[] {
   const dash = "—";
   return [
@@ -334,6 +435,21 @@ export function figures(outlook: Outlook, now: Date, clock: Clock): Figure[] {
       label: "Spare sun",
       value: outlook.spareKwh !== null ? `${outlook.spareKwh.toFixed(1)} kWh` : dash,
       sub: outlook.spareFrom ? clock.day(outlook.spareFrom, now) : null,
+    },
+    {
+      label: "Usable now",
+      value: outlook.usableKwh !== null ? `${outlook.usableKwh.toFixed(1)} kWh` : dash,
+      sub: outlook.reservePct !== null ? `above ${Math.round(outlook.reservePct)}%` : null,
+    },
+    {
+      label: "Tonight's use",
+      value: outlook.tonightKwh !== null ? `${outlook.tonightKwh.toFixed(1)} kWh` : dash,
+      sub: outlook.tonightUntil ? `until ${clock.time(outlook.tonightUntil)}` : null,
+    },
+    {
+      label: "Spare sun now",
+      value: outlook.sparePowerW !== null ? power(outlook.sparePowerW) : dash,
+      sub: null,
     },
   ];
 }

@@ -2,6 +2,44 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.34.0] - 2026-11-09
+
+Three new figures to act on, and the battery card shows the power flowing now.
+
+### Added
+
+- **"Usable battery energy"**: what the battery can still give the house
+  before its reserve, after the inverter's loss. At 49% of 30 kWh with a 35%
+  reserve that is 3.9 kWh. It is a measurement rather than a forecast, so it
+  is recorded as a statistic for history graphs.
+- **"Expected use tonight"**: what the house and the inverter will use from
+  dusk until the sun takes over, from the hours Solar Sanity has learned. On
+  the reference installation that was 12.7 kWh from 17:00 to 08:00. Read it
+  beside "Usable battery energy" to see whether the night is covered.
+- **"Spare solar power now"**: solar power going to waste this minute, because
+  the battery is full or already charging as fast as it can. An air
+  conditioner or water heater can take that much at no cost to the battery or
+  the grid.
+  - It is worked every 30 seconds from the live readings.
+  - With no export, a full battery holds production down. Measured production
+    then understates the sun, so the corrected forecast says what the sun
+    could give.
+- **The battery card** shows the three as a second row of figures. Above them
+  is a line of the power flowing now: solar, house, battery and grid.
+- **An optional "Battery power" sensor under Configure**, for that line. Use
+  it when your battery channels are energy totals, as on the reference
+  installation, since a total cannot show what the battery is doing this
+  second. Untick "positive while charging" if your inverter signs it the
+  other way.
+
+### Notes
+
+- **No countdown sensors.** "Battery full at" and "Battery reaches reserve at"
+  already count down by themselves on the device page. An Entities card with
+  `format: datetime` shows their exact date and time.
+- **No copies** of your inverter's own power sensors as new entities. The card
+  reads them directly, so nothing is stored twice.
+
 ## [0.33.0] - 2026-11-09
 
 Your forecast provider's figures, as your roof would make them, and only those.

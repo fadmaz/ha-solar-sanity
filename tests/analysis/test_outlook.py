@@ -26,6 +26,8 @@ from analysis.outlook import (
     settle_full,
     settle_reserve,
     simulate,
+    spare_power_w,
+    usable_energy_wh,
 )
 
 MIDNIGHT = datetime(2026, 6, 1, tzinfo=UTC)
@@ -547,3 +549,106 @@ class TestANarrowMissIsNotADifferentDay:
 
         clear = project(25.0, self.BATTERY, steps, forecast_used=True)
         assert settle_reserve(published, clear, self.BATTERY, MIDNIGHT) is None
+
+
+class TestWhatTheBatteryHoldsNow:
+    """0.34.0. The owner asked for figures they could act on; this one says how
+    much the battery can still give before the inverter hands the house to the
+    grid at the reserve."""
+
+    def test_it_is_the_charge_above_the_reserve_delivered_to_the_house(self) -> None:
+        """The reference installation at 57%: 22 points of 30 kWh is 6.6 kWh in
+        the battery, 6.072 kWh to the house at 92%."""
+        assert usable_energy_wh(57, BatterySettings(30_000, 35, 100)) == pytest.approx(6072.0)
+
+    def test_at_or_below_the_reserve_there_is_none(self) -> None:
+        battery = BatterySettings(30_000, 35, 100)
+        assert usable_energy_wh(35, battery) == 0.0
+        assert usable_energy_wh(30, battery) == 0.0
+
+
+class TestWhatTheHouseUsesTonight:
+    """0.34.0. Beside what the battery holds, what the night will ask of it."""
+
+    def test_the_night_is_counted_from_dusk_to_the_takeover_with_the_standby(self) -> None:
+        """Four dark hours at 600 W between two sunny ones: 2.4 kWh, and 2.8
+        with the inverter's 100 W on top. The sunny hours are not night."""
+        steps = (
+            flat(MIDNIGHT, 2, pv=3000, load=500)
+            + flat(MIDNIGHT + timedelta(hours=2), 4, load=600)
+            + flat(MIDNIGHT + timedelta(hours=6), 2, pv=3000, load=500)
+        )
+        bare = project(50, BatterySettings(10_000, 20, 100), steps, forecast_used=True)
+        standby = BatterySettings(10_000, 20, 100, standby_w=100)
+        with_standby = project(50, standby, steps, forecast_used=True)
+
+        assert bare.night_load_wh == pytest.approx(2400.0)
+        assert with_standby.night_load_wh == pytest.approx(2800.0)
+
+    def test_inside_the_night_it_is_counted_from_now(self) -> None:
+        steps = flat(MIDNIGHT, 3, load=600) + flat(MIDNIGHT + timedelta(hours=3), 2, pv=3000)
+        outlook = project(50, BatterySettings(10_000, 20, 100), steps, forecast_used=True)
+
+        assert outlook.night_load_wh == pytest.approx(1800.0)
+
+    def test_without_a_takeover_in_sight_it_is_not_guessed(self) -> None:
+        outlook = project(
+            50, BatterySettings(10_000, 20, 100), flat(MIDNIGHT, 4, load=600), forecast_used=True
+        )
+
+        assert outlook.night_load_wh is None
+
+
+#: A 10 kWh battery charging at no more than 3 kW, with no charging loss to
+#: keep the arithmetic in whole watts, and an inverter drawing 100 W itself.
+SPARE = BatterySettings(10_000, 20, 100, charge_efficiency=1.0, max_charge_w=3000, standby_w=100)
+
+
+class TestTheSunGoingToWasteNow:
+    """0.34.0. The owner's air conditioner is run from an automation on the sun.
+    Spare is what the house could draw now at no cost to the battery or the
+    grid. The house takes 400 W and the inverter 100 in every case."""
+
+    def test_a_full_battery_spares_everything_the_house_does_not_use(self) -> None:
+        """Full, the inverter has held production to 1.5 kW; the corrected
+        forecast says 5 kW, so 4.5 kW is going to waste."""
+        found = spare_power_w(99.5, SPARE, measured_pv_w=1500, forecast_pv_w=5000, load_w=400)
+
+        assert found == (4500, 5000, "forecast")
+
+    def test_at_its_ceiling_the_battery_takes_its_3_kw_and_the_rest_is_spare(self) -> None:
+        """3.6 kW measured is 3.1 kW past the house, over 90% of the 3 kW
+        ceiling, so production is held down and the forecast's 6 kW stands."""
+        found = spare_power_w(60, SPARE, measured_pv_w=3600, forecast_pv_w=6000, load_w=400)
+
+        assert found == (2500, 6000, "forecast")
+
+    def test_below_its_ceiling_the_battery_takes_it_all(self) -> None:
+        """2 kW measured is the sun itself when the battery has room, and a
+        forecast of more is a forecast the clouds have overruled."""
+        found = spare_power_w(60, SPARE, measured_pv_w=2000, forecast_pv_w=6000, load_w=400)
+
+        assert found == (0, 2000, "measured")
+
+    def test_measured_beats_the_forecast_when_it_is_higher(self) -> None:
+        found = spare_power_w(99.5, SPARE, measured_pv_w=5200, forecast_pv_w=5000, load_w=400)
+
+        assert found == (4700, 5200, "measured")
+
+    def test_without_a_learned_ceiling_the_battery_is_assumed_to_take_it_all(self) -> None:
+        battery = BatterySettings(10_000, 20, 100, standby_w=100)
+        found = spare_power_w(60, battery, measured_pv_w=5000, forecast_pv_w=6000, load_w=400)
+
+        assert found == (0, 5000, "measured")
+
+    def test_a_full_battery_without_a_forecast_says_nothing(self) -> None:
+        """Measured production is what the full battery let through. Read as
+        the sun, a clear noon would show no spare at all."""
+        found = spare_power_w(99.5, SPARE, measured_pv_w=1500, forecast_pv_w=None, load_w=400)
+
+        assert found is None
+
+    def test_without_a_production_reading_the_forecast_stands_alone(self) -> None:
+        found = spare_power_w(60, SPARE, measured_pv_w=None, forecast_pv_w=6000, load_w=400)
+
+        assert found == (2500, 6000, "forecast")

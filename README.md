@@ -230,7 +230,11 @@ privately rather than attaching it to a public issue.
 3. **Pick any solar forecast integrations** you want recorded.
 
 Everything chosen at setup can be changed afterwards through **Reconfigure**,
-without losing any history. Battery settings are also under **Configure**.
+without losing any history. Battery settings are also under **Configure**,
+with one more: an optional **battery power** sensor, for the battery card's
+live line. Pick it when your battery channels are energy totals, which cannot
+say what the battery is doing this second, and untick "positive while
+charging" if your inverter signs it the other way.
 Adding a second entry for the same house is caught rather than allowed to
 quietly corrupt a shared forecast archive.
 
@@ -243,6 +247,9 @@ quietly corrupt a shared forecast archive.
 | `sensor.*_lowest_battery_before_sunrise` | Tonight's projected minimum. Its attributes carry the whole trajectory, the charge it started from, the reserve and target, the forecast scale and the inverter's standby |
 | `sensor.*_safe_average_load_tonight` | The steadiest load the house can draw until the sun takes over |
 | `sensor.*_spare_solar` | Sunshine the battery will have no room for. Needs a forecast provider |
+| `sensor.*_usable_battery_energy` | What the battery can still give the house before its reserve, after the inverter's loss. A measurement, recorded as a statistic |
+| `sensor.*_expected_use_tonight` | What the house and the inverter will use from dusk until the sun takes over, from the learned hours. Its `from` and `until` say when |
+| `sensor.*_spare_solar_power_now` | Solar power going to waste now, because the battery is full or charging as fast as it can: what an air conditioner or a water heater could take at no cost to the battery or the grid. Worked every 30 seconds from the live readings; `potential_w` is what the sun could give, and `source` says whether that was measured or, while production is held down, the corrected forecast |
 | `sensor.*_solar_power_now_corrected` | Your provider's forecast power now, as your roof would make it. Drawn between the hourly averages |
 | `sensor.*_solar_energy_this_hour_corrected` | This hour's forecast, corrected |
 | `sensor.*_solar_energy_next_hour_corrected` | The next sixty minutes, corrected |
@@ -250,6 +257,11 @@ quietly corrupt a shared forecast archive.
 | `sensor.*_solar_energy_today_corrected` | Today's whole forecast, corrected |
 | `sensor.*_expected_tomorrow_corrected` | Tomorrow's forecast, corrected, with a `state_class` so it is recorded. Shown as "Solar energy tomorrow (corrected)" |
 | `sensor.*_<provider>_accuracy` | One per configured provider: how close it has been, signed so negative means less than promised. Unknown until it is earned |
+
+"Battery full at" and "Battery reaches reserve at" are timestamps: Home
+Assistant shows them as "in 3 hours" by itself, and an Entities card with
+`format: datetime` shows the exact date and time. A countdown sensor would be
+the same answer rewritten every minute.
 
 The first five corrected sensors exist when a forecast provider is configured. They
 are the figures Forecast.Solar publishes, multiplied by what your roof has

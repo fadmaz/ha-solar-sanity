@@ -30,6 +30,7 @@ import {
   findInstallations,
   hasOutlook,
   headline,
+  powerFlow,
   readOutlook,
 } from "./battery-model";
 import type {
@@ -140,7 +141,7 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
     return html`
       <ha-card>
         <div class="root">
-          ${this._top(outlook, now, clock)}
+          ${this._top(outlook, now, clock)} ${this._flow(hass, outlook)}
           ${outlook.reason
             ? html`<p class="reason">${outlook.reason}</p>`
             : html`${this._figures(outlook, now, clock)} ${this._chart(outlook, clock)}`}
@@ -164,6 +165,24 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
           ${lead?.detail ? html`<p class="detail"><bdi>${lead.detail}</bdi></p>` : nothing}
         </div>
       </div>
+    `;
+  }
+
+  /** The live flow, one line, or nothing when no power sensor is known. */
+  private _flow(hass: HomeAssistant, outlook: Outlook): TemplateResult | typeof nothing {
+    const items = powerFlow(hass, outlook.powerSources);
+    if (items.length === 0) return nothing;
+    return html`
+      <p class="flow" aria-label="Power now">
+        ${items.map(
+          (item, index) =>
+            html`${index > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : nothing}<span
+                class="flow-item"
+                ><span class="flow-label">${item.label}</span>
+                <bdi>${item.value}</bdi></span
+              >`,
+        )}
+      </p>
     `;
   }
 
@@ -349,6 +368,19 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
       line-height: 1.4;
       text-align: start;
     }
+    .flow {
+      margin: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px var(--ha-space-2, 8px);
+      color: var(--primary-text-color);
+      font-size: 0.875rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .flow-label,
+    .sep {
+      color: var(--secondary-text-color);
+    }
     .figures {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -380,7 +412,9 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
     .chart {
       position: relative;
       height: 120px;
-      margin-block-end: 16px;
+      /* Room above for the target's label, which sits over the top line and
+         would otherwise run into the last row of figures. */
+      margin-block: 10px 16px;
     }
     svg {
       display: block;

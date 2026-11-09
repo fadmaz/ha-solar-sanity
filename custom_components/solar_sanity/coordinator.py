@@ -50,6 +50,8 @@ from .const import (
     CONF_ROLE,
     DOMAIN,
     ENERGY_MAX_AGE_SECONDS,
+    OPT_BATTERY_POWER,
+    OPT_BATTERY_POWER_CHARGING_POSITIVE,
     POWER_GAP_TOLERANCE_SECONDS,
     SCORING_INTERVAL,
     STORAGE_KEY_STATE,
@@ -384,6 +386,42 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         # away; how long that lasts decides whether the hour survives.
         self._live_power.pop(key, None)
         self._gap_since.setdefault(key, when)
+
+    def live_rates(self, now: datetime, min_seconds: float) -> dict[str, float]:
+        """Power now, in W, for each channel that can say.
+
+        A power channel's latest reading; an energy channel's average so far this
+        hour (``open_hour_rates``), which is the closest a counter comes to now.
+        """
+        out = self.open_hour_rates(now, min_seconds)
+        for key, (watts, _since) in self._live_power.items():
+            out[key] = watts
+        return out
+
+    @property
+    def power_sources(self) -> dict[str, Any]:
+        """The sensors a card can show live, by what they measure.
+
+        Only channels that report power. An energy counter read as power would
+        show the day's total as this second's flow. The battery's comes from its
+        own option, because its mapped channels are often counters.
+        """
+        names = {Role.PV: "solar", Role.LOAD: "house", Role.GRID_IMPORT: "grid"}
+        out: dict[str, Any] = {}
+        for spec in self.specs:
+            name = names.get(spec.role)
+            if name is None:
+                continue
+            _value, kind = read_channel(self.hass.states.get(spec.entity_id))
+            if kind == KIND_POWER:
+                out[name] = spec.entity_id
+        battery = self.entry.options.get(OPT_BATTERY_POWER)
+        if battery:
+            out["battery"] = battery
+            out["battery_charging_positive"] = self.entry.options.get(
+                OPT_BATTERY_POWER_CHARGING_POSITIVE, True
+            )
+        return out
 
     def open_hour_rates(self, now: datetime, min_seconds: float) -> dict[str, float]:
         """Average power so far this hour, in W, for each channel that can say.

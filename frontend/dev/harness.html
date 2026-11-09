@@ -115,11 +115,21 @@
             reserve_pct: 35,
             target_pct: 100,
             production_from: "forecast: Forecast.Solar",
+            power_sources: {
+              solar: "sensor.harness_pv",
+              house: "sensor.harness_house",
+              grid: "sensor.harness_grid",
+              battery: "sensor.harness_battery",
+              battery_charging_positive: true,
+            },
             trajectory,
           },
         ],
         "sensor.safe_average_load_tonight": ["safe_average_load", "0.76", { until: iso(morning) }],
         "sensor.spare_solar": ["spare_solar", "1.8", { day_from: iso(now) }],
+        "sensor.usable_battery_energy": ["battery_usable_energy", "1.66", { reserve_pct: 35 }],
+        "sensor.expected_use_tonight": ["expected_use_tonight", "9.4", { from: iso(evening), until: iso(morning) }],
+        "sensor.spare_solar_power_now": ["spare_solar_power", "1240", { potential_w: 4800, source: "forecast" }],
         "sensor.expected_tomorrow_corrected": [
           "expected_tomorrow_corrected",
           "10.7",
@@ -131,6 +141,15 @@
       for (const [id, [key, state, attributes]] of Object.entries(outlook)) {
         states[id] = { entity_id: id, state, attributes, last_updated: "" };
         entities[id] = { entity_id: id, platform: "solar_sanity", translation_key: key, device_id: "harness" };
+      }
+      // The inverter's own power sensors, which the card reads live.
+      for (const [id, state, unit] of [
+        ["sensor.harness_pv", "2438", "W"],
+        ["sensor.harness_house", "0.436", "kW"],
+        ["sensor.harness_grid", "0", "W"],
+        ["sensor.harness_battery", "1912", "W"],
+      ]) {
+        states[id] = { entity_id: id, state, attributes: { unit_of_measurement: unit }, last_updated: "" };
       }
 
       const hass = {

@@ -7,7 +7,12 @@ charge, an hour at a time, from now until the forecast runs out:
 * when it will reach its reserve, if that happens before the sun takes over;
 * the lowest it will fall before the sun takes over;
 * the steadiest load the house could draw until then without hitting reserve;
-* how much sunshine the battery will have no room for.
+* how much sunshine the battery will have no room for;
+* what the house will use tonight.
+
+Two figures about *now* sit beside them and need no projection: what the
+battery can still give before its reserve (``usable_energy_wh``), and the solar
+power going to waste this minute (``spare_power_w``).
 
 They are read off one trajectory rather than computed five ways, so they cannot
 contradict each other — a "full at 15:20" beside a "nothing spare today" would
@@ -79,6 +84,13 @@ HOLD_WINDOW = timedelta(hours=1)
 #: Bisection rounds for the safe load. Forty halvings of a 10 kW bracket is far
 #: below a watt.
 _BISECTION_ROUNDS = 40
+
+#: Share of the charging ceiling at which the battery counts as charging as fast
+#: as it can. Then, on an inverter with nowhere to send a surplus, measured
+#: production is held down to what the house and the battery take, and the sun
+#: has more to give. On the reference installation the ceiling is 3434 Wh in an
+#: hour, and its clear middays charged 3.0 to 3.4 kWh an hour.
+CEILING_SHARE = 0.9
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +186,10 @@ class Outlook:
     horizon_end: datetime
     forecast_used: bool
     trajectory: tuple[tuple[datetime, float], ...]
+    #: What the house and the inverter will use from the start of the night (or
+    #: now, inside it) until the sun takes over, in Wh. ``None`` when the
+    #: horizon ends before the takeover.
+    night_load_wh: float | None = None
 
 
 def build_steps(
@@ -398,7 +414,7 @@ def project(
     night = night_window(steps)
 
     lowest_pct = lowest_at = night_from = takeover_at = None
-    safe_load_w = shortfall_wh = None
+    safe_load_w = shortfall_wh = night_load_wh = None
     if night is not None:
         stop = night.end if night.end is not None else len(steps)
         lowest = min(range(night.start, stop + 1), key=lambda i: (run.soc[i], i))
@@ -408,6 +424,10 @@ def project(
         shortfall_wh = sum(run.shortfall_wh[night.start : stop])
         if night.end is not None:
             takeover_at = steps[night.end].start
+            night_load_wh = sum(
+                step.load_wh + battery.standby_w * step.hours
+                for step in steps[night.start : night.end]
+            )
             safe_load_w = safe_average_load(
                 run.soc[night.start], battery, steps[night.start : night.end]
             )
@@ -444,7 +464,77 @@ def project(
         horizon_end=steps[-1].end,
         forecast_used=forecast_used,
         trajectory=tuple(zip(run.times, run.soc, strict=True)),
+        night_load_wh=night_load_wh,
     )
+
+
+def usable_energy_wh(soc_pct: float, battery: BatterySettings) -> float:
+    """What the battery can still give the house before its reserve, in Wh.
+
+    Above the reserve, not above zero: the inverter hands the house to the grid
+    there. Delivered to the house, after the discharge efficiency, so it reads
+    against a load the way the projection does. Never negative.
+    """
+    above = max(soc_pct - battery.reserve_pct, 0.0)
+    return battery.capacity_wh * above / 100.0 * battery.discharge_efficiency
+
+
+def spare_power_w(
+    soc_pct: float,
+    battery: BatterySettings,
+    *,
+    measured_pv_w: float | None,
+    forecast_pv_w: float | None,
+    load_w: float,
+) -> tuple[float, float, str] | None:
+    """Solar power going to waste now, as ``(spare, potential, source)``.
+
+    Spare is what the house could draw now at no cost: production neither the
+    house nor the battery takes, because the battery is full or charging as fast
+    as it can. It is worked the way ``simulate`` works a step: the house and the
+    inverter's standby first, then the battery up to its ceiling, and the rest is
+    spill.
+
+    The production it starts from is the measured one, unless the battery is
+    full or at its ceiling (``CEILING_SHARE``). Then an inverter with nowhere to
+    send a surplus has turned production down to what was used, so measured
+    production understates the sun, and the forecast, corrected for this roof,
+    says what it could be: the higher of the two. ``source`` says which was used.
+
+    ``None`` when there is nothing to go on, or when only the measured figure is
+    in hand and it is held down: a battery full under a clear sky would read as
+    no spare at all, the opposite of the truth.
+    """
+    full = soc_pct >= battery.target_pct - FULL_MARGIN_PCT
+    need = load_w + battery.standby_w
+    if full:
+        room = 0.0
+    elif battery.max_charge_w is None:
+        room = math.inf
+    else:
+        room = battery.max_charge_w / battery.charge_efficiency
+
+    held = full or (
+        measured_pv_w is not None
+        and math.isfinite(room)
+        and measured_pv_w - need >= CEILING_SHARE * room
+    )
+    if held:
+        if forecast_pv_w is None:
+            return None
+        if measured_pv_w is not None and measured_pv_w > forecast_pv_w:
+            potential, source = measured_pv_w, "measured"
+        else:
+            potential, source = forecast_pv_w, "forecast"
+    elif measured_pv_w is not None:
+        potential, source = measured_pv_w, "measured"
+    elif forecast_pv_w is not None:
+        potential, source = forecast_pv_w, "forecast"
+    else:
+        return None
+    if math.isinf(room):
+        return 0.0, potential, source
+    return max(potential - need - room, 0.0), potential, source
 
 
 def round_time(when: datetime) -> datetime:

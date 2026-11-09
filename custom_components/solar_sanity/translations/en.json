@@ -96,13 +96,17 @@
           "battery_soc_entity": "Battery charge level",
           "battery_capacity_kwh": "Usable battery capacity (kWh)",
           "battery_reserve_pct": "Reserve (%)",
-          "battery_target_pct": "Charging target (%)"
+          "battery_target_pct": "Charging target (%)",
+          "battery_power_entity": "Battery power (optional)",
+          "battery_power_charging_positive": "Battery power is positive while charging"
         },
         "data_description": {
           "battery_soc_entity": "Optional. Your battery's state of charge, as a percentage. With the capacity below, it is what the battery outlook projects from.",
           "battery_capacity_kwh": "How much energy the battery holds between empty and full, as its specification or your inverter states it. The battery outlook needs this to turn a percentage into hours; without it the outlook sensors are not created.",
           "battery_reserve_pct": "The level the battery is not taken below, usually your inverter's cut-off. \"Reaches reserve\" in the outlook means reaching this, not zero.",
-          "battery_target_pct": "The level the battery is charged to, usually 100. Lower it if your inverter stops charging early; sunshine beyond it counts as spare."
+          "battery_target_pct": "The level the battery is charged to, usually 100. Lower it if your inverter stops charging early; sunshine beyond it counts as spare.",
+          "battery_power_entity": "Optional, for the battery card only: a sensor of the power going into or out of the battery right now, in W or kW. Pick it when the battery channels you mapped are energy totals, which cannot show what the battery is doing this second.",
+          "battery_power_charging_positive": "Untick if that sensor reads positive while the battery discharges."
         }
       }
     },
@@ -147,6 +151,15 @@
       },
       "spare_solar": {
         "name": "Spare solar"
+      },
+      "battery_usable_energy": {
+        "name": "Usable battery energy"
+      },
+      "expected_use_tonight": {
+        "name": "Expected use tonight"
+      },
+      "spare_solar_power": {
+        "name": "Spare solar power now"
       }
     }
   },
