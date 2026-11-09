@@ -33,8 +33,10 @@ Beside them sits the **forecast archive**. Each selected solar forecast provider
 as it is issued, in two external statistic series: a rolling one, and a write-once day-ahead
 one. The day-ahead series is scored against what the roof produced
 (`forecast_bias_<provider>`), and the battery outlook learns its forecast scale from it.
-`expected_tomorrow_corrected` moves tomorrow by that scale, or by a stated score where there
-is no battery.
+`expected_tomorrow_corrected` and five more corrected sensors (power now, this hour, the next
+hour, the rest of today, today) are the provider's own figures moved by that scale, or by a
+stated score where there is no battery. No uncorrected figure is published: the provider's
+sensors already are one.
 
 A Lit card renders the outlook (`solar-sanity-battery-card`), and another renders tomorrow's
 current forecast from the rolling series, with what the roof is expected to make of it
@@ -162,11 +164,17 @@ every five minutes, and its sensors were written only at setup and by the six-ho
 
 - Unique ids are `f"{entry.entry_id}_{key}"`.
 - Sensors:
-  - `expected_tomorrow` and `expected_tomorrow_corrected`, both `TOTAL`, so the forecast
-    is recorded. The corrected one corrects the provider the uncorrected one came from and
-    no other, by the learned forecast scale first and a stated score second
-    (`analysis.forecast.correction`), and says which in its attributes: `provider`,
-    `forecast_statistic_id`, `factor`, `basis`, `days`, or `reason` while unknown;
+  - `expected_tomorrow_corrected`, `TOTAL`, so the forecast is recorded. It corrects the
+    first provider with a figure for tomorrow and no other, by the learned factor for
+    tomorrow first and a stated score second (`analysis.forecast.correction`), and says
+    which in its attributes: `provider`, `forecast_statistic_id`, `factor`, `basis`, `days`,
+    or `reason` while unknown. The uncorrected `expected_tomorrow` was retired in 0.33.0
+    (`RETIRED_ENTITIES`);
+  - five `solar_*_corrected` sensors, created when a provider is configured, with no
+    `state_class`: Forecast.Solar's power now, this hour, next hour, remaining today and
+    today, as this roof would make them (`analysis.forecast.roof_forecast`, fed by
+    `coordinator.roof_forecast`). Today's factor, from the same provider. No corrected peak
+    time: one factor for a day cannot move its peak;
   - one `forecast_bias_<provider>` per configured provider, created because the provider is
     configured, not because a figure exists yet;
   - the five outlook sensors (see 1).
@@ -432,9 +440,10 @@ carries the name and whose id the `provider` option stores; the hours are read f
 same provider's rolling archive, which for tomorrow is simply the forecast as it stands.
 Until 0.31.0 it drew the day-ahead rows, which for tomorrow are the first ones seen, about
 two days old: 48.2 kWh beside a sensor reading 34.6. "Never `latest`" is a rule for hours
-that have passed. Under each total, "From your roof" is that total times the `factor` of
-the one `expected_tomorrow_corrected` sensor naming the same rolling archive; nothing when
-none does, or when two installations do. It reads again every 30 minutes, keeping what is
+that have passed. When exactly one `expected_tomorrow_corrected` sensor names the same
+rolling archive with a `factor`, the curve and the total are multiplied by it and the
+uncorrected figure is not shown (0.33.0); otherwise the provider's forecast, and a line
+saying it is not corrected. It reads again every 30 minutes, keeping what is
 on screen meanwhile and through a failed refresh.
 
 **Editors** wrap Home Assistant's `<ha-form>`: a device picker filtered to the integration,

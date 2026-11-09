@@ -2,6 +2,52 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.33.0] - 2026-11-09
+
+Your forecast provider's figures, as your roof would make them, and only those.
+
+### Added
+
+- **Five corrected sensors beside "Solar energy tomorrow (corrected)":**
+  - "Solar power now (corrected)";
+  - "Solar energy this hour (corrected)";
+  - "Solar energy next hour (corrected)";
+  - "Solar energy remaining today (corrected)";
+  - "Solar energy today (corrected)".
+
+  These are the figures Forecast.Solar publishes, multiplied by what your roof
+  has delivered against that provider. With a battery, that is the factor
+  learned for a day forecast like today. A provider forecasts an ideal roof,
+  and dirty panels or poor placement mean yours is not one. The sensors exist
+  when a forecast provider is configured. Each says which provider and which
+  factor in its attributes.
+
+### Changed
+
+- **The forecast card shows only the corrected forecast** once the correction
+  is learned. The total and the curve are both corrected, and the figure for
+  an ideal roof is no longer printed. Until then it shows the provider's
+  forecast and says it is not yet corrected.
+- "Expected tomorrow (corrected)" is now named "Solar energy tomorrow
+  (corrected)", to sit with the others. Its entity id does not change.
+
+### Removed
+
+- **The "Forecast tomorrow" sensor** (`expected_tomorrow`). It was the
+  provider's uncorrected figure, which the provider's own sensor already shows.
+  It is removed from the registry on upgrade. An automation that used it should
+  use the provider's "Estimated energy production - tomorrow" sensor, or the
+  corrected one.
+
+### Notes
+
+- There is no corrected peak time. One factor for the whole day cannot move
+  the day's peak, so the provider's own peak-time sensors already have the
+  answer.
+- "Power now" is drawn between the hourly averages, the finest shape the
+  hourly forecast holds. At half past the hour it is exactly that hour's
+  average.
+
 ## [0.32.0] - 2026-11-09
 
 The forecast is corrected by how far it misses on days like the one ahead,
