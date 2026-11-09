@@ -45,7 +45,7 @@ nights, not projections; mean absolute lowest error at most 5 points; reserve ca
 least 85%) is the bar for any change to it.
 
 Without Home Assistant installed, `tests/integration` is not collected and nine test modules
-skip, silently. At 0.31.1 that is 242 tests locally, plus 152 card tests; CI adds the integration tier. Say in the PR when the HA tier did not run locally. The `Unknown config option:
+skip, silently. At 0.31.2 that is 249 tests locally, plus 152 card tests; CI adds the integration tier. Say in the PR when the HA tier did not run locally. The `Unknown config option:
 asyncio_mode` warning on such a machine is expected.
 
 ## Branch, commit, PR and release conventions

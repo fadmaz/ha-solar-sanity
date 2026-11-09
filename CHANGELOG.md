@@ -2,6 +2,29 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.31.2] - 2026-11-09
+
+"Battery full at" and "Battery reaches reserve at" no longer jump between
+today and tomorrow on a close call.
+
+### Fixed
+
+- **A time already shown stays while the battery is projected to miss it by a
+  point or two.** Once 0.31.1 let the sensors update every few minutes, a close
+  call became visible. On the reference installation the battery was projected
+  to peak at 99.4%, just over the 99% that counts as full. "Battery full at"
+  then swung between Monday 15:40 and Tuesday 12:20 four times in thirteen
+  minutes, because a single whole-percent step in the charge reading was enough
+  to tip it. The time shown now stays until the projected peak falls more than
+  two points short, and the same applies to the reserve warning. An earlier time
+  still shows at once, and a time that has passed without the battery filling
+  moves on.
+
+### Notes
+
+- The projection itself is unchanged, and so are the other three read-outs and
+  the card's chart. Only when the two times change is different.
+
 ## [0.31.1] - 2026-11-08
 
 The battery outlook's sensors now follow the battery. They were being written

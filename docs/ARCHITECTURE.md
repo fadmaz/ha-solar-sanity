@@ -292,6 +292,13 @@ it understates the sun by day.
 - **The safe load** is bisected on shortfall ≤ 1 Wh, which is monotone in the load.
 - **Times are published** rounded to 5 minutes, with a one-step hysteresis. A moment that
   has passed keeps its time.
+- **A narrow miss holds the published time** (`settle_full`, `settle_reserve`). When the
+  new estimate is gone or more than an hour later, a moment still ahead stays while the
+  projection comes within 2 points of its line up to an hour past it: the full line, or the
+  reserve. An earlier estimate always goes out at once. Without this, on 2026-11-09 the
+  reference installation's "full at" swung between Monday 15:40 and Tuesday 12:20 four
+  times in thirteen minutes, on a peak of 99.4 against the 99 line. One whole-percent step in
+  the charge reading was enough.
 - **The charge level is refused** if it is not numeric or not between 0 and 100. It is also
   refused if it is over 2 h old while the battery moved more than 2% of its capacity, or
   over 6 h old when no battery channel can tell.

@@ -23,6 +23,8 @@ from analysis.outlook import (
     round_time,
     safe_average_load,
     settle,
+    settle_full,
+    settle_reserve,
     simulate,
 )
 
@@ -454,3 +456,94 @@ class TestPublishing:
 
     def test_nothing_to_publish_clears_it(self) -> None:
         assert settle(MIDNIGHT, None, MIDNIGHT) is None
+
+
+class TestANarrowMissIsNotADifferentDay:
+    """A published time stays while the projection misses it by a point or two.
+
+    On 2026-11-09 the reference installation's peak sat at 99.4 against the 99
+    full line, and "full at" swung between Monday 15:40 and Tuesday 12:20 four
+    times in thirteen minutes. A one-point step in the charge reading was enough.
+
+    The day here: 10 kWh, no losses, two hours of 450 Wh surplus, then two of
+    200 Wh load. Full counts from 99%, 9,900 Wh.
+    """
+
+    BATTERY = BatterySettings(10_000, 20, 100, charge_efficiency=1.0, discharge_efficiency=1.0)
+
+    def sunny_then_dark(self, soc: float):
+        steps = flat(MIDNIGHT, 2, pv=450) + flat(MIDNIGHT + timedelta(hours=2), 2, load=200)
+        return project(soc, self.BATTERY, steps, forecast_used=True)
+
+    def published_full(self) -> datetime:
+        """From 91%: 9,550 Wh after an hour, 350 Wh to the line at 450 Wh/h is
+        46 min 40 s, so 1:46:40, published as 1:45."""
+        outlook = self.sunny_then_dark(91)
+        assert outlook.full_at == MIDNIGHT + timedelta(hours=1, minutes=46, seconds=40)
+        published = settle_full(None, outlook, self.BATTERY, MIDNIGHT)
+        assert published == MIDNIGHT + timedelta(hours=1, minutes=45)
+        return published
+
+    def test_a_peak_a_point_short_keeps_the_published_time(self) -> None:
+        """From 89.5% the peak is 98.5, half a point short of the line and
+        within two of it: the same afternoon, not another day."""
+        published = self.published_full()
+        outlook = self.sunny_then_dark(89.5)
+
+        assert outlook.full_at is None
+        assert max(level for _, level in outlook.trajectory) == pytest.approx(98.5)
+        assert settle_full(published, outlook, self.BATTERY, MIDNIGHT) == published
+
+    def test_a_peak_three_points_short_withdraws_it(self) -> None:
+        """From 87% the peak is 96: more than two points short is a real miss."""
+        published = self.published_full()
+        outlook = self.sunny_then_dark(87)
+
+        assert max(level for _, level in outlook.trajectory) == pytest.approx(96.0)
+        assert settle_full(published, outlook, self.BATTERY, MIDNIGHT) is None
+
+    def test_an_earlier_time_is_never_held_back(self) -> None:
+        """Held is only ever the later answer; good news goes out at once."""
+        later = MIDNIGHT + timedelta(hours=3, minutes=30)
+        outlook = self.sunny_then_dark(91)
+        assert settle_full(later, outlook, self.BATTERY, MIDNIGHT) == MIDNIGHT + timedelta(
+            hours=1, minutes=45
+        )
+
+    def test_a_move_within_the_hour_is_ordinary_news(self) -> None:
+        published = MIDNIGHT + timedelta(hours=1, minutes=45)
+        candidate = MIDNIGHT + timedelta(hours=2, minutes=30)
+        assert settle(published, candidate, MIDNIGHT, hold=True) == candidate
+
+    def test_a_moment_already_past_is_not_held(self) -> None:
+        """At 2:00 the published 1:45 has gone by without the battery filling;
+        the hold has nothing left to protect."""
+        published = self.published_full()
+        outlook = self.sunny_then_dark(89.5)
+        assert settle_full(published, outlook, self.BATTERY, MIDNIGHT + timedelta(hours=2)) is None
+
+    def test_without_a_forecast_nothing_is_held(self) -> None:
+        """A full time needs a forecast; history alone never publishes one."""
+        published = self.published_full()
+        steps = flat(MIDNIGHT, 2, pv=450) + flat(MIDNIGHT + timedelta(hours=2), 2, load=200)
+        outlook = project(89.5, self.BATTERY, steps, forecast_used=False)
+        assert settle_full(published, outlook, self.BATTERY, MIDNIGHT) is None
+
+    def test_a_reserve_time_is_held_the_same_way(self) -> None:
+        """Two dark hours of 100 Wh, then sun. From 21.5%, 150 Wh above the
+        2,000 Wh reserve: 100 in the first hour, 50 in half of the second, so
+        reserve at 1:30. From 22.5% the low is 20.5, inside two points of
+        reserve, and the warning stays. From 25% the low is 23, and it goes."""
+        steps = flat(MIDNIGHT, 2, load=100) + flat(MIDNIGHT + timedelta(hours=2), 2, pv=1000)
+
+        first = project(21.5, self.BATTERY, steps, forecast_used=True)
+        assert first.reserve_at == MIDNIGHT + timedelta(hours=1, minutes=30)
+        published = settle_reserve(None, first, self.BATTERY, MIDNIGHT)
+        assert published == MIDNIGHT + timedelta(hours=1, minutes=30)
+
+        narrow = project(22.5, self.BATTERY, steps, forecast_used=True)
+        assert narrow.reserve_at is None
+        assert settle_reserve(published, narrow, self.BATTERY, MIDNIGHT) == published
+
+        clear = project(25.0, self.BATTERY, steps, forecast_used=True)
+        assert settle_reserve(published, clear, self.BATTERY, MIDNIGHT) is None

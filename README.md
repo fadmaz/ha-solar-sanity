@@ -45,6 +45,10 @@ and reads five answers off that one projection:
 - *Full at* and *spare solar* need one. An inverter with nowhere to send a
   surplus records production cut back to what it could use, so history
   understates the sun.
+- The two times are steady on a close call. When the battery is projected to
+  miss full or reserve by a point or two, the time already shown stays, rather
+  than jumping to tomorrow and back with every new charge reading. An earlier
+  time always shows at once.
 
 **Learned from your own meters,** and shown as attributes:
 - **How far your forecast is off** (`forecast_scale`): what your panels delivered

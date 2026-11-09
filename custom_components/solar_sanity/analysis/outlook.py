@@ -61,6 +61,21 @@ SHORTFALL_TOLERANCE_WH = 1.0
 #: a minute on every refresh reads as a broken sensor.
 PUBLISH_STEP = timedelta(minutes=5)
 
+#: A published time the projection now narrowly misses is kept while the level
+#: still comes within this many points of its line. Measured on the reference
+#: installation on 2026-11-09: today's peak sat at 99.4 against the 99 full
+#: line, and one whole-percent step in the charge reading moved it by 1.0 point,
+#: as did the open hour producing 30% under its forecast. "Full at" swung
+#: between Monday 15:40 and Tuesday 12:20 four times in thirteen minutes. Two
+#: points is one reading step and one such hour.
+HOLD_PCT = 2.0
+
+#: The hold looks at the level up to this long after the published moment, and
+#: applies only to a new estimate this much later or gone. Smaller moves are
+#: ordinary news. An hour, because the trajectory is sampled at hour ends and
+#: the next sample is the first that shows the level the moment was about.
+HOLD_WINDOW = timedelta(hours=1)
+
 #: Bisection rounds for the safe load. Forty halvings of a 10 kW bracket is far
 #: below a watt.
 _BISECTION_ROUNDS = 40
@@ -440,17 +455,34 @@ def round_time(when: datetime) -> datetime:
     return when.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=snapped)
 
 
-def settle(previous: datetime | None, candidate: datetime | None, now: datetime) -> datetime | None:
+def settle(
+    previous: datetime | None,
+    candidate: datetime | None,
+    now: datetime,
+    *,
+    hold: bool = False,
+) -> datetime | None:
     """The time to publish, given the one already published.
 
-    Three rules, each stopping a different kind of flapping:
+    Four rules, each stopping a different kind of flapping:
 
     * the estimate is rounded to the publish step;
     * a new estimate within one step of the published one is not news;
     * once the moment has passed, the published time is kept — "full at 14:35"
       should go on saying 14:35 while the battery sits full, not advance to the
-      current time on every refresh.
+      current time on every refresh;
+    * with ``hold``, a moment still ahead is kept when the new estimate is gone
+      or more than ``HOLD_WINDOW`` later. ``hold`` says the miss is narrow (see
+      ``narrowly_missed``): the same afternoon by a point, not a different day.
+      An earlier estimate is never held back.
     """
+    if (
+        hold
+        and previous is not None
+        and previous > now
+        and (candidate is None or candidate > previous + HOLD_WINDOW)
+    ):
+        return previous
     if candidate is None:
         return None
     rounded = round_time(candidate)
@@ -461,3 +493,52 @@ def settle(previous: datetime | None, candidate: datetime | None, now: datetime)
     if candidate <= now and previous <= now:
         return previous
     return rounded
+
+
+def narrowly_missed(
+    previous: datetime | None,
+    trajectory: Sequence[tuple[datetime, float]],
+    now: datetime,
+    *,
+    line_pct: float,
+    rising: bool,
+) -> bool:
+    """Whether the projection still comes within ``HOLD_PCT`` of a published line.
+
+    ``rising`` for a full time, where the highest level up to an hour past the
+    published moment must reach ``line_pct - HOLD_PCT``; otherwise a reserve
+    time, where the lowest must come down to ``line_pct + HOLD_PCT``. A moment
+    already past holds nothing: ``settle`` keeps those by its own rule.
+    """
+    if previous is None or previous <= now:
+        return False
+    levels = [level for when, level in trajectory if now <= when <= previous + HOLD_WINDOW]
+    if not levels:
+        return False
+    if rising:
+        return max(levels) >= line_pct - HOLD_PCT
+    return min(levels) <= line_pct + HOLD_PCT
+
+
+def settle_full(
+    previous: datetime | None, outlook: Outlook, battery: BatterySettings, now: datetime
+) -> datetime | None:
+    """The full time to publish. Held only on a forecast, which ``full_at`` needs."""
+    hold = outlook.forecast_used and narrowly_missed(
+        previous,
+        outlook.trajectory,
+        now,
+        line_pct=battery.target_pct - FULL_MARGIN_PCT,
+        rising=True,
+    )
+    return settle(previous, outlook.full_at, now, hold=hold)
+
+
+def settle_reserve(
+    previous: datetime | None, outlook: Outlook, battery: BatterySettings, now: datetime
+) -> datetime | None:
+    """The reserve time to publish, held the same way."""
+    hold = narrowly_missed(
+        previous, outlook.trajectory, now, line_pct=battery.reserve_pct, rising=False
+    )
+    return settle(previous, outlook.reserve_at, now, hold=hold)
