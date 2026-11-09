@@ -32,6 +32,8 @@ from .analysis.outlook import (
     project,
     settle_full,
     settle_reserve,
+    spare_power_w,
+    usable_energy_wh,
 )
 from .analysis.profile import (
     PROFILE_DAYS,
@@ -124,6 +126,13 @@ class OutlookState:
     #: learned mostly from days forecast like it (``ForecastScale.for_day``).
     scale_today: float | None = None
     scale_tomorrow: float | None = None
+    #: The battery as the projection saw it, learned ceiling and standby
+    #: included, so the spare power can be worked between refreshes.
+    battery: BatterySettings | None = None
+    #: What the battery can still give before its reserve, in Wh.
+    usable_wh: float | None = None
+    #: The power sensors the card shows live (``coordinator.power_sources``).
+    power_sources: dict[str, Any] = field(default_factory=dict)
     load_profile: tuple[float | None, ...] = ()
     pv_profile: tuple[float | None, ...] = ()
     settings: dict[str, float] = field(default_factory=dict)
@@ -238,6 +247,31 @@ class BatteryOutlook:
             else:
                 totals[day] += archived.get(when, 0.0)
         return totals
+
+    def spare_power(self, now: datetime | None = None) -> tuple[float, float, str] | None:
+        """Solar power going to waste now, as ``spare_power_w`` works it.
+
+        Read when the sensor is written, every thirty seconds, from the live
+        readings rather than from the last refresh: the house's load moves by
+        the second, and an air conditioner switched on by this figure must see
+        it move. The battery and its charge come from the last refresh.
+        ``None`` while the charge level cannot be believed.
+        """
+        state = self.state
+        if state.battery is None or state.soc_pct is None or not state.soc_readable:
+            return None
+        rates = self.coordinator.live_rates(now or dt_util.utcnow(), ANCHOR_MIN_SECONDS)
+        load = rates.get(Role.LOAD.key)
+        if load is None:
+            return None
+        figures = self.coordinator.roof_forecast()
+        return spare_power_w(
+            state.soc_pct,
+            state.battery,
+            measured_pv_w=rates.get(Role.PV.key),
+            forecast_pv_w=None if figures is None else figures.power_now_w,
+            load_w=load,
+        )
 
     def tomorrow_factor(self, provider_entry_id: str, now: datetime) -> float | None:
         """``day_factors`` for tomorrow's local date, or ``None`` without a scale."""
@@ -382,12 +416,15 @@ class BatteryOutlook:
             },
         )
 
+        base.power_sources = coordinator.power_sources
         soc, age, reason = self._read_soc(settings, now)
         base.soc_age_s = age
         base.soc_pct = soc
+        base.battery = settings
         if soc is None:
             base.reason = reason
             return base
+        base.usable_wh = usable_energy_wh(soc, settings)
         if not load.ready:
             base.reason = "learning_consumption"
             return base

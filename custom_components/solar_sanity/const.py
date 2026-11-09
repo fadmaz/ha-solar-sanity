@@ -34,6 +34,15 @@ OPT_BATTERY_RESERVE_PCT: Final = "battery_reserve_pct"
 #: inverter is set to stop early. Charging stops here in the projection and
 #: anything beyond it counts as spare.
 OPT_BATTERY_TARGET_PCT: Final = "battery_target_pct"
+#: The battery's own power sensor, in W or kW, signed. Optional and shown only:
+#: the battery card draws the flow from it. Nothing is computed from it, because
+#: the projection already has the battery's energy from the mapped channels. It
+#: exists because those are often lifetime energy counters, as on the reference
+#: installation, and a counter cannot say what the battery is doing this second.
+OPT_BATTERY_POWER: Final = "battery_power_entity"
+#: Whether that sensor is positive while the battery charges. Inverters disagree;
+#: absent means yes.
+OPT_BATTERY_POWER_CHARGING_POSITIVE: Final = "battery_power_charging_positive"
 #: Defaults for the two above. Twenty percent is a common lithium cut-off and
 #: errs early for the ones set lower.
 DEFAULT_RESERVE_PCT: Final = 20.0

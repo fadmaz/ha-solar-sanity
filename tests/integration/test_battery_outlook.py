@@ -29,6 +29,8 @@ from custom_components.solar_sanity.const import (
     DOMAIN,
     LIVE_INTERVAL,
     OPT_BATTERY_CAPACITY_KWH,
+    OPT_BATTERY_POWER,
+    OPT_BATTERY_POWER_CHARGING_POSITIVE,
     OPT_BATTERY_RESERVE_PCT,
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
@@ -461,3 +463,73 @@ async def test_without_a_provider_there_is_nothing_to_correct(
 
     assert _entity_id(hass, entry, "solar_energy_today_corrected") is None
     assert _entity_id(hass, entry, "expected_tomorrow_corrected") is not None
+
+
+POWER = {"unit_of_measurement": "W", "device_class": "power"}
+
+
+async def test_what_the_battery_holds_what_tonight_takes_and_the_spare_sun(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry_data: dict[str, Any],
+) -> None:
+    """0.34.0. The owner asked for figures to act on. At 64% of 10 kWh with a
+    20% reserve the battery can give the house 44% of 10 kWh at 92%, 4.05 kWh.
+    The sun makes 1.5 kW against a 400 W house and the battery has no learned
+    ceiling, so it takes the rest and nothing is spare. The card is told which
+    sensors are power: the sun's and the house's, and the battery's option; the
+    grid's is not reporting, and the battery's channels are counters."""
+    options = {**BATTERY, OPT_BATTERY_POWER: "sensor.battery_power"}
+    entry = await _loaded(hass, MockConfigEntry(domain=DOMAIN, data=entry_data, options=options))
+    _week_of_history(entry)
+    hass.states.async_set("sensor.generation", "1500", POWER)
+    hass.states.async_set("sensor.consumption", "400", POWER)
+    hass.states.async_set(SOC, "64", {"unit_of_measurement": "%", "device_class": "battery"})
+    await hass.async_block_till_done()
+    _refresh(entry)
+    await hass.async_block_till_done()
+
+    def state(key: str) -> Any:
+        entity_id = _entity_id(hass, entry, key)
+        assert entity_id is not None, key
+        return hass.states.get(entity_id)
+
+    assert float(state("battery_usable_energy").state) == 4.05
+    tonight = state("expected_use_tonight")
+    assert float(tonight.state) > 0
+    assert tonight.attributes["until"] is not None
+    spare = state("spare_solar_power")
+    assert float(spare.state) == 0
+    assert (spare.attributes["potential_w"], spare.attributes["source"]) == (1500, "measured")
+    assert state("battery_lowest_before_sunrise").attributes["power_sources"] == {
+        "solar": "sensor.generation",
+        "house": "sensor.consumption",
+        "battery": "sensor.battery_power",
+        "battery_charging_positive": True,
+    }
+
+
+async def test_the_options_flow_keeps_the_battery_power_sensor_and_its_sign(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry: MockConfigEntry,
+) -> None:
+    """Saved, and cleared again by leaving it blank."""
+    await _loaded(hass, entry)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    done = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {OPT_BATTERY_POWER: "sensor.battery_power", OPT_BATTERY_POWER_CHARGING_POSITIVE: False},
+    )
+    await hass.async_block_till_done()
+
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[OPT_BATTERY_POWER] == "sensor.battery_power"
+    assert entry.options[OPT_BATTERY_POWER_CHARGING_POSITIVE] is False
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+
+    assert OPT_BATTERY_POWER not in entry.options
