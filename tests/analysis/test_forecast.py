@@ -26,6 +26,7 @@ from analysis.forecast import (
     correction,
     eligible,
     estimate,
+    roof_forecast,
 )
 
 START = date(2026, 6, 1)
@@ -429,3 +430,105 @@ class TestTheCorrectionForTomorrow:
         assert found is not None
         assert found.apply(34.61) == pytest.approx(round(34.61 * 0.52, 2))
         assert found.apply(34.61) == pytest.approx(18.0, abs=0.01)
+
+
+#: A day the provider lists from 06:00 to 13:00 UTC, 20 kWh, and the same the
+#: day after; the roof delivers half of it.
+SUNRISE = datetime(2026, 11, 10, 6, tzinfo=UTC)
+CURVE = [1.0, 2.0, 3.0, 4.0, 4.0, 3.0, 2.0, 1.0]
+POINTS = {
+    SUNRISE + timedelta(days=day, hours=index): kwh
+    for day in (0, 1)
+    for index, kwh in enumerate(CURVE)
+}
+
+
+def _utc_day(when: datetime) -> date:
+    return when.date()
+
+
+def roof_at(hour: int, minute: int = 0, *, factor: float | None = 0.5, **kw):
+    now = SUNRISE.replace(hour=hour, minute=minute)
+    return roof_forecast(
+        kw.pop("points", POINTS),
+        now,
+        day_of=_utc_day,
+        factor_for=lambda _day: factor,
+        today_kwh=kw.pop("today_kwh", 20.0),
+    )
+
+
+class TestTheRoofForecast:
+    """0.33.0. The owner asked for every Forecast.Solar sensor as their roof
+    would make it, and none for the ideal roof the provider forecasts. Each
+    figure below is worked by hand from the curve above at half."""
+
+    def test_this_hour_is_the_hours_forecast_corrected(self) -> None:
+        figures = roof_at(10, 20)
+
+        assert figures is not None
+        assert figures.this_hour_kwh == 2.0
+
+    def test_power_now_is_the_hours_average_at_half_past(self) -> None:
+        figures = roof_at(9, 30)
+
+        assert figures is not None
+        assert figures.power_now_w == 2000
+
+    def test_power_now_is_drawn_between_the_middles_of_the_hours(self) -> None:
+        """At 08:45, a quarter of the way from 08:30 (1.5 kWh, so 1500 W) to
+        09:30 (2000 W)."""
+        figures = roof_at(8, 45)
+
+        assert figures is not None
+        assert figures.power_now_w == 1625
+
+    def test_the_next_hour_is_the_next_sixty_minutes(self) -> None:
+        """Forecast.Solar's own sensor is: half of 08:00 (0.75) and half of
+        09:00 (1.0) at 08:30, not the 09:00 hour."""
+        figures = roof_at(8, 30)
+
+        assert figures is not None
+        assert figures.next_hour_kwh == 1.75
+
+    def test_what_is_left_of_today_counts_the_rest_of_this_hour(self) -> None:
+        """Half of 08:00 (0.75), then 09:00 to 13:00 (14 kWh at half, 7)."""
+        figures = roof_at(8, 30)
+
+        assert figures is not None
+        assert figures.remaining_today_kwh == 7.75
+
+    def test_today_is_the_days_whole_forecast_corrected(self) -> None:
+        figures = roof_at(12, today_kwh=20.0)
+
+        assert figures is not None
+        assert figures.today_kwh == 10.0
+
+    def test_before_sunrise_the_hour_is_dark_and_the_day_still_to_come(self) -> None:
+        """Forecast.Solar lists a day from sunrise. At 03:00 the hour is not in
+        the forecast, which on a day it covers means dark, not unknown."""
+        figures = roof_at(3)
+
+        assert figures is not None
+        assert (figures.this_hour_kwh, figures.power_now_w, figures.next_hour_kwh) == (0, 0, 0)
+        assert figures.remaining_today_kwh == 10.0
+
+    def test_just_after_midnight_the_edge_hour_stands_for_the_one_before(self) -> None:
+        """The forecast starts today, so yesterday's last hour is not in it."""
+        figures = roof_at(0, 15)
+
+        assert figures is not None
+        assert figures.power_now_w == 0
+
+    def test_a_day_the_forecast_does_not_reach_has_no_figures(self) -> None:
+        later = {when - timedelta(days=3): kwh for when, kwh in POINTS.items()}
+        figures = roof_at(9, points=later)
+
+        assert figures is not None
+        assert figures.this_hour_kwh is None
+        assert figures.power_now_w is None
+        assert figures.remaining_today_kwh is None
+
+    def test_nothing_without_a_factor_for_today(self) -> None:
+        """Uncorrected, the figure is the provider's own sensor, which exists."""
+        assert roof_at(9, factor=None) is None

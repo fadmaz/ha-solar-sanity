@@ -39,7 +39,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
 
 from ._local_time import local_day
-from .analysis.forecast import Correction, correction
+from .analysis.forecast import Correction, RoofForecast, correction, roof_forecast
 from .analysis.model import Bucket, BucketSource, ChannelSpec, Quality, Role
 from .battery_outlook import BatteryOutlook
 from .const import (
@@ -930,17 +930,104 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         provider = self._expected_tomorrow_provider
         if provider is None:
             return None
-        learned = self.battery.scale_for(provider)
         # Tomorrow's factor, not the overall one: learned mostly from the days
         # whose forecast looked like tomorrow's, the same factor the outlook
         # projects tomorrow with.
-        factor = self.battery.tomorrow_factor(provider, dt_util.utcnow())
+        return self._correction_for(
+            provider, self.battery.tomorrow_factor(provider, dt_util.utcnow())
+        )
+
+    def _correction_for(self, provider: str, factor: float | None) -> Correction | None:
+        """The correction for one provider on one day, given that day's learned factor."""
+        learned = self.battery.scale_for(provider)
         scored = next((s.bias for s in self.forecast_scores if s.entry_id == provider), None)
         return correction(
             None if learned is None or factor is None else (factor, learned.days),
             None if scored is None else scored.reportable_pct,
             0 if scored is None else scored.days,
         )
+
+    def _uncorrected_reason(self, provider: str) -> str:
+        """Why a provider's figures cannot be corrected yet, in a sentence."""
+        if self.battery.configured:
+            return (
+                "The battery outlook has not learned this roof yet. It needs "
+                "three days with room in the battery."
+            )
+        scored = next((s.bias for s in self.forecast_scores if s.entry_id == provider), None)
+        if scored is not None and scored.reason:
+            return scored.reason
+        return "This provider has not been compared with the roof yet."
+
+    def _roof_provider(self) -> str | None:
+        """The provider whose figures for today are corrected.
+
+        The one tomorrow's figure came from when it has a forecast in hand, so
+        the corrected sensors describe one provider; else the first that has.
+        """
+        provider = self._expected_tomorrow_provider
+        if provider is not None and self.forecast_points.get(provider):
+            return provider
+        for entry_id in self.entry.data.get(CONF_FORECAST_ENTRIES) or []:
+            if self.forecast_points.get(entry_id):
+                return entry_id
+        return None
+
+    def roof_forecast(self) -> RoofForecast | None:
+        """The provider's figures for now and today, corrected for this roof.
+
+        What Forecast.Solar publishes as sensors (power now, this hour, the
+        next hour, what is left of today, today) multiplied by the factor for
+        the kind of day forecast, so no figure for an ideal roof needs showing
+        beside them. ``None`` until there is a correction, because without one
+        the figure is the provider's own sensor.
+        """
+        provider = self._roof_provider()
+        if provider is None:
+            return None
+        now = dt_util.utcnow()
+        tz = self._time_zone()
+
+        def day_of(when: datetime) -> date:
+            return when.astimezone(tz).date() if tz is not None else when.date()
+
+        today = day_of(now)
+        learned = self.battery.day_factors(provider, now)
+        found = {
+            day: self._correction_for(provider, learned.get(day))
+            for day in (today, today + timedelta(days=1))
+        }
+
+        def factor_for(day: date) -> float | None:
+            found_for_day = found.get(day)
+            return None if found_for_day is None else found_for_day.factor
+
+        totals = self.battery.day_totals(provider, now)
+        return roof_forecast(
+            self.forecast_points[provider],
+            now,
+            day_of=day_of,
+            factor_for=factor_for,
+            today_kwh=totals.get(today, 0.0) / 1000.0,
+        )
+
+    @property
+    def roof_forecast_attrs(self) -> dict[str, Any]:
+        """Which provider today's corrected figures come from, and by what."""
+        provider = self._roof_provider()
+        if provider is None:
+            return {"reason": "No forecast has been captured yet."}
+        entry = self.hass.config_entries.async_get_entry(provider)
+        attrs: dict[str, Any] = {"provider": entry.title if entry is not None else provider}
+        now = dt_util.utcnow()
+        tz = self._time_zone()
+        today = now.astimezone(tz).date() if tz is not None else now.date()
+        found = self._correction_for(provider, self.battery.day_factors(provider, now).get(today))
+        if found is None:
+            attrs["reason"] = self._uncorrected_reason(provider)
+            return attrs
+        attrs.update(factor=found.factor, basis=found.basis, days=found.days)
+        return attrs
 
     @property
     def expected_tomorrow_corrected_kwh(self) -> float | None:
@@ -978,18 +1065,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         if found is not None:
             attrs.update(factor=found.factor, basis=found.basis, days=found.days)
             return attrs
-        if self.battery.configured:
-            attrs["reason"] = (
-                "The battery outlook has not learned this roof yet. It needs "
-                "three days with room in the battery."
-            )
-        else:
-            scored = next((s.bias for s in self.forecast_scores if s.entry_id == provider), None)
-            attrs["reason"] = (
-                scored.reason
-                if scored is not None and scored.reason
-                else "This provider has not been compared with the roof yet."
-            )
+        attrs["reason"] = self._uncorrected_reason(provider)
         return attrs
 
     @property

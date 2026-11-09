@@ -1,19 +1,20 @@
 /**
- * Tomorrow's forecast as it stands, and what this roof is expected to make of it.
+ * Tomorrow as this roof is expected to make it.
  *
  * One curve per provider: its latest forecast for tomorrow, read from the
- * archive the integration rewrites on every capture. That is the same figure
- * as the "Forecast tomorrow" sensor and the one the battery outlook projects
- * with. Until 0.31.0 this card drew the day-ahead archive instead, whose rows
- * for a day two days out are the first ones seen and never revised, and showed
- * 48.2 kWh for a Monday the sensor beside it put at 34.6.
+ * archive the integration rewrites on every capture, the forecast the battery
+ * outlook projects with. Until 0.31.0 this card drew the day-ahead archive
+ * instead, whose rows for a day two days out are the first ones seen and never
+ * revised, and showed 48.2 kWh for a Monday the provider then put at 34.6.
  *
- * Under each total, when the integration has one, a second figure: the same
- * forecast moved by what this roof has delivered against that provider, read
- * from the `expected_tomorrow_corrected` sensor's factor. Multiplied here, from
- * the panel's own total, rather than copied from the sensor's state, because
- * this card's "tomorrow" is the browser's day and the sensor's is Home
- * Assistant's.
+ * When the integration has learned how much of that provider's forecast this
+ * roof delivers, the curve and the total are corrected by it, read from the
+ * `expected_tomorrow_corrected` sensor's factor, and the forecast for an ideal
+ * roof is not shown at all: since 0.33.0, at the reference installation's
+ * owner's request, because the provider's own sensors already show it.
+ * Multiplied here rather than copied from the sensor's state, because this
+ * card's "tomorrow" is the browser's day and the sensor's is Home Assistant's.
+ * Until there is a factor, the provider's forecast, and a line saying so.
  *
  * What it does not show, and why:
  *
@@ -38,6 +39,7 @@ import {
   total,
   type Hour,
   type ProviderDay,
+  type RoofFactor,
 } from "./forecast-data";
 import type {
   GridOptions,
@@ -82,6 +84,8 @@ interface Panel {
   label: string;
   /** The archive the hours came from, which the roof figure is matched on. */
   latestId: string;
+  /** What the hours were corrected by, or nothing while uncorrected. */
+  roof?: RoofFactor;
   hours: Hour[];
   kwh: number;
   line: string;
@@ -91,9 +95,11 @@ interface Panel {
   labels: Array<{ x: number; text: string }>;
 }
 
-/** Everything the card needs to draw one provider's day. */
-export function buildPanel(day: ProviderDay): Panel {
-  const hours = day.hours;
+/** Everything the card needs to draw one provider's day, corrected when it can be. */
+export function buildPanel(day: ProviderDay, roof?: RoofFactor): Panel {
+  const hours = roof
+    ? day.hours.map((hour) => ({ ...hour, kwh: hour.kwh * roof.factor }))
+    : day.hours;
   const top = niceTicks(peak(hours)).at(-1) ?? 1;
 
   const x = scaleLinear([0, Math.max(hours.length - 1, 1)], [PAD_START, WIDTH - PAD_END]);
@@ -103,6 +109,7 @@ export function buildPanel(day: ProviderDay): Panel {
   return {
     label: day.label,
     latestId: day.latestId,
+    roof,
     hours,
     kwh: total(hours),
     line: linePath(points),
@@ -275,7 +282,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       );
     }
 
-    const panels = this._days.map(buildPanel);
+    const panels = this._days.map((day) => buildPanel(day, roofFactor(this.hass, day.latestId)));
     const withData = panels.filter((panel) => panel.hours.length > 1);
 
     if (withData.length === 0) {
@@ -294,7 +301,11 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
           </header>
           ${withData.map((panel) => this._panel(panel))}
           <p class="footnote">
-            The provider's latest forecast, which it revises through the day.
+            The provider's latest forecast, which it revises through the day${withData.some(
+              (panel) => panel.roof,
+            )
+              ? ", corrected for what your roof delivers"
+              : ""}.
             What was forecast a day ahead is kept separately, to compare with
             what happens.
           </p>
@@ -331,7 +342,8 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
 
   private _panel(panel: Panel): TemplateResult {
     const when = this._heading().toLowerCase();
-    const label = `${panel.label}: ${panel.kwh.toFixed(1)} kilowatt hours forecast for ${when}`;
+    const what = panel.roof ? "expected from your roof" : "forecast";
+    const label = `${panel.label}: ${panel.kwh.toFixed(1)} kilowatt hours ${what} for ${when}`;
     return html`
       <section class="panel">
         <div class="heading">
@@ -381,24 +393,23 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   }
 
   /**
-   * What this roof is expected to make of the forecast, when the integration
-   * has learned it. Nothing at all otherwise: an empty row would read as zero.
+   * What the total and the curve were corrected by, or that they were not.
+   * The figure for an ideal roof is never printed beside the corrected one.
    */
-  private _roof(panel: Panel): TemplateResult | typeof nothing {
-    const roof = roofFactor(this.hass, panel.latestId);
-    if (!roof) return nothing;
+  private _roof(panel: Panel): TemplateResult {
+    const roof = panel.roof;
+    if (!roof) {
+      return html`<p class="why">As the provider forecasts it, not yet corrected for your roof.</p>`;
+    }
     const share = Math.round(roof.factor * 100);
     const over = roof.days ? ` over the last ${roof.days} days` : "";
     return html`
-      <div class="heading roof">
-        <span class="provider">From your roof</span>
-        <span class="expect"><bdi>≈ ${(panel.kwh * roof.factor).toFixed(1)} kWh</bdi></span>
-      </div>
       <p class="why">
         ${roof.byKindOfDay
-          ? html`On days forecast like this one, your roof has delivered about
-              <bdi>${share}%</bdi> of the forecast${over}.`
-          : html`Your roof has delivered about <bdi>${share}%</bdi> of this forecast${over}.`}
+          ? html`Corrected for your roof: on days forecast like this one, it has delivered
+              about <bdi>${share}%</bdi> of the forecast${over}.`
+          : html`Corrected for your roof: it has delivered about <bdi>${share}%</bdi> of
+              this forecast${over}.`}
       </p>
     `;
   }
@@ -462,15 +473,11 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       color: var(--secondary-text-color);
       font-size: var(--ha-font-size-m, 0.875rem);
     }
-    .total,
-    .expect {
+    .total {
       color: var(--primary-text-color);
       font-size: var(--ha-font-size-l, 1rem);
       font-weight: var(--ha-font-weight-medium, 500);
       font-variant-numeric: tabular-nums;
-    }
-    .expect {
-      font-size: var(--ha-font-size-m, 0.875rem);
     }
     .why {
       margin: 0;

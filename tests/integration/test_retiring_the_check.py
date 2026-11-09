@@ -66,7 +66,7 @@ async def test_the_retired_entities_are_removed_and_nothing_else(
     retired = _register_retired(hass, entry)
     registry = er.async_get(hass)
     kept = registry.async_get_or_create(
-        "sensor", DOMAIN, f"{entry.entry_id}_expected_tomorrow", config_entry=entry
+        "sensor", DOMAIN, f"{entry.entry_id}_expected_tomorrow_corrected", config_entry=entry
     ).entity_id
 
     await _setup(hass, entry)

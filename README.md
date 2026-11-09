@@ -159,12 +159,13 @@ version-matched.
 Times are in Home Assistant's time zone. It finds its sensors in the entity
 registry, so renaming them does not lose them.
 
-**Solar Sanity: tomorrow's forecast** shows your provider's forecast for
-tomorrow as it stands now, the same figure as the "Forecast tomorrow" sensor.
-Once Solar Sanity has learned how much of that provider's forecast your roof
-actually delivers on days forecast like tomorrow, it adds a second line, "From
-your roof", with tomorrow moved by that factor. It reads the forecast again every half hour. It is hand-rolled
-inline SVG, so it re-themes with no JavaScript.
+**Solar Sanity: tomorrow's forecast** shows tomorrow as your roof is expected
+to make it: your provider's current forecast, curve and total, corrected by how
+much of it your roof has delivered on days forecast like tomorrow. The figure
+for an ideal roof is not shown; the provider's own sensors already show it.
+Until the correction is learned, it shows the provider's forecast and says so.
+It reads the forecast again every half hour. It is hand-rolled inline SVG, so
+it re-themes with no JavaScript.
 
 Neither takes any configuration. Drop one on a dashboard and it finds its own
 data. Each has an editor for when there is a second installation to choose
@@ -242,9 +243,24 @@ quietly corrupt a shared forecast archive.
 | `sensor.*_lowest_battery_before_sunrise` | Tonight's projected minimum. Its attributes carry the whole trajectory, the charge it started from, the reserve and target, the forecast scale and the inverter's standby |
 | `sensor.*_safe_average_load_tonight` | The steadiest load the house can draw until the sun takes over |
 | `sensor.*_spare_solar` | Sunshine the battery will have no room for. Needs a forecast provider |
-| `sensor.*_forecast_tomorrow` | Tomorrow's forecast, with a `state_class`, so it is actually recorded |
-| `sensor.*_expected_tomorrow_corrected` | The same figure moved by what your roof has delivered against that provider: the battery outlook's learned factor for a day forecast like tomorrow when there is a battery, otherwise the provider's stated accuracy. Its attributes name the provider, the `factor`, its `basis` (`learned` or `scored`) and the `days` behind it, or a `reason` while it is unknown |
+| `sensor.*_solar_power_now_corrected` | Your provider's forecast power now, as your roof would make it. Drawn between the hourly averages |
+| `sensor.*_solar_energy_this_hour_corrected` | This hour's forecast, corrected |
+| `sensor.*_solar_energy_next_hour_corrected` | The next sixty minutes, corrected |
+| `sensor.*_solar_energy_remaining_today_corrected` | What is left of today, corrected |
+| `sensor.*_solar_energy_today_corrected` | Today's whole forecast, corrected |
+| `sensor.*_expected_tomorrow_corrected` | Tomorrow's forecast, corrected, with a `state_class` so it is recorded. Shown as "Solar energy tomorrow (corrected)" |
 | `sensor.*_<provider>_accuracy` | One per configured provider: how close it has been, signed so negative means less than promised. Unknown until it is earned |
+
+The first five corrected sensors exist when a forecast provider is configured. They
+are the figures Forecast.Solar publishes, multiplied by what your roof has
+delivered against that provider. With a battery, that is the outlook's learned
+factor for a day forecast like today, or like tomorrow; without one, the
+provider's stated accuracy. Each carries the `provider`, the `factor`, its
+`basis` (`learned` or `scored`) and the `days` behind it, or a `reason` while
+it is unknown. There is no corrected peak time: one factor for the whole day
+cannot move the day's peak, so the provider's own peak-time sensors already
+say it. The uncorrected "Forecast tomorrow" was removed in 0.33.0 for the same
+reason.
 
 **Download diagnostics** on the device page carries everything the outlook was
 computed from: per-channel coverage, the hourly window, a month of charge level

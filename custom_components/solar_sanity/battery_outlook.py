@@ -212,6 +212,16 @@ class BatteryOutlook:
         scale = self._scales.get(provider_entry_id)
         if scale is None:
             return {}
+        totals = self.day_totals(provider_entry_id, now)
+        return {day: scale.for_day(total) for day, total in totals.items()}
+
+    def day_totals(self, provider_entry_id: str, now: datetime) -> dict[date, float]:
+        """Today's and tomorrow's whole forecast, in Wh, as ``day_factors`` judges it.
+
+        Without a day-ahead archive in hand (no battery, so nothing learned),
+        every hour comes from the current forecast, which is then the
+        provider's own figure for the day.
+        """
         day_of = _local_date(self.coordinator.time_zone)
         today = day_of(now)
         tomorrow = today + timedelta(days=1)
@@ -223,11 +233,11 @@ class BatteryOutlook:
             day = day_of(when)
             if day not in totals:
                 continue
-            if when >= hour and when in current:
+            if when in current and (when >= hour or not archived):
                 totals[day] += current[when] * 1000.0
             else:
                 totals[day] += archived.get(when, 0.0)
-        return {day: scale.for_day(total) for day, total in totals.items()}
+        return totals
 
     def tomorrow_factor(self, provider_entry_id: str, now: datetime) -> float | None:
         """``day_factors`` for tomorrow's local date, or ``None`` without a scale."""

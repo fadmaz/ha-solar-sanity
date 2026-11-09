@@ -45,22 +45,11 @@ class SolarSanitySensorDescription(SensorEntityDescription):
 
 
 SENSORS: tuple[SolarSanitySensorDescription, ...] = (
-    # `state_class: TOTAL` is the whole point of this sensor. Home Assistant's
-    # own forecast integrations omit it, which is exactly why their history is
-    # never recorded and yesterday's forecast cannot be scored.
-    SolarSanitySensorDescription(
-        key="expected_tomorrow",
-        translation_key="expected_tomorrow",
-        icon="mdi:weather-sunny",
-        device_class=SensorDeviceClass.ENERGY,
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        state_class=SensorStateClass.TOTAL,
-        value_fn=lambda coordinator: coordinator.expected_tomorrow_kwh,
-    ),
-    # `state_class: TOTAL` for the same reason as the uncorrected figure above:
-    # a forecast nobody records is a forecast nobody can score, and this one is
-    # the better of the two to keep. The attributes say which provider it
-    # corrects and by what, and the forecast card reads the factor from them.
+    # `state_class: TOTAL`: a forecast nobody records is a forecast nobody can
+    # look back on, and Home Assistant's own forecast integrations omit it. The
+    # attributes say which provider it corrects and by what, and the forecast
+    # card reads the factor from them. Until 0.33.0 an uncorrected "Forecast
+    # tomorrow" sat beside it; the provider's own sensor already says that.
     SolarSanitySensorDescription(
         key="expected_tomorrow_corrected",
         translation_key="expected_tomorrow_corrected",
@@ -70,6 +59,77 @@ SENSORS: tuple[SolarSanitySensorDescription, ...] = (
         state_class=SensorStateClass.TOTAL,
         value_fn=lambda coordinator: coordinator.expected_tomorrow_corrected_kwh,
         attrs_fn=lambda coordinator: coordinator.expected_tomorrow_corrected_attrs,
+    ),
+)
+
+
+def _roof(coordinator: SolarSanityCoordinator, figure: str) -> StateType:
+    """One of the provider's figures for now and today, corrected for this roof."""
+    figures = coordinator.roof_forecast()
+    return None if figures is None else getattr(figures, figure)
+
+
+def _roof_attrs(coordinator: SolarSanityCoordinator) -> dict[str, Any]:
+    return coordinator.roof_forecast_attrs
+
+
+#: The figures Forecast.Solar publishes as sensors, as this roof would make
+#: them (``analysis.forecast.roof_forecast``), so a dashboard can show only
+#: corrected figures. 0.33.0, at the reference installation's owner's request:
+#: the provider forecasts an ideal roof, and theirs is not one. No
+#: ``state_class``, like the provider's own: these are rewritten as the
+#: forecast and the clock move, not measured. The two peak-time sensors have no
+#: corrected twin, because one factor for the whole day cannot move its peak.
+ROOF_SENSORS: tuple[SolarSanitySensorDescription, ...] = (
+    SolarSanitySensorDescription(
+        key="solar_power_now_corrected",
+        translation_key="solar_power_now_corrected",
+        icon="mdi:solar-power",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        suggested_display_precision=0,
+        value_fn=lambda coordinator: _roof(coordinator, "power_now_w"),
+        attrs_fn=_roof_attrs,
+    ),
+    SolarSanitySensorDescription(
+        key="solar_energy_this_hour_corrected",
+        translation_key="solar_energy_this_hour_corrected",
+        icon="mdi:solar-power-variant",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=1,
+        value_fn=lambda coordinator: _roof(coordinator, "this_hour_kwh"),
+        attrs_fn=_roof_attrs,
+    ),
+    SolarSanitySensorDescription(
+        key="solar_energy_next_hour_corrected",
+        translation_key="solar_energy_next_hour_corrected",
+        icon="mdi:solar-power-variant",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=1,
+        value_fn=lambda coordinator: _roof(coordinator, "next_hour_kwh"),
+        attrs_fn=_roof_attrs,
+    ),
+    SolarSanitySensorDescription(
+        key="solar_energy_remaining_today_corrected",
+        translation_key="solar_energy_remaining_today_corrected",
+        icon="mdi:weather-sunset-down",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=1,
+        value_fn=lambda coordinator: _roof(coordinator, "remaining_today_kwh"),
+        attrs_fn=_roof_attrs,
+    ),
+    SolarSanitySensorDescription(
+        key="solar_energy_today_corrected",
+        translation_key="solar_energy_today_corrected",
+        icon="mdi:weather-sunny",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=1,
+        value_fn=lambda coordinator: _roof(coordinator, "today_kwh"),
+        attrs_fn=_roof_attrs,
     ),
 )
 
@@ -85,6 +145,14 @@ async def async_setup_entry(
     entities: list[SensorEntity] = [
         SolarSanitySensor(coordinator, entry, description) for description in SENSORS
     ]
+
+    # Created because a provider is configured: without one there is nothing
+    # to correct, and an entity that can never hold a value is a small
+    # dishonesty.
+    if coordinator.entry.data.get(CONF_FORECAST_ENTRIES):
+        entities += [
+            SolarSanitySensor(coordinator, entry, description) for description in ROOF_SENSORS
+        ]
 
     # Created because the battery is configured, never because a projection
     # happens to exist at this moment: the charge-level sensor of an MQTT-bridged
