@@ -258,7 +258,11 @@ all of this.
 - **The first step** is the rest of the current hour, at the rate measured so far
   (`open_hour_rates`) once it has been watched for 15 minutes.
 - **Load** comes from the hour-of-day profile, keyed by local hour, as a mean over 14 days.
-- **Production** comes from the forecast, scaled (4.3), keyed by UTC hour. Hours missing
+- **Production** comes from the forecast, scaled (4.3), keyed by UTC hour. Today and
+  tomorrow are each scaled for the kind of day forecast (`BatteryOutlook.day_factors`).
+  A day is judged by its whole total, from the current forecast for hours still to come
+  and from the day-ahead archive for hours gone, never from the current forecast's
+  rewrite of a passed hour (3.7). Hours missing
   inside the forecast's span count as zero, and the horizon ends at its last hour.
 
 Without a forecast, the production profile (a median by UTC hour) answers the night
@@ -281,7 +285,8 @@ it understates the sun by day.
 | Charging ceiling | `max_charge_w` | 30 days of `battery_charge` | 99th percentile; at least 20 hours of charging. |
 | Grid charging | `grid_charged_hours` | 14 days | Disclosed only. The projection never counts it, because it answers "would the battery alone get me there". |
 | Inverter standby | `standby_w` | Dark hours the battery carried alone | The median of `discharge × 0.92 − load`. About 92 W on the reference installation. An AC-side battery meter learns zero. |
-| Forecast scale | `forecast_scale` | Day-ahead archive against `pv` buckets, over 14 days | Only hours more than 3 points below the target and without grid import count. At least 3 days, bounded to 0.1 to 2.0. About 0.4 to 0.5 on the reference installation. |
+| Forecast scale | `forecast_scale` | Day-ahead archive against `pv` buckets, over 14 days | Only hours more than 3 points below the target and without grid import count. At least 3 days, bounded to 0.1 to 2.0. About 0.4 to 0.5 overall on the reference installation. |
+| Factor by the kind of day | `ForecastScale.for_day` | The same days, each with its whole day-ahead total | Each day weighted by `exp(-(ln(total ratio) / 0.6)²)`, plus half a day of the overall ratio. Today and tomorrow get their own; later days the overall one. On the reference installation about 0.43 for a 60 kWh day and 0.6 to 0.9 for a cloudy one. |
 
 ### 4.4 Read-outs and publishing
 
@@ -559,8 +564,12 @@ The version lives in `manifest.json` and nowhere else that matters. Its heading 
    - Anything that learns or grades from it learns from hindsight, or from clear-sky
      figures (3.7).
 4. **Daytime read-outs depend on the forecast's weather.**
-   - The scale corrects a constant overestimate, not a wrong day.
-   - "Full at" was wrong on 6 of 27 mornings on the reference installation.
+   - The scale corrects an overestimate by the kind of day forecast, not a wrong day.
+   - "Full at" was wrong on 6 of 28 mornings on the reference installation, before and
+     after 0.32.0. On the four it called right, the median error went from 81 minutes
+     early to 1 minute.
+   - A provider whose forecast stops partway through tomorrow makes tomorrow look
+     cloudier than it is. Its hours still to come are then scaled up.
 5. **Card delivery rests on undocumented Lovelace internals** (`resource_mode`, the
    resources collection). A Home Assistant release can change them without notice.
 6. **Side features fail into a debug log.** A forecast scale that cannot be learned, or a
