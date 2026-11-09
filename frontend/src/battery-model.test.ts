@@ -9,6 +9,8 @@ import {
   findInstallations,
   hasOutlook,
   headline,
+  power,
+  powerFlow,
   readOutlook,
   socAt,
 } from "./battery-model";
@@ -31,6 +33,9 @@ const KEYS = {
   battery_lowest_before_sunrise: "sensor.lowest_battery_before_sunrise",
   safe_average_load: "sensor.safe_average_load_tonight",
   spare_solar: "sensor.spare_solar",
+  battery_usable_energy: "sensor.usable_battery_energy",
+  expected_use_tonight: "sensor.expected_use_tonight",
+  spare_solar_power: "sensor.spare_solar_power_now",
 } as const;
 
 function registry(device = "dev-a", keys: Record<string, string> = KEYS) {
@@ -69,6 +74,12 @@ function evening(overrides: Partial<Record<keyof typeof KEYS, HassEntity>> = {})
       until: next("08:00").toISOString(),
     }),
     [KEYS.spare_solar]: entity(KEYS.spare_solar, "0.0", { day_from: at("12:19").toISOString() }),
+    [KEYS.battery_usable_energy]: entity(KEYS.battery_usable_energy, "1.66", { reserve_pct: 35 }),
+    [KEYS.expected_use_tonight]: entity(KEYS.expected_use_tonight, "9.42", {
+      from: at("17:00").toISOString(),
+      until: next("08:00").toISOString(),
+    }),
+    [KEYS.spare_solar_power]: entity(KEYS.spare_solar_power, "1240", { source: "forecast" }),
   };
   for (const [key, value] of Object.entries(overrides)) states[KEYS[key as keyof typeof KEYS]] = value!;
   return {
@@ -286,6 +297,114 @@ describe("the figures", () => {
     expect(shown[0]).toEqual({ label: "Safe load tonight", value: "—", sub: null });
     expect(shown[1]).toEqual({ label: "Lowest before sunrise", value: "35%", sub: "at 08:00" });
     expect(shown[2]).toEqual({ label: "Spare sun", value: "0.0 kWh", sub: "today" });
+  });
+
+  it("says what the battery holds, what tonight takes and the sun going spare now", () => {
+    // 0.34.0: the owner asked for figures to act on, beside the three above.
+    const shown = figures(outlook(), at("12:25"), clock);
+
+    expect(shown).toHaveLength(6);
+    expect(shown[3]).toEqual({ label: "Usable now", value: "1.7 kWh", sub: "above 35%" });
+    expect(shown[4]).toEqual({ label: "Tonight's use", value: "9.4 kWh", sub: "until 08:00" });
+    expect(shown[5]).toEqual({ label: "Spare sun now", value: "1.2 kW", sub: null });
+  });
+
+  it("shows a dash for the new ones too while they have no answer", () => {
+    const shown = figures(
+      outlook({ usableKwh: null, tonightKwh: null, tonightUntil: null, sparePowerW: null }),
+      at("12:25"),
+      clock,
+    );
+
+    expect(shown.slice(3).map((figure) => figure.value)).toEqual(["—", "—", "—"]);
+  });
+});
+
+describe("the power flow", () => {
+  const live = (states: Record<string, HassEntity>) =>
+    ({ states, entities: {}, config: { state: "RUNNING" } }) as unknown as HomeAssistant;
+
+  it("reads each named sensor in its own unit", () => {
+    const hass = live({
+      "sensor.pv": entity("sensor.pv", "2438", { unit_of_measurement: "W" }),
+      "sensor.house": entity("sensor.house", "0.436", { unit_of_measurement: "kW" }),
+      "sensor.grid": entity("sensor.grid", "0", { unit_of_measurement: "W" }),
+    });
+
+    expect(
+      powerFlow(hass, {
+        solar: "sensor.pv",
+        house: "sensor.house",
+        grid: "sensor.grid",
+        batteryChargingPositive: true,
+      }),
+    ).toEqual([
+      { label: "Solar", value: "2.4 kW" },
+      { label: "House", value: "436 W" },
+      { label: "Grid", value: "0 W" },
+    ]);
+  });
+
+  it("says which way the battery is going, whichever sign its sensor uses", () => {
+    const hass = live({
+      "sensor.battery": entity("sensor.battery", "-1900", { unit_of_measurement: "W" }),
+    });
+
+    expect(
+      powerFlow(hass, { battery: "sensor.battery", batteryChargingPositive: true }),
+    ).toEqual([{ label: "Battery", value: "discharging 1.9 kW" }]);
+    expect(
+      powerFlow(hass, { battery: "sensor.battery", batteryChargingPositive: false }),
+    ).toEqual([{ label: "Battery", value: "charging 1.9 kW" }]);
+  });
+
+  it("calls a few watts idle rather than a direction", () => {
+    const hass = live({
+      "sensor.battery": entity("sensor.battery", "8", { unit_of_measurement: "W" }),
+    });
+
+    expect(powerFlow(hass, { battery: "sensor.battery", batteryChargingPositive: true })).toEqual([
+      { label: "Battery", value: "idle" },
+    ]);
+  });
+
+  it("leaves out what is not reporting, never showing it as zero", () => {
+    const hass = live({
+      "sensor.pv": entity("sensor.pv", "unavailable", { unit_of_measurement: "W" }),
+      "sensor.total": entity("sensor.total", "1509.8", { unit_of_measurement: "kWh" }),
+    });
+
+    expect(
+      powerFlow(hass, { solar: "sensor.pv", house: "sensor.total", batteryChargingPositive: true }),
+    ).toEqual([]);
+    expect(powerFlow(hass, null)).toEqual([]);
+  });
+
+  it("is read from the lowest-battery sensor's power_sources", () => {
+    const hass = evening({
+      battery_lowest_before_sunrise: entity(KEYS.battery_lowest_before_sunrise, "35.1", {
+        trajectory: TRAJECTORY,
+        power_sources: { solar: "sensor.pv", battery_charging_positive: false },
+      }),
+    });
+    const read = readOutlook(hass, findInstallations(hass)[0]!);
+
+    expect(read.powerSources).toEqual({
+      solar: "sensor.pv",
+      house: undefined,
+      grid: undefined,
+      battery: undefined,
+      batteryChargingPositive: false,
+    });
+  });
+
+  it("writes watts as a person reads them", () => {
+    expect([power(436), power(999.6), power(1240), power(12_500)]).toEqual([
+      "436 W",
+      "1.0 kW",
+      "1.2 kW",
+      "12.5 kW",
+    ]);
   });
 });
 
