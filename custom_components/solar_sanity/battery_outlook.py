@@ -25,7 +25,14 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
 from .analysis.model import Role
-from .analysis.outlook import BatterySettings, Outlook, build_steps, project, settle
+from .analysis.outlook import (
+    BatterySettings,
+    Outlook,
+    build_steps,
+    project,
+    settle_full,
+    settle_reserve,
+)
 from .analysis.profile import (
     PROFILE_DAYS,
     ForecastScale,
@@ -335,8 +342,8 @@ class BatteryOutlook:
         base.outlook = outlook
         base.reason = None
         base.provider = provider
-        base.full_at = settle(self.state.full_at, outlook.full_at, now)
-        base.reserve_at = settle(self.state.reserve_at, outlook.reserve_at, now)
+        base.full_at = settle_full(self.state.full_at, outlook, settings, now)
+        base.reserve_at = settle_reserve(self.state.reserve_at, outlook, settings, now)
         return base
 
     def _read_soc(
