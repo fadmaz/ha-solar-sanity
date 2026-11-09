@@ -250,11 +250,26 @@ describe("the card", () => {
     );
 
     const rendered = await text();
-    expect(rendered).toContain("From your roof");
+    expect(rendered).toContain("Corrected for your roof");
     expect(rendered).toContain("18.0 kWh");
     expect(rendered).toContain("52%");
     expect(rendered).toContain("15 days");
     expect(rendered).not.toContain("days forecast like this one");
+  });
+
+  it("shows only the corrected figure once there is one", async () => {
+    // 0.33.0, at the reference installation's owner's request: the provider
+    // forecasts an ideal roof, and its own sensors already show that figure.
+    card.hass = withForecast(
+      corrected("18.0", { forecast_statistic_id: LATEST, factor: 0.52, days: 15 }),
+    );
+
+    const rendered = await text();
+    expect(rendered).toContain("18.0 kWh");
+    expect(rendered).not.toContain("34.6");
+    expect(card.shadowRoot?.querySelector("svg")?.getAttribute("aria-label")).toContain(
+      "expected from your roof",
+    );
   });
 
   it("says a learned factor is for days like this one", async () => {
@@ -274,6 +289,7 @@ describe("the card", () => {
     expect(rendered).toContain("12.5 kWh");
     expect(rendered).toContain("days forecast like this one");
     expect(rendered).toContain("36%");
+    expect(rendered).not.toContain("34.6");
   });
 
   it("leaves the roof out while there is nothing learned", async () => {
@@ -283,7 +299,8 @@ describe("the card", () => {
 
     const rendered = await text();
     expect(rendered).toContain("34.6 kWh");
-    expect(rendered).not.toContain("From your roof");
+    expect(rendered).toContain("not yet corrected for your roof");
+    expect(rendered).not.toContain("Corrected for your roof");
   });
 
   it("leaves the roof out when two installations disagree about it", async () => {
@@ -294,7 +311,9 @@ describe("the card", () => {
       states: { ...one.states, ...two.states },
     });
 
-    expect(await text()).not.toContain("From your roof");
+    const rendered = await text();
+    expect(rendered).toContain("34.6 kWh");
+    expect(rendered).not.toContain("Corrected for your roof");
   });
 
   it("never claims an accuracy it has not measured", async () => {
