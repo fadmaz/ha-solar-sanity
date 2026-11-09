@@ -52,16 +52,19 @@ type SolarSanityConfigEntry = ConfigEntry[SolarSanityData]
 #: profile immediately rather than after a week of its own measurement.
 BACKFILL_DAYS = 30
 
-#: The energy-balance check's entities, retired in 0.30.0, as (platform, key).
-#: Removed from the registry at every setup: nothing will ever write them
-#: again, and an entity restored as unavailable forever reads as a fault.
-#: Every setup rather than once, so a downgrade and a re-upgrade are covered.
+#: Entities nothing writes any more, as (platform, key): the energy-balance
+#: check's, retired in 0.30.0, and the uncorrected "Forecast tomorrow", retired
+#: in 0.33.0 because the provider's own sensor says the same. Removed from the
+#: registry at every setup: an entity restored as unavailable forever reads as
+#: a fault. Every setup rather than once, so a downgrade and a re-upgrade are
+#: covered.
 RETIRED_ENTITIES: tuple[tuple[str, str], ...] = (
     ("sensor", "status"),
     ("sensor", "data_completeness"),
     ("sensor", "corrections_active"),
     ("sensor", "live_residual"),
     ("binary_sensor", "data_healthy"),
+    ("sensor", "expected_tomorrow"),
 )
 
 #: There is nothing to configure in YAML — everything comes from the config

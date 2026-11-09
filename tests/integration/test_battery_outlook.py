@@ -407,3 +407,57 @@ async def test_today_is_judged_by_the_archive_for_the_hours_gone(
     assert attrs["factor"] == round(MIXED.for_day(16_000.0), 2) == 0.35
     assert attrs["basis"] == "learned"
     assert coordinator.expected_tomorrow_corrected_kwh == 5.6
+
+
+async def test_the_providers_figures_are_published_corrected(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry_data: dict[str, Any],
+) -> None:
+    """0.33.0. The owner asked for Forecast.Solar's sensors as their roof
+    would make them, and no figure for the ideal roof beside them. Here the
+    provider forecasts 2 kWh every hour of today and tomorrow and the roof
+    delivers half, so every corrected figure is clock-proof except what is
+    left of today."""
+    data = {**entry_data, CONF_FORECAST_ENTRIES: ["provider"]}
+    entry = await _loaded(hass, MockConfigEntry(domain=DOMAIN, data=data, options=BATTERY))
+    coordinator = entry.runtime_data.coordinator
+    zone = dt_util.get_time_zone(hass.config.time_zone)
+    today = dt_util.utcnow().astimezone(zone).date()
+    midnight = datetime.combine(today, time(0), tzinfo=zone).astimezone(UTC)
+    hours = [midnight + timedelta(hours=h) for h in range(48)]
+    coordinator.battery._scales = {"provider": ForecastScale(factor=0.5, hours=32, days=4)}
+    coordinator.battery._dayahead = {"provider": dict.fromkeys(hours, 2000.0)}
+    coordinator.forecast_points = {"provider": dict.fromkeys(hours, 2.0)}
+    coordinator.forecast_captured_at = dt_util.utcnow()
+    _refresh(entry)
+    await hass.async_block_till_done()
+
+    def state(key: str) -> Any:
+        entity_id = _entity_id(hass, entry, key)
+        assert entity_id is not None, key
+        return hass.states.get(entity_id)
+
+    assert float(state("solar_power_now_corrected").state) == 1000
+    assert float(state("solar_energy_this_hour_corrected").state) == 1.0
+    assert float(state("solar_energy_next_hour_corrected").state) == 1.0
+    hours_today = sum(1 for when in hours if when.astimezone(zone).date() == today)
+    assert float(state("solar_energy_today_corrected").state) == hours_today * 1.0
+    assert 0 < float(state("solar_energy_remaining_today_corrected").state) <= hours_today
+    attrs = state("solar_power_now_corrected").attributes
+    assert (attrs["provider"], attrs["factor"], attrs["basis"]) == ("provider", 0.5, "learned")
+    # The uncorrected figure is the provider's own sensor, and no longer ours.
+    assert _entity_id(hass, entry, "expected_tomorrow") is None
+
+
+async def test_without_a_provider_there_is_nothing_to_correct(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+    entry_data: dict[str, Any],
+) -> None:
+    """An entity that can never hold a value is a small dishonesty."""
+    data = {**entry_data, CONF_FORECAST_ENTRIES: []}
+    entry = await _loaded(hass, MockConfigEntry(domain=DOMAIN, data=data, options=BATTERY))
+
+    assert _entity_id(hass, entry, "solar_energy_today_corrected") is None
+    assert _entity_id(hass, entry, "expected_tomorrow_corrected") is not None

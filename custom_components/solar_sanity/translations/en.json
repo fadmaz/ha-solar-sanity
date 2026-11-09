@@ -112,14 +112,26 @@
   },
   "entity": {
     "sensor": {
-      "expected_tomorrow": {
-        "name": "Forecast tomorrow"
-      },
       "forecast_bias": {
         "name": "{provider} accuracy"
       },
+      "solar_power_now_corrected": {
+        "name": "Solar power now (corrected)"
+      },
+      "solar_energy_this_hour_corrected": {
+        "name": "Solar energy this hour (corrected)"
+      },
+      "solar_energy_next_hour_corrected": {
+        "name": "Solar energy next hour (corrected)"
+      },
+      "solar_energy_remaining_today_corrected": {
+        "name": "Solar energy remaining today (corrected)"
+      },
+      "solar_energy_today_corrected": {
+        "name": "Solar energy today (corrected)"
+      },
       "expected_tomorrow_corrected": {
-        "name": "Expected tomorrow (corrected)"
+        "name": "Solar energy tomorrow (corrected)"
       },
       "battery_full_at": {
         "name": "Battery full at"

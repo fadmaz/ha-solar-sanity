@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from .linalg import iqr, median, pearson, safe_ratio
 
@@ -431,3 +431,103 @@ def correction(
             days=bias_days,
         )
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class RoofForecast:
+    """A provider's figures for now and for today, as this roof would make them.
+
+    The figures Forecast.Solar publishes as sensors, multiplied by the factor
+    learned for this roof, so a dashboard needs no figure for an ideal roof
+    beside them. ``None`` where the forecast does not reach.
+    """
+
+    power_now_w: float | None
+    this_hour_kwh: float | None
+    next_hour_kwh: float | None
+    remaining_today_kwh: float | None
+    today_kwh: float | None
+
+
+HOUR = timedelta(hours=1)
+
+
+def roof_forecast(
+    points: Mapping[datetime, float],
+    now: datetime,
+    *,
+    day_of: Callable[[datetime], date],
+    factor_for: Callable[[date], float | None],
+    today_kwh: float | None,
+) -> RoofForecast | None:
+    """The provider's hourly forecast read as its own sensors read it, corrected.
+
+    ``points`` is kWh per UTC hour, keyed by the hour's start. ``factor_for``
+    gives the factor for a local day, ``None`` when there is none, and
+    ``today_kwh`` is the day's whole forecast as the factor judged it, which
+    the caller knows and this does not (``BatteryOutlook.day_totals``).
+
+    - **Next hour** is the next sixty minutes, not the next clock hour, as
+      Forecast.Solar's sensor is: the rest of this hour and the start of the
+      next, each by its share.
+    - **Power now** is drawn between the middles of the hours, where each
+      hour's energy is its average power. The hourly forecast holds no finer
+      shape, so at half past it is exactly that hour's average, and at the
+      edge of the forecast it is the edge hour's.
+    - **An hour the forecast skips** on a day it covers is a dark one, zero:
+      Forecast.Solar lists each day from sunrise to sunset, so at three in the
+      morning this hour is dark and the rest of the day is still to come. A
+      day it does not reach has no forecast, and the figure is ``None`` rather
+      than a zero nobody forecast.
+
+    ``None`` altogether without a factor for today: an uncorrected figure is
+    the provider's own sensor, which already exists.
+    """
+    factor = factor_for(day_of(now))
+    if factor is None or not points:
+        return None
+    first, last = day_of(min(points)), day_of(max(points))
+    hour = now.replace(minute=0, second=0, microsecond=0)
+
+    def energy(when: datetime) -> float | None:
+        """kWh in one hour, corrected, or ``None`` on a day the forecast misses."""
+        if not first <= day_of(when) <= last:
+            return None
+        scale = factor_for(day_of(when))
+        if scale is None:
+            return None
+        return points.get(when, 0.0) * scale
+
+    this = energy(hour)
+    following = energy(hour + HOUR)
+    elapsed = (now - hour) / HOUR
+
+    if elapsed < 0.5:
+        before, after, share = energy(hour - HOUR), this, elapsed + 0.5
+    else:
+        before, after, share = this, following, elapsed - 0.5
+    # At the edge of the forecast, the one hour there is: just after the
+    # midnight it starts at, yesterday is not in it, and the hour is dark.
+    before = after if before is None else before
+    after = before if after is None else after
+    power = None
+    if before is not None and after is not None:
+        power = (before + (after - before) * share) * 1000.0
+
+    next_hour = None
+    if this is not None and following is not None:
+        next_hour = this * (1.0 - elapsed) + following * elapsed
+
+    remaining = None
+    if this is not None:
+        today = day_of(now)
+        later = [when for when in points if when > hour and day_of(when) == today]
+        remaining = this * (1.0 - elapsed) + sum(points[when] for when in later) * factor
+
+    return RoofForecast(
+        power_now_w=None if power is None else round(power),
+        this_hour_kwh=None if this is None else round(this, 2),
+        next_hour_kwh=None if next_hour is None else round(next_hour, 2),
+        remaining_today_kwh=None if remaining is None else round(remaining, 2),
+        today_kwh=None if today_kwh is None else round(today_kwh * factor, 2),
+    )
