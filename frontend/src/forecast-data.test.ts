@@ -315,7 +315,21 @@ describe("roofFactor", () => {
   it("reads the factor the corrected sensor applied to this provider", () => {
     const ha = sensor("18.0", { forecast_statistic_id: LATEST, factor: 0.52, days: 15 });
 
-    expect(roofFactor(ha as unknown as HomeAssistant, LATEST)).toEqual({ factor: 0.52, days: 15 });
+    expect(roofFactor(ha as unknown as HomeAssistant, LATEST)).toEqual({
+      factor: 0.52,
+      days: 15,
+      byKindOfDay: false,
+    });
+  });
+
+  it("knows a learned factor is for the kind of day forecast", () => {
+    // 0.32.0: the battery outlook's factor weights the days forecast like
+    // tomorrow; a scored bias is one figure for every day.
+    const learned = sensor("12.5", { forecast_statistic_id: LATEST, factor: 0.36, basis: "learned" });
+    const scored = sensor("25.0", { forecast_statistic_id: LATEST, factor: 0.72, basis: "scored" });
+
+    expect(roofFactor(learned as unknown as HomeAssistant, LATEST)?.byKindOfDay).toBe(true);
+    expect(roofFactor(scored as unknown as HomeAssistant, LATEST)?.byKindOfDay).toBe(false);
   });
 
   it("says nothing for another provider", () => {
