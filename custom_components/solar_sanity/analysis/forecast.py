@@ -412,10 +412,14 @@ def correction(
     reference installation's gap grows with the size of the day, and the scorer
     refuses it.
 
+    The factor passed is tomorrow's, learned mostly from the days whose
+    forecast looked like tomorrow's (``profile.ForecastScale.for_day``). Before
+    0.32.0 it was one figure for every day: on the reference installation 0.52,
+    where its sunny days took about a third of their forecast.
+
     What the scale does not know: it is learned only on hours the battery had
     room. On a house that cannot export it overstates a day the battery fills,
-    because the forecast sun that day has nowhere to go. On the reference
-    installation that is 0.52 against a whole-day median of about 0.41.
+    because the forecast sun that day has nowhere to go.
     """
     if scale is not None:
         factor, days = scale

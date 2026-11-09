@@ -220,8 +220,26 @@ def _kwh(wh: float | None) -> float | None:
 
 
 def _scale(state: OutlookState) -> float | None:
-    """What the forecast was multiplied by, learned from this roof."""
+    """The overall ratio of this roof to the forecast, over every day learned."""
     return round(state.scale.factor, 2) if state.scale is not None else None
+
+
+def _scales(state: OutlookState) -> dict[str, float | None]:
+    """The overall ratio, and the factors today and tomorrow were projected with.
+
+    The two differ from the overall one by the kind of day forecast: on the
+    reference installation a sunny day took about a third of its forecast and
+    a cloudy one nearly all of it.
+    """
+
+    def rounded(value: float | None) -> float | None:
+        return round(value, 2) if value is not None else None
+
+    return {
+        "forecast_scale": _scale(state),
+        "forecast_scale_today": rounded(state.scale_today),
+        "forecast_scale_tomorrow": rounded(state.scale_tomorrow),
+    }
 
 
 def _standby(state: OutlookState) -> int | None:
@@ -247,7 +265,7 @@ def _full_attrs(state: OutlookState) -> dict[str, Any]:
     attrs: dict[str, Any] = {
         "target_pct": state.settings.get("target_pct"),
         "forecast_provider": state.provider,
-        "forecast_scale": _scale(state),
+        **_scales(state),
     }
     if state.full_at is None:
         attrs["reason"] = _why(
@@ -291,7 +309,7 @@ def _lowest_attrs(state: OutlookState) -> dict[str, Any]:
         "target_pct": state.settings.get("target_pct"),
         "consumption_days": state.load_days,
         "production_from": production,
-        "forecast_scale": _scale(state),
+        **_scales(state),
         "inverter_standby_w": _standby(state),
         # Disclosed rather than modelled. The projection never counts the grid
         # charging the battery, because the question it answers is whether the
@@ -325,7 +343,7 @@ def _spare_attrs(state: OutlookState) -> dict[str, Any]:
     attrs: dict[str, Any] = {
         "day_from": _iso(outlook.spare_from) if outlook else None,
         "forecast_provider": state.provider,
-        "forecast_scale": _scale(state),
+        **_scales(state),
     }
     if outlook is None or outlook.spare_wh is None:
         attrs["reason"] = _why(

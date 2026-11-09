@@ -82,7 +82,20 @@ def _outlook(state: OutlookState) -> dict[str, Any]:
         "max_charge_w": state.max_charge_w,
         "standby_w": state.standby_w,
         "forecast_scale": (
-            {"factor": state.scale.factor, "hours": state.scale.hours, "days": state.scale.days}
+            {
+                "factor": state.scale.factor,
+                "hours": state.scale.hours,
+                "days": state.scale.days,
+                "today": state.scale_today,
+                "tomorrow": state.scale_tomorrow,
+                # Each day learned from: its whole forecast, then the forecast
+                # and the production over the hours that taught, in Wh. Enough
+                # to recompute today's and tomorrow's factor by hand.
+                "by_day": [
+                    [day.forecast_wh, day.predicted_wh, day.delivered_wh]
+                    for day in state.scale.by_day
+                ],
+            }
             if state.scale is not None
             else None
         ),

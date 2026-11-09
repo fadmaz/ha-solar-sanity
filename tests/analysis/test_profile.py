@@ -15,6 +15,8 @@ from analysis.profile import (
     FULL_BAND_PCT,
     MIN_SAMPLES_PER_HOUR,
     MIN_STANDBY_HOURS,
+    ForecastScale,
+    ScaleDay,
     forecast_scale,
     grid_charged_hours,
     hourly_profile,
@@ -338,3 +340,82 @@ class TestTheForecastScale:
 
         assert scale is not None
         assert scale.factor == pytest.approx(0.5)
+
+
+#: Two sunny days and two cloudy ones, as on the reference installation in
+#: October and November 2026: a third of a 16 kWh forecast delivered, and 0.9
+#: of a 4 kWh one.
+SUNNY = ScaleDay(forecast_wh=16_000.0, predicted_wh=16_000.0, delivered_wh=16_000.0 / 3)
+CLOUDY = ScaleDay(forecast_wh=4_000.0, predicted_wh=4_000.0, delivered_wh=3_600.0)
+MIXED = ForecastScale(
+    factor=(2 * SUNNY.delivered_wh + 2 * CLOUDY.delivered_wh) / 40_000.0,
+    hours=32,
+    days=4,
+    by_day=(SUNNY, SUNNY, CLOUDY, CLOUDY),
+)
+
+
+class TestTheKindOfDay:
+    """0.32.0. One factor for every day was 26% optimistic on the reference
+    installation's sunny days and 11% pessimistic on its cloudy ones, because
+    Forecast.Solar was nearly three times the roof in full sun and about right
+    under cloud. The numbers below are worked by hand from ``for_day``: half a
+    day of the overall ratio (2233.3 Wh over 5000), plus each day weighted by
+    exp(-(ln(ratio of totals) / 0.6) ** 2), which is 0.0048 between 16 and
+    4 kWh."""
+
+    def test_a_sunny_day_is_scaled_by_the_sunny_days(self) -> None:
+        # (2233.3 + 10666.7 + 0.0048 * 7200) / (5000 + 32000 + 0.0048 * 8000)
+        assert MIXED.factor == pytest.approx(0.4467, abs=1e-4)
+        assert MIXED.for_day(16_000.0) == pytest.approx(0.3492, abs=1e-4)
+
+    def test_a_cloudy_day_is_scaled_by_the_cloudy_days(self) -> None:
+        # (2233.3 + 7200 + 0.0048 * 10666.7) / (5000 + 8000 + 0.0048 * 32000)
+        assert MIXED.for_day(4_000.0) == pytest.approx(0.7211, abs=1e-4)
+
+    def test_a_day_like_none_seen_leans_on_the_overall_ratio(self) -> None:
+        """Without the half day of the overall ratio, a 0.5 kWh day would take
+        the cloudy days' 0.9 from weights of a few millionths."""
+        assert MIXED.for_day(500.0) == pytest.approx(MIXED.factor, abs=1e-3)
+
+    def test_without_a_total_or_days_it_is_the_overall_ratio(self) -> None:
+        assert MIXED.for_day(None) == MIXED.factor
+        assert MIXED.for_day(0.0) == MIXED.factor
+        assert ForecastScale(factor=0.5, hours=32, days=4).for_day(16_000.0) == 0.5
+
+    def test_one_ratio_everywhere_is_that_ratio_on_every_day(self) -> None:
+        """A roof that delivers half of every forecast is scaled by half on any
+        day, so a house whose forecast runs uniformly high sees no change."""
+        scale = scale_of(days_of(4, pv=lambda h: sunny(h) / 2), 4)
+
+        assert scale is not None
+        for total in (1_000.0, 16_000.0, 60_000.0):
+            assert scale.for_day(total) == pytest.approx(0.5)
+
+    def test_each_day_is_judged_by_its_whole_forecast(self) -> None:
+        """From 13:00 the battery is full, so only five hours teach. The day
+        is still a 16 kWh day, not a 10 kWh one: judged by the hours that
+        taught, a full battery would make every sunny day look cloudier."""
+        buckets = days_of(4, pv=lambda h: sunny(h) / 2)
+        scale = scale_of(buckets, 4, soc_max=soc_of(4, lambda h: 100.0 if h >= 13 else 60.0))
+
+        assert scale is not None
+        first = scale.by_day[0]
+        assert (first.forecast_wh, first.predicted_wh, first.delivered_wh) == (
+            16_000.0,
+            10_000.0,
+            5_000.0,
+        )
+
+    def test_days_are_the_local_days_given(self) -> None:
+        """Twelve hours ahead of UTC, the sunny hours 08-16 UTC fall either
+        side of local midnight, so the four UTC days are five local ones."""
+        scale = scale_of(
+            days_of(4, pv=lambda h: sunny(h) / 2),
+            4,
+            day_of=lambda when: (when + timedelta(hours=12)).date(),
+        )
+
+        assert scale is not None
+        assert scale.days == 5
+        assert [day.forecast_wh for day in scale.by_day][1:4] == [16_000.0] * 3
