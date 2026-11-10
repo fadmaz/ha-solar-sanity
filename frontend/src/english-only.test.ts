@@ -3,6 +3,7 @@ import { render } from "lit";
 import { qualityPanel } from "./quality";
 import { SolarSanityBatteryCard } from "./battery-card";
 import { SolarSanityForecastCard } from "./forecast-card";
+import { SolarSanityToolsCard } from "./tools-card";
 import type { HomeAssistant } from "./types/hass";
 import "./editors";
 
@@ -13,7 +14,7 @@ const hass = (): HomeAssistant => ({language: "ar", states: {}, entities: {},
 afterEach(() => { document.body.innerHTML = ""; });
 
 describe("the English-only product contract", () => {
-  it.each([SolarSanityBatteryCard, SolarSanityForecastCard])("keeps card copy English despite a legacy language override", async (Card) => {
+  it.each([SolarSanityBatteryCard, SolarSanityForecastCard, SolarSanityToolsCard])("keeps card copy English despite a legacy language override", async (Card) => {
     // A briefly published language option must not retain translated output.
     const card = new Card();
     card.setConfig({type: "custom:test", language: "ar"});

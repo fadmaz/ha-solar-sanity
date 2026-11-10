@@ -188,3 +188,5 @@ node_modules/
 # Diagnostics downloads replayed by scripts/backtest_outlook.py. They hold a
 # real house's entity ids and a month of its consumption; never commit one.
 diagnostics/
+# Generated browser evidence for independent visual review.
+/.impeccable/review/

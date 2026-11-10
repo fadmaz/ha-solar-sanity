@@ -272,6 +272,9 @@ async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinat
 
 
 def _async_register_services(hass: HomeAssistant) -> None:
+    from .services import async_setup_tools
+
+    async_setup_tools(hass)
     if hass.services.has_service(DOMAIN, SERVICE_RESCORE_FORECASTS):
         return
 

@@ -3,7 +3,21 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.39.1, 2026-11-10.
+Last updated at 0.40.0, 2026-11-10.
+
+## Tools development sequence
+
+- 0.40.0 adds issued history and a separate tools card. Native read-only
+  actions return display fields from the in-memory journal, scoped by device
+  and read permissions. Synthetic UI checks cover desktop/phone layouts.
+  Real authenticated dashboard rendering and nonempty journal restart
+  persistence remain open until observed; no checkpoint is fabricated.
+- Next: 0.41.0 single-load simulation, then 0.42.0 input-change explanations.
+  0.43.0 prepares alternate schedule learning, with an empty day selection by
+  default for every installation, including the reference house. Operational
+  comparison waits for a documented close of the morning experiment.
+- The current baseline, morning and interval gates and existing read-only
+  scheduled observations remain unchanged.
 
 ## Development sequence after 0.34.2
 

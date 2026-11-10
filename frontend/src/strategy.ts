@@ -35,7 +35,7 @@ export function buildCards(hass: HomeAssistant | undefined): LovelaceCardConfig[
         }))
       : [{ type: "custom:solar-sanity-battery-card" }];
 
-  return [...battery, { type: "custom:solar-sanity-forecast-card" }];
+  return [...battery, { type: "custom:solar-sanity-forecast-card" }, ...batteries.map(i => ({type: "custom:solar-sanity-tools-card", device_id: i.deviceId}))];
 }
 
 /** Fills a view. Selected with `strategy: {type: "custom:solar-sanity"}`. */

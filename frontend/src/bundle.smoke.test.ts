@@ -50,6 +50,7 @@ describe.skipIf(!built)(`the built bundle (${BUNDLE})`, () => {
       "solar-sanity-battery-card",
       "solar-sanity-card",
       "solar-sanity-forecast-card",
+      "solar-sanity-tools-card",
       "ll-strategy-view-solar-sanity",
       "ll-strategy-dashboard-solar-sanity",
     ]) {
@@ -68,6 +69,7 @@ describe.skipIf(!built)(`the built bundle (${BUNDLE})`, () => {
     expect(cards?.map((c) => c.type).sort()).toEqual([
       "solar-sanity-battery-card",
       "solar-sanity-forecast-card",
+      "solar-sanity-tools-card",
     ]);
   });
 

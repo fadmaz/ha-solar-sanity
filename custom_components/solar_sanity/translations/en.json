@@ -197,6 +197,20 @@
     }
   },
   "services": {
+    "get_forecast_history": {
+      "name": "Get forecast history",
+      "description": "Read issued predictions and their observed results for one installation.",
+      "fields": {
+        "device_id": {
+          "name": "Installation",
+          "description": "The Solar Sanity device to read."
+        },
+        "days": {
+          "name": "Days",
+          "description": "Calendar days of issued observations to return, up to 90."
+        }
+      }
+    },
     "rescore_forecasts": {
       "name": "Rescore forecasts",
       "description": "Compare every configured forecast provider against what your roof actually produced, now rather than at the next six-hourly scoring. Returns what it found, including why it will not put a number to a provider yet."

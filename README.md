@@ -184,6 +184,14 @@ Until then the sensor reads unknown and its `reason` says what it is waiting for
 
 ## Cards
 
+**Solar Sanity: tools** shows saved forecasts against what the battery actually
+did. Its History view offers 7, 28 or 90 days, seven dates at a time. Pending,
+excluded and missed checkpoints remain visible with their reasons. An hourly
+maximum can prove that full occurred without supplying a precise fill time.
+The card has its own installation picker and appears in generated dashboards.
+`solar_sanity.get_forecast_history` returns the same bounded display data for a
+selected device, with read-permission checks and no private replay inputs.
+
 Both ship inside the integration and register themselves. One install, always
 version-matched.
 
