@@ -158,11 +158,16 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   }
 
   public getCardSize(): number {
-    return 5;
+    return 7;
   }
 
+  /**
+   * As tall as its content, for the same reason as the battery card's: one
+   * panel per provider and a sentence that wraps on a narrow column cannot
+   * be fitted to a fixed number of rows.
+   */
   public getGridOptions(): GridOptions {
-    return { rows: 5, min_rows: 4, columns: 12, min_columns: 6 };
+    return { rows: "auto", columns: 12, min_columns: 6 };
   }
 
   /**

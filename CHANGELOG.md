@@ -2,6 +2,16 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.34.1] - 2026-11-10
+
+### Fixed
+
+- **The battery card no longer runs under the card below it** on a sections
+  dashboard. It asked for a fixed height of five rows. 0.34.0 added the
+  power-flow line and a second row of figures, and the chart's bottom then
+  slid under the next card. Both Solar Sanity cards now take the height their
+  content needs.
+
 ## [0.34.0] - 2026-11-09
 
 Three new figures to act on, and the battery card shows the power flowing now.

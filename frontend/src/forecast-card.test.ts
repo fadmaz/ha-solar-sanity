@@ -325,6 +325,10 @@ describe("the card", () => {
     }
   });
 
+  it("takes the height its content needs on a sections dashboard", () => {
+    expect(card.getGridOptions().rows).toBe("auto");
+  });
+
   it("throws only for an authoring mistake", () => {
     const fresh = document.createElement("solar-sanity-forecast-card") as SolarSanityForecastCard;
 
