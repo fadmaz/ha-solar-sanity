@@ -15,6 +15,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .analysis.calibration import interval_view, issue_interval
 from .analysis.daylight_shape import SHAPE_REVISION
 from .analysis.experiment import shape_gate
 from .analysis.grading import grade, summarize
@@ -375,6 +376,8 @@ class OutlookJournal:
             record["shadow"] = candidate
         record["shape_reason"] = state.shape_reason
         record["shape_days"] = list(state.shape_days)
+        if kind == "evening":
+            record["interval"] = issue_interval(self.records, record)
         return record
 
     async def _grade_pending(self, now: datetime) -> bool:
@@ -428,6 +431,17 @@ class OutlookJournal:
         today = now.astimezone(zone).date()
         since = datetime.combine(today - timedelta(days=days - 1), time(), tzinfo=zone)
         return summarize(self.records, self.context(), since)
+
+    def interval(self, now: datetime | None = None) -> dict[str, Any]:
+        selected = [
+            r
+            for r in self.records
+            if r.get("context") == self.context()
+            and r.get("model_revision") == MODEL_REVISION
+            and r.get("checkpoint") == "evening"
+        ]
+        latest = max(selected, key=lambda r: r["issued_at"]) if selected else None
+        return interval_view(latest, now or dt_util.utcnow())
 
     def experiment(self) -> dict[str, Any]:
         return shape_gate(self.records, self.context())
@@ -487,6 +501,17 @@ def _valid_record(record: Any) -> bool:
         )
         if not valid:
             return False
+        interval = record.get("interval")
+        if interval is not None:
+            if not isinstance(interval, dict):
+                return False
+            low, high = interval.get("lower"), interval.get("upper")
+            if (low is not None or high is not None) and (
+                low is None or high is None or not (0 <= low <= high <= 100)
+            ):
+                return False
+            if interval.get("publishable") and (low is None or high is None):
+                return False
         status = record["result"]["status"]
         if status in ("pending", "graded"):
             end = datetime.fromisoformat(record["until"])

@@ -48,6 +48,9 @@ describe("the English-only product contract", () => {
     add("collection_status", "ok", {});
     add("night_lowest_mae", "unknown", {sample_count: 0, excluded: {missing_soc: 2}, pending: 1});
     add("morning_fill_accuracy", "100", {sample_count: 1});
+    add("evening_lowest_lower_bound", "unknown", {calibration_count: 12, validation_count: 0,
+      reason: "Needs at least 30 complete calibration nights in this configuration."});
+    add("evening_lowest_upper_bound", "unknown", {});
     const target = document.createElement("div"); document.body.append(target);
     render(qualityPanel(data, "home"), target);
     expect(target.textContent).toContain("Accuracy and data quality");
@@ -55,5 +58,8 @@ describe("the English-only product contract", () => {
     expect(target.querySelector("dd")!.textContent).toContain("—");
     expect(target.textContent).toContain("100.0 %");
     expect(target.querySelector("details")?.open).toBe(false);
+    expect(target.textContent).toContain("Experimental range for the 20:00 forecast");
+    expect(target.textContent).toContain("12 calibration nights");
+    expect(target.textContent).toContain("Needs at least 30 complete");
   });
 });

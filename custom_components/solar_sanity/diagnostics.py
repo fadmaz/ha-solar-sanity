@@ -60,6 +60,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Any) ->
         if data
         else {},
         "outlook_journal": data.coordinator.journal.records if data else [],
+        "evening_interval": data.coordinator.journal.interval() if data else None,
         "morning_experiment": data.coordinator.journal.experiment() if data else None,
         "collection": (
             {

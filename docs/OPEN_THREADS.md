@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.37.0, 2026-11-10.
+Last updated at 0.38.0, 2026-11-10.
 
 ## Development sequence after 0.34.2
 
@@ -26,9 +26,12 @@ Last updated at 0.37.0, 2026-11-10.
   shoulders alone correctly fell back on every day. New diagnostics provide
   independent local sunrise/sunset windows so sparse-provider horizons can be
   checked without assuming missing readings are zero.
-- **Evening interval:** 80% empirical range for the frozen 20:00 forecast,
+- **0.38.0 evening interval:** 80% empirical range for the frozen 20:00 forecast,
   needing 30 calibration nights and 14 later complete shadow observations
-  with at least 80% coverage. It is not a band around the live projection.
+  with at least 80% coverage. The code freezes calibration and tests only prior
+  held-out issues; public bounds stay unknown until the gate passes and expire
+  at the saved night boundary. No calibration or prospective interval evidence
+  is available yet. This remains an open live-data gate.
 - **Second installation:** synthetic variants and a common comparison report
   can be prepared now; no independent house's data is available. Generalization
   and 1.0 readiness cannot be asserted from the reference house alone.
