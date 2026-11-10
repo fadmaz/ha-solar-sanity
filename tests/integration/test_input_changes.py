@@ -58,7 +58,7 @@ async def test_source_and_zone_changes_start_new_comparisons(
     ):
         battery.refresh(force=True)
     assert battery.state.outlook_changes["status"] == "starting"
-    hass.config.set_time_zone("America/New_York")
+    await hass.config.async_set_time_zone("America/New_York")
     with patch.object(
         battery, "_compute", return_value=replace(state, computed_at=NOW + timedelta(minutes=10))
     ):
