@@ -2,6 +2,36 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.38.0] - 2026-11-10
+
+### Fixed
+
+- Supply the explicit production-history fallback argument when running the
+  silent daylight candidate. Its missing argument prevented shadow calculation
+  while the isolated baseline continued normally. No prospective checkpoint
+  had yet been recorded on the reference installation.
+
+### Added
+
+- Two experimental sensors expose the lower and upper bounds of the issued
+  20:00 minimum-charge prediction. The range targets 80% coverage, using the
+  10th and 90th signed-error quantiles of up to 60 earlier valid nights from
+  the same model and configuration. This night's outcome cannot calibrate it.
+- Bounds remain unknown until 30 calibration nights and 14 later complete
+  silent-validation nights achieve at least 80% observed coverage. Calibration
+  and validation counts, measured coverage, revision, issue time and night
+  boundary accompany the sensors. Limits expire when that frozen night ends.
+- The cards' quality section displays the dated experimental evening interval
+  separately, with explicit reasons while evidence is insufficient. Waiting
+  for calibration does not change collection health or raise a Repairs issue.
+
+### Notes
+
+- New evidence starts with actual recorded forecasts. An old snapshot never
+  gains a reconstructed interval. Recorder reads completed after issue time
+  cannot improve that issue's calibration. The live projection is unchanged.
+- This is an empirical experimental interval, not a battery guarantee.
+
 ## [0.37.0] - 2026-11-10
 
 ### Added

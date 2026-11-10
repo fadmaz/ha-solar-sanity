@@ -26,8 +26,8 @@ export function qualityPanel(hass: HomeAssistant, deviceId?: string, providerIds
       && p.translation_key === "forecast_last_captured_at"
       && providerIds.includes(String(hass.states[p.entity_id]?.attributes.forecast_statistic_id)))));
   if (statuses.length === 0) return nothing;
-  const stamp = (entity?: HassEntity) => {
-    const when = entity ? new Date(entity.state) : null;
+  const stamp = (entity?: HassEntity | string) => {
+    const when = entity ? new Date(typeof entity === "string" ? entity : entity.state) : null;
     return when && !Number.isNaN(when.getTime())
       ? new Intl.DateTimeFormat("en", { timeZone: safeTimeZone(hass.config.time_zone),
         month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(when)
@@ -43,6 +43,9 @@ export function qualityPanel(hass: HomeAssistant, deviceId?: string, providerIds
     const reason = String(status?.attributes.reason ?? "");
     const night = get("night_lowest_mae");
     const morning = get("morning_fill_accuracy");
+    const lower = get("evening_lowest_lower_bound");
+    const upper = get("evening_lowest_upper_bound");
+    const interval = lower?.attributes ?? upper?.attributes;
     const count = (v: unknown) => { const n = finite(v); return n === null ? "—" : n.toFixed(0); };
     const hasSamples = finite(night?.attributes.sample_count) !== null
       && Number(night?.attributes.sample_count) > 0
@@ -76,6 +79,18 @@ export function qualityPanel(hass: HomeAssistant, deviceId?: string, providerIds
             })}</dl>` : nothing}
           ${excludedCount !== null ? html`<p>${`${excludedCount.toFixed(0)} excluded · ${count(night?.attributes.pending)} pending`}</p>` : nothing}
         ` : nothing}
+        ${interval ? html`<section class="quality-interval">
+          <h3>Experimental range for the 20:00 forecast</h3>
+          <p><bdi>${finite(lower?.state) === null || finite(upper?.state) === null ? "—"
+            : `${Number(lower?.state).toFixed(1)}–${Number(upper?.state).toFixed(1)}%`}</bdi>
+            · 80% target coverage</p>
+          ${interval.reason ? html`<p>${interval.reason}</p>` : nothing}
+          <p>Issued <bdi>${stamp(String(interval.issued_at ?? ""))}</bdi>
+            · Until <bdi>${stamp(String(interval.until ?? ""))}</bdi></p>
+          <p>${count(interval.calibration_count)} calibration nights · ${count(interval.validation_count)} validation nights</p>
+          <p>Measured coverage: <bdi>${finite(interval.measured_coverage) === null ? "—"
+            : `${(Number(interval.measured_coverage) * 100).toFixed(1)}%`}</bdi></p>
+        </section>` : nothing}
         ${providerEntries.map((p) => {
           const captured = hass.states[p.entity_id];
           const statistic = captured?.attributes.forecast_statistic_id;
@@ -100,6 +115,8 @@ export const qualityStyles = css`
   .quality-status { color: var(--secondary-text-color); margin-inline-start: 8px; }
   .quality-status[data-state="error"], .quality-status[data-state="degraded"] { color: var(--error-color); }
   .quality-body p { margin: 10px 0; color: var(--secondary-text-color); }
+  .quality-interval { margin-block: 16px; }
+  .quality-interval h3 { margin: 0; font-size: inherit; font-weight: 500; line-height: 1.6; }
   .quality-metrics, .quality-times { margin: 12px 0; display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
   .quality dt { color: var(--secondary-text-color); }

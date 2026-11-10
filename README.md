@@ -390,3 +390,13 @@ evidence only; it is not prospective validation.
 The corrected tomorrow sensor's `corrected_hours` attribute carries the exact
 curve drawn by the forecast card. `applied_factor` preserves the unrounded
 multiplier; `factor` is the shorter descriptive figure.
+
+### Experimental 20:00 interval
+
+`evening_lowest_lower_bound` and `evening_lowest_upper_bound` apply to the dated,
+issued evening forecast only. The quality section shows its issue time, night
+boundary, calibration/validation counts and measured coverage. The target is
+80% empirical coverage. Bounds stay unknown until 30 calibration nights plus
+14 later complete validation nights reach that target. They expire when the
+saved night ends. Insufficient samples are an expected collection stage, not
+an integration fault. The range is experimental and offers no battery guarantee.

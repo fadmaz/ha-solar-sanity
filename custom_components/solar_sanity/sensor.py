@@ -91,6 +91,37 @@ def _metric(coordinator: SolarSanityCoordinator, key: str) -> StateType:
     return round(value, 2) if value is not None else None
 
 
+INTERVAL_REASONS = {
+    "interval_not_yet_issued": "This evening forecast has not been issued yet.",
+    "interval_waiting_evening": "Waiting for a recorded 20:00 forecast.",
+    "interval_not_recorded": "No interval was recorded with this evening forecast.",
+    "interval_revision_unknown": "This interval uses an unrecognized calibration revision.",
+    "interval_needs_calibration": (
+        "Needs at least 30 complete calibration nights in this configuration."
+    ),
+    "interval_needs_validation": "Needs 14 later complete nights of silent interval validation.",
+    "interval_coverage_low": "Observed interval coverage has not reached the 80% target.",
+    "interval_no_prediction": "This evening forecast has no complete upcoming night prediction.",
+    "interval_expired": "This evening forecast's night has ended.",
+}
+
+
+def _interval_value(coordinator, bound):
+    value = coordinator.journal.interval().get(bound)
+    return round(value, 1) if value is not None else None
+
+
+def _interval_attrs(coordinator):
+    view = coordinator.journal.interval()
+    attrs = {
+        key: value
+        for key, value in view.items()
+        if key not in ("lower", "upper", "calibration_ids")
+    }
+    attrs["reason"] = INTERVAL_REASONS.get(view.get("reason_code"))
+    return attrs
+
+
 JOURNAL_SENSORS: tuple[SolarSanitySensorDescription, ...] = (
     SolarSanitySensorDescription(
         key="night_lowest_mae",
@@ -123,6 +154,26 @@ JOURNAL_SENSORS: tuple[SolarSanitySensorDescription, ...] = (
         native_unit_of_measurement=UnitOfTime.MINUTES,
         value_fn=lambda c: _metric(c, "fill_time_mae"),
         attrs_fn=lambda c: _performance_attrs(c, "fill_time_mae"),
+    ),
+)
+
+
+INTERVAL_SENSORS = (
+    SolarSanitySensorDescription(
+        key="evening_lowest_lower_bound",
+        translation_key="evening_lowest_lower_bound",
+        native_unit_of_measurement=PERCENTAGE,
+        icon="mdi:arrow-collapse-down",
+        value_fn=lambda c: _interval_value(c, "lower"),
+        attrs_fn=_interval_attrs,
+    ),
+    SolarSanitySensorDescription(
+        key="evening_lowest_upper_bound",
+        translation_key="evening_lowest_upper_bound",
+        native_unit_of_measurement=PERCENTAGE,
+        icon="mdi:arrow-collapse-up",
+        value_fn=lambda c: _interval_value(c, "upper"),
+        attrs_fn=_interval_attrs,
     ),
 )
 
@@ -308,7 +359,9 @@ async def async_setup_entry(
     # inverter publishes after Home Assistant starts, and an entity gated on
     # live state goes missing on exactly those installations.
     if coordinator.battery.configured:
-        entities += [SolarSanitySensor(coordinator, entry, d) for d in JOURNAL_SENSORS]
+        entities += [
+            SolarSanitySensor(coordinator, entry, d) for d in (*JOURNAL_SENSORS, *INTERVAL_SENSORS)
+        ]
         entities += [
             OutlookSensor(coordinator, entry, description) for description in OUTLOOK_SENSORS
         ]

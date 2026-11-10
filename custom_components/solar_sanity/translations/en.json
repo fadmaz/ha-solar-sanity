@@ -187,6 +187,12 @@
           "degraded": "Degraded",
           "error": "Error"
         }
+      },
+      "evening_lowest_lower_bound": {
+        "name": "Experimental 20:00 minimum lower bound"
+      },
+      "evening_lowest_upper_bound": {
+        "name": "Experimental 20:00 minimum upper bound"
       }
     }
   },

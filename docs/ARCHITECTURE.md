@@ -729,3 +729,21 @@ energy. Calculations retain the unrounded learned factor; the descriptive factor
 stays rounded, with `applied_factor` available for reproducing the arithmetic.
 The curve attribute is excluded from recorder history. The active battery math
 continues to be baseline-0.34.2 while prospective evidence accumulates.
+
+### Frozen evening calibration (0.38.0)
+
+`analysis/calibration.py` freezes an empirical signed-error interval with each
+20:00 issue. For prediction-minus-actual residuals, the lower bound subtracts
+q90 and the upper subtracts q10, clipped to physical percentages. Calibration
+uses at most 60 valid earlier nights with the same baseline revision/context
+and a recorded grading time no later than issue. This prevents future outcomes
+or delayed recorder reads changing an already issued range.
+
+After 30 calibration nights, limits are stored privately for silent validation.
+Fourteen later completed issues with frozen limits must cover at least 80% of
+actual minima. Until then (or if coverage is insufficient), public bounds stay
+unknown with counts and a reason. The current night never validates itself.
+The public view expires at the saved takeover boundary; old records without an
+interval remain explicitly unrecorded. Calibration does not affect collection
+health, Repairs, battery math or the current trajectory chart. The two rolling
+percentage sensors have no cumulative state class.

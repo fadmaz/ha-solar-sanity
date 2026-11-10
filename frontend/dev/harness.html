@@ -138,6 +138,12 @@
         ],
       };
       Object.assign(outlook, {
+        "sensor.lower": ["evening_lowest_lower_bound", params.get("interval") === "unknown" ? "unknown" : "29.5", {
+          issued_at: iso(now - 3600000), until: iso(now + 8 * HOUR), calibration_count: params.get("interval") === "unknown" ? 12 : 44,
+          validation_count: params.get("interval") === "unknown" ? 0 : 14, measured_coverage: params.get("interval") === "unknown" ? null : 0.857,
+          reason: params.get("interval") === "unknown" ? "Needs at least 30 complete calibration nights in this configuration." : null,
+        }],
+        "sensor.upper": ["evening_lowest_upper_bound", params.get("interval") === "unknown" ? "unknown" : "40.5", {}],
         "sensor.status": ["collection_status", "ok", {}],
         "sensor.mae": ["night_lowest_mae", "2.47", {sample_count: 16, excluded: {missing_soc: 2}, pending: 1,
           last_7_days: {nights: 7, mornings: 6, night_lowest_mae: 2.8, reserve_call_accuracy: 90, morning_fill_accuracy: 85, fill_time_mae: 12}}],

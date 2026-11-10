@@ -17,6 +17,25 @@ from tests.integration.test_battery_outlook import BATTERY, _loaded
 NOW = datetime(2026, 11, 10, 20, 1, tzinfo=UTC)
 
 
+async def test_evening_checkpoint_freezes_interval_evidence_and_expires_public_limits(
+    hass, enable_custom_integrations, entry_data
+):
+    """No retrospective range can appear on an old or uncalibrated issue."""
+    _, journal = await _journal(hass, entry_data)
+    assert journal.capture(NOW)
+    saved = journal.records[0]
+    assert saved["interval"]["calibration_count"] == 0
+    assert saved["interval"]["lower"] is None
+    assert journal.interval(NOW)["reason_code"] == "interval_needs_calibration"
+    end = datetime.fromisoformat(saved["until"])
+    assert journal.interval(end)["reason_code"] == "interval_expired"
+    hass.config_entries.async_update_entry(
+        journal.coordinator.entry,
+        options={**journal.coordinator.entry.options, OPT_BATTERY_CAPACITY_KWH: 11},
+    )
+    assert journal.interval(NOW)["reason_code"] == "interval_waiting_evening"
+
+
 async def test_shadow_is_frozen_separately_without_changing_the_published_baseline(
     hass, enable_custom_integrations, entry_data
 ):
