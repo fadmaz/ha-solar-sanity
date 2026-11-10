@@ -2,6 +2,28 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.36.0] - 2026-11-10
+
+### Added
+
+- Arabic and English cards and editors follow the Home Assistant user's
+  language. Each card also accepts `language: auto`, `ar` or `en`. Arabic
+  setup, options, sensor labels and configuration Repairs are included.
+- An expandable accuracy and data-quality section reads the issued journal's
+  28-day metrics and seven-day summary, sample and exclusion counts, and each
+  provider's capture and archive-verification timestamps. Missing samples stay
+  unknown and are not presented as integration faults.
+- Stable `reason_code` attributes accompany existing outlook reason sentences.
+  Cards translate known reasons while retaining the legacy sentence fallback.
+- Non-cumulative energy channels raise an actionable Repairs issue until the
+  source classification is corrected or the mapping is changed. Startup removes
+  only retired energy-balance issue identifiers and preserves current issues.
+
+### Notes
+
+- Existing entity IDs, services and the baseline-0.34.2 projection are unchanged.
+  The journal's first complete nights and mornings are still being collected.
+
 ## [0.35.0] - 2026-11-10
 
 ### Added

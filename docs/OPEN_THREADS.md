@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.35.0, 2026-11-10.
+Last updated at 0.36.0, 2026-11-10.
 
 ## Development sequence after 0.34.2
 
@@ -11,8 +11,11 @@ Last updated at 0.35.0, 2026-11-10.
   performance sensors, collection status and per-provider capture/read-back
   timestamps. The projection remains baseline-0.34.2. Live journal grading
   needs the first actual checkpoints and their completed observation windows.
-- **Next independent release:** Arabic/English cards, editors and integration
-  strings, performance details and actionable configuration Repairs.
+- **0.36.0:** Arabic/English cards, editors and integration strings, performance
+  details and actionable configuration Repairs. Synthetic cards passed desktop
+  (1280px) and phone (390px), Arabic/English, light/dark, LTR/RTL, including
+  expanded quality content without horizontal overflow. The actual authenticated
+  dashboard remains unverified (screenshot capability/session unavailable).
 - **Morning experiment:** a normalized three-part daylight shape, compared
   silently over 14 new complete mornings. It must not add false fill calls,
   must reduce missed fill days, and must not worsen the night gate. Until that
@@ -25,6 +28,18 @@ Last updated at 0.35.0, 2026-11-10.
   and 1.0 readiness cannot be asserted from the reference house alone.
 - Keep the owner's existing evening/morning scheduled checks active. Diagnostics
   and journal downloads stay private; test fixtures remain synthetic.
+
+## Installed journal baseline
+
+- 0.35.0 was installed through HACS on 2026-11-10 and loaded after a Core restart.
+  Core reached RUNNING, with no Solar Sanity warnings/errors. Runtime
+  diagnostics confirm a valid outlook and collection status `ok`, with
+  a matching archive read-back five seconds after capture. No checkpoints had
+  occurred since installation, so metrics correctly remain unknown with zero
+  samples. Actual checkpoint persistence and completed-window grading remain
+  pending the scheduled evening/morning observations.
+- The existing two scheduled checks remain active and now verify the installed
+  stable version and journal instead of requiring the older 0.34.2 string.
 
 ## Observe 0.34.2 through a real night and morning
 

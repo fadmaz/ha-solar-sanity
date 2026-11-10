@@ -9,6 +9,7 @@
  * means the clock on the wall of the house, not of the phone in a hotel.
  */
 
+import { languageOf, number, t, type UiLanguage } from "./i18n";
 import type { HassEntity, HomeAssistant } from "./types/hass";
 import { tomorrow } from "./forecast-data";
 
@@ -87,6 +88,7 @@ export interface Outlook {
   unavailable: boolean;
   /** Why there is no projection at all, when there is none. */
   reason: string | null;
+  reasonCode?: string;
   socPct: number | null;
   forecastUsed: boolean;
   fullAt: Date | null;
@@ -171,6 +173,7 @@ export function readOutlook(hass: HomeAssistant, installation: Installation): Ou
     // A reason with a trajectory beside it is about this one figure ("no night
     // in the forecast"); without one, nothing could be projected at all.
     reason: trajectory.length === 0 ? reason : null,
+    reasonCode: typeof attrs.reason_code === "string" ? attrs.reason_code : undefined,
     socPct: asNumber(attrs.soc_pct) ?? trajectory[0]?.soc ?? null,
     forecastUsed: production.startsWith("forecast"),
     fullAt: stateTime(full),
@@ -209,9 +212,9 @@ function readSources(raw: unknown): PowerSources | null {
 }
 
 /** Watts as a person reads them: whole watts under a kilowatt, then kW. */
-export function power(watts: number): string {
+export function power(watts: number, language: UiLanguage = "en"): string {
   const whole = Math.round(watts);
-  return Math.abs(whole) < 1000 ? `${whole} W` : `${(watts / 1000).toFixed(1)} kW`;
+  return Math.abs(whole) < 1000 ? `${number(whole, language)} W` : `${number(watts / 1000, language, 1)} kW`;
 }
 
 export interface FlowItem {
@@ -232,7 +235,8 @@ const IDLE_W = 20;
  * (W or kW; anything else is left out rather than guessed). A source not
  * named, or not reporting a number, is left out, never shown as zero.
  */
-export function powerFlow(hass: HomeAssistant, sources: PowerSources | null): FlowItem[] {
+export function powerFlow(hass: HomeAssistant, sources: PowerSources | null,
+  language: UiLanguage = languageOf(hass.language)): FlowItem[] {
   if (!sources) return [];
   const read = (id: string | undefined): number | null => {
     if (!id) return null;
@@ -246,25 +250,26 @@ export function powerFlow(hass: HomeAssistant, sources: PowerSources | null): Fl
   };
   const items: FlowItem[] = [];
   const solar = read(sources.solar);
-  if (solar !== null) items.push({ label: "Solar", value: power(solar) });
+  if (solar !== null) items.push({ label: t(language, "Solar"), value: power(solar, language) });
   const house = read(sources.house);
-  if (house !== null) items.push({ label: "House", value: power(house) });
+  if (house !== null) items.push({ label: t(language, "House"), value: power(house, language) });
   const battery = read(sources.battery);
   if (battery !== null) {
     const charging = sources.batteryChargingPositive ? battery : -battery;
     const value =
       Math.abs(charging) < IDLE_W
-        ? "idle"
-        : `${charging > 0 ? "charging" : "discharging"} ${power(Math.abs(charging))}`;
-    items.push({ label: "Battery", value });
+        ? t(language, "idle")
+        : `${t(language, charging > 0 ? "charging" : "discharging")} ${power(Math.abs(charging), language)}`;
+    items.push({ label: t(language, "Battery"), value });
   }
   const grid = read(sources.grid);
-  if (grid !== null) items.push({ label: "Grid", value: power(grid) });
+  if (grid !== null) items.push({ label: t(language, "Grid"), value: power(grid, language) });
   return items;
 }
 
 /** Time, formatted for the house rather than for the browser. */
 export interface Clock {
+  language?: UiLanguage;
   /** "14:35" */
   time(when: Date): string;
   /** The wall-clock hour, 0 to 23. */
@@ -287,31 +292,33 @@ export function clockFor(language: string | undefined, timeZone: string | undefi
       return new Intl.DateTimeFormat(locale, options);
     }
   };
-  const clock = make(language, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const clock = make(language, { numberingSystem: languageOf(language) === "ar" ? "arab" : "latn", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   // Numbers the code reads back, so always Latin digits whatever the language.
   const hours = make("en-GB", { hour: "numeric", hourCycle: "h23" });
   const date = make("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" });
   const weekday = make(language, { weekday: "long" });
 
   return {
+    language: languageOf(language),
     time: (when) => clock.format(when),
     hour: (when) => Number(hours.formatToParts(when).find((part) => part.type === "hour")?.value),
     day: (when, now) => {
       const key = date.format(when);
-      if (key === date.format(now)) return "today";
-      if (key === date.format(tomorrow(now, timeZone))) return "tomorrow";
+      if (key === date.format(now)) return t(languageOf(language), "today");
+      if (key === date.format(tomorrow(now, timeZone))) return t(languageOf(language), "tomorrow");
       return weekday.format(when);
     },
   };
 }
 
 /** "2 h 10 min", "45 min", "3 h". */
-export function duration(milliseconds: number): string {
+export function duration(milliseconds: number, language: UiLanguage = "en"): string {
   const minutes = Math.max(0, Math.round(milliseconds / 60_000));
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  if (hours === 0) return `${rest} min`;
-  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+  if (hours === 0) return t(language, "{n} min", {n: number(rest, language)});
+  return rest === 0 ? t(language, "{n} h", {n: number(hours, language)})
+    : t(language, "{h} h {m} min", {h: number(hours, language), m: number(rest, language)});
 }
 
 export type Tone = "good" | "warn" | "neutral";
@@ -345,17 +352,18 @@ function peakBefore(trajectory: Point[], until: Date | null): Point | null {
  * it fills; and if a forecast says it will not, say so.
  */
 export function headline(outlook: Outlook, now: Date, clock: Clock): Headline {
+  const language = clock.language ?? "en";
   const at = (when: Date) => clock.time(when);
-  const pct = (value: number) => `${Math.round(value)}%`;
+  const pct = (value: number) => `${number(Math.round(value), language)}%`;
   const inFuture = (when: Date) => when.getTime() > now.getTime();
 
   if (outlook.reserveAt) {
     const parts: string[] = [];
-    if (inFuture(outlook.reserveAt)) parts.push(`in ${duration(outlook.reserveAt.getTime() - now.getTime())}`);
-    if (outlook.takeoverAt) parts.push(`the sun takes over at ${at(outlook.takeoverAt)}`);
+    if (inFuture(outlook.reserveAt)) parts.push(t(language, "in {duration}", {duration: duration(outlook.reserveAt.getTime() - now.getTime(), language)}));
+    if (outlook.takeoverAt) parts.push(t(language, "the sun takes over at {time}", {time: at(outlook.takeoverAt)}));
     return {
-      text: `Reaches the reserve at ${at(outlook.reserveAt)}`,
-      detail: parts.length ? capitalise(parts.join(", ")) : null,
+      text: t(language, "Reaches the reserve at {time}", {time: at(outlook.reserveAt)}),
+      detail: parts.length ? capitalise(parts.join(language === "ar" ? "، " : ", ")) : null,
       tone: "warn",
     };
   }
@@ -363,10 +371,10 @@ export function headline(outlook: Outlook, now: Date, clock: Clock): Headline {
   const night = outlook.nightFrom !== null && !inFuture(outlook.nightFrom);
   if (night && outlook.takeoverAt) {
     return {
-      text: `Lasts until the sun, at ${at(outlook.takeoverAt)}`,
+      text: t(language, "Lasts until the sun, at {time}", {time: at(outlook.takeoverAt)}),
       detail:
         outlook.lowestPct !== null
-          ? `Lowest ${pct(outlook.lowestPct)}${outlook.lowestAt ? ` at ${at(outlook.lowestAt)}` : ""}`
+          ? t(language, "Lowest {pct}{at}", {pct: pct(outlook.lowestPct), at: outlook.lowestAt ? t(language, " at {time}", {time: at(outlook.lowestAt)}) : ""})
           : null,
       tone: "good",
     };
@@ -375,19 +383,19 @@ export function headline(outlook: Outlook, now: Date, clock: Clock): Headline {
   if (outlook.fullAt) {
     return inFuture(outlook.fullAt)
       ? {
-          text: `Full at ${at(outlook.fullAt)}`,
-          detail: `In ${duration(outlook.fullAt.getTime() - now.getTime())}`,
+          text: t(language, "Full at {time}", {time: at(outlook.fullAt)}),
+          detail: t(language, "In {duration}", {duration: duration(outlook.fullAt.getTime() - now.getTime(), language)}),
           tone: "good",
         }
-      : { text: "Full", detail: `Since ${at(outlook.fullAt)}`, tone: "good" };
+      : { text: t(language, "Full"), detail: t(language, "Since {time}", {time: at(outlook.fullAt)}), tone: "good" };
   }
 
   if (outlook.forecastUsed && !night) {
     const peak = peakBefore(outlook.trajectory, outlook.nightFrom);
     if (peak) {
       return {
-        text: "Will not fill today",
-        detail: `Peaks at ${pct(peak.soc)} at ${at(peak.at)}`,
+        text: t(language, "Will not fill today"),
+        detail: t(language, "Peaks at {pct} at {time}", {pct: pct(peak.soc), time: at(peak.at)}),
         tone: "neutral",
       };
     }
@@ -395,14 +403,14 @@ export function headline(outlook: Outlook, now: Date, clock: Clock): Headline {
 
   if (outlook.lowestPct !== null) {
     return {
-      text: `Lowest tonight ${pct(outlook.lowestPct)}`,
-      detail: outlook.lowestAt ? `At ${at(outlook.lowestAt)}` : null,
+      text: t(language, "Lowest tonight {pct}", {pct: pct(outlook.lowestPct)}),
+      detail: outlook.lowestAt ? t(language, "At {time}", {time: at(outlook.lowestAt)}) : null,
       tone: "neutral",
     };
   }
 
   return {
-    text: outlook.socPct !== null ? `Battery at ${pct(outlook.socPct)}` : "Battery outlook",
+    text: outlook.socPct !== null ? t(language, "Battery at {pct}", {pct: pct(outlook.socPct)}) : t(language, "Battery outlook"),
     detail: null,
     tone: "neutral",
   };
@@ -420,36 +428,37 @@ export interface Figure {
 
 /** The six numbers under the headline. A dash, never a zero, for no answer. */
 export function figures(outlook: Outlook, now: Date, clock: Clock): Figure[] {
+  const language = clock.language ?? "en";
   const dash = "—";
   return [
     {
-      label: "Safe load tonight",
-      value: outlook.safeLoadKw !== null ? `${outlook.safeLoadKw.toFixed(2)} kW` : dash,
-      sub: outlook.safeUntil ? `until ${clock.time(outlook.safeUntil)}` : null,
+      label: t(language, "Safe load tonight"),
+      value: outlook.safeLoadKw !== null ? `${number(outlook.safeLoadKw, language, 2)} kW` : dash,
+      sub: outlook.safeUntil ? t(language, "until {time}", {time: clock.time(outlook.safeUntil)}) : null,
     },
     {
-      label: "Lowest before sunrise",
-      value: outlook.lowestPct !== null ? `${Math.round(outlook.lowestPct)}%` : dash,
-      sub: outlook.lowestAt ? `at ${clock.time(outlook.lowestAt)}` : null,
+      label: t(language, "Lowest before sunrise"),
+      value: outlook.lowestPct !== null ? `${number(Math.round(outlook.lowestPct), language)}%` : dash,
+      sub: outlook.lowestAt ? t(language, "at {time}", {time: clock.time(outlook.lowestAt)}) : null,
     },
     {
-      label: "Spare sun",
-      value: outlook.spareKwh !== null ? `${outlook.spareKwh.toFixed(1)} kWh` : dash,
+      label: t(language, "Spare sun"),
+      value: outlook.spareKwh !== null ? `${number(outlook.spareKwh, language, 1)} kWh` : dash,
       sub: outlook.spareFrom ? clock.day(outlook.spareFrom, now) : null,
     },
     {
-      label: "Usable now",
-      value: outlook.usableKwh !== null ? `${outlook.usableKwh.toFixed(1)} kWh` : dash,
-      sub: outlook.reservePct !== null ? `above ${Math.round(outlook.reservePct)}%` : null,
+      label: t(language, "Usable now"),
+      value: outlook.usableKwh !== null ? `${number(outlook.usableKwh, language, 1)} kWh` : dash,
+      sub: outlook.reservePct !== null ? t(language, "above {pct}", {pct: `${number(Math.round(outlook.reservePct), language)}%`}) : null,
     },
     {
-      label: "Tonight's use",
-      value: outlook.tonightKwh !== null ? `${outlook.tonightKwh.toFixed(1)} kWh` : dash,
-      sub: outlook.tonightUntil ? `until ${clock.time(outlook.tonightUntil)}` : null,
+      label: t(language, "Tonight's use"),
+      value: outlook.tonightKwh !== null ? `${number(outlook.tonightKwh, language, 1)} kWh` : dash,
+      sub: outlook.tonightUntil ? t(language, "until {time}", {time: clock.time(outlook.tonightUntil)}) : null,
     },
     {
-      label: "Spare sun now",
-      value: outlook.sparePowerW !== null ? power(outlook.sparePowerW) : dash,
+      label: t(language, "Spare sun now"),
+      value: outlook.sparePowerW !== null ? power(outlook.sparePowerW, language) : dash,
       sub: null,
     },
   ];

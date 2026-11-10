@@ -365,3 +365,13 @@ repository no longer accepts custom-integration icons.
 ## License
 
 [MIT](LICENSE)
+
+### Card language and data quality
+
+Both cards follow your Home Assistant user language (Arabic or English). Set
+`language: ar`, `language: en` or `language: auto` in the visual card editor or
+YAML to override it. The expandable **Accuracy and data quality** section reads
+the journal sensors; it does not recompute scores in the browser. Unknown
+metrics mean there are no complete observations yet. Collection faults and
+stale forecasts have separate reasons. An unsupported energy classification
+also appears under Settings > Repairs with the required source fix.

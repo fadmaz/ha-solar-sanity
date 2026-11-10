@@ -22,6 +22,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
+import { languageOf, number, t, type UiLanguage } from "./i18n";
 import { findInstallations, hasOutlook } from "./battery-model";
 import { type ArchiveMeta, dayAheadArchives, providerLabel } from "./forecast-data";
 import type { HomeAssistant, LovelaceCardConfig } from "./types/hass";
@@ -74,17 +75,25 @@ function pruned(data: Record<string, unknown>): Record<string, unknown> {
   );
 }
 
-const LABELS: (row: FormRow) => string = (row) =>
-  ({
+const labels = (language: UiLanguage) => (row: FormRow): string => t(language, ({
     device_id: "Installation",
     provider: "Forecast provider",
-  })[row.name] ?? row.name;
+    language: "Language",
+  } as Record<string, string>)[row.name] ?? row.name);
 
-const HELPERS: (row: FormRow) => string | undefined = (row) =>
-  ({
+const helpers = (language: UiLanguage) => (row: FormRow): string | undefined => {
+  const source = ({
     device_id: "Leave empty to use the only one with a battery outlook.",
     provider: "Leave empty to show every provider you have configured.",
-  })[row.name];
+  } as Record<string, string>)[row.name];
+  return source ? t(language, source) : undefined;
+};
+
+function languageRow(language: UiLanguage): FormRow {
+  return {name: "language", selector: {select: {mode: "dropdown", options:
+    [["auto", "Automatic"], ["ar", "Arabic"], ["en", "English"]].map(([value, label]) =>
+      ({value, label: t(language, label!)}))}}};
+}
 
 const SHARED = css`
   .found {
@@ -117,6 +126,8 @@ export class SolarSanityForecastCardEditor extends LitElement {
   @state() private _archives?: ArchiveMeta[];
   /** A load in progress, so a burst of `hass` updates does not start five. */
   private _inflight?: Promise<void>;
+
+  private get _language() { return languageOf(this.hass?.language, this._config.language); }
 
   public setConfig(config: LovelaceCardConfig): void {
     this._config = config;
@@ -152,7 +163,7 @@ export class SolarSanityForecastCardEditor extends LitElement {
 
   private get _schema(): FormRow[] {
     const archives = this._archives ?? [];
-    if (archives.length === 0) return [{ name: "provider", selector: { text: {} } }];
+    if (archives.length === 0) return [{ name: "provider", selector: { text: {} } }, languageRow(this._language)];
 
     return [
       {
@@ -170,6 +181,7 @@ export class SolarSanityForecastCardEditor extends LitElement {
           },
         },
       },
+      languageRow(this._language),
     ];
   }
 
@@ -181,15 +193,15 @@ export class SolarSanityForecastCardEditor extends LitElement {
 
   protected render(): TemplateResult {
     return html`
-      <ha-form
+      <div lang=${this._language} dir=${this._language === "ar" ? "rtl" : "ltr"}><ha-form
         .hass=${this.hass}
         .data=${this._config}
         .schema=${this._schema}
-        .computeLabel=${LABELS}
-        .computeHelper=${HELPERS}
+        .computeLabel=${labels(this._language)}
+        .computeHelper=${helpers(this._language)}
         @value-changed=${this._changed}
       ></ha-form>
-      ${this._note()}
+      ${this._note()}</div>
     `;
   }
 
@@ -198,21 +210,19 @@ export class SolarSanityForecastCardEditor extends LitElement {
 
     if (this._archives.length === 0) {
       return html`<div class="found">
-        No day-ahead archive has been written yet. Solar Sanity starts one the first time
-        it records a forecast, which is within a day of you configuring a provider.
+        ${t(this._language, "No day-ahead archive has been written yet. Solar Sanity starts one the first time it records a forecast, which is within a day of you configuring a provider.")}
       </div>`;
     }
     const only = this._archives.length === 1 ? this._archives[0] : undefined;
     if (only) {
       return html`<div class="found">
-        Showing ${providerLabel(only)}, the only provider archiving so far.
+        ${t(this._language, "Showing {provider}, the only provider archiving so far.", {provider: providerLabel(only)})}
       </div>`;
     }
     // Several is the case the card handles well — it draws them side by side —
     // so this is a statement rather than a prompt to choose.
     return html`<div class="found">
-      Showing all ${this._archives.length} providers side by side. Choose one to narrow
-      it.
+      ${t(this._language, "Showing all {n} providers side by side. Choose one to narrow it.", {n: number(this._archives.length, this._language)})}
     </div>`;
   }
 
@@ -229,13 +239,16 @@ export class SolarSanityBatteryCardEditor extends LitElement {
   @property({ attribute: false }) public hass?: HomeAssistant;
   @state() private _config: LovelaceCardConfig = { type: "custom:solar-sanity-battery-card" };
 
+  private get _language() { return languageOf(this.hass?.language, this._config.language); }
+
   public setConfig(config: LovelaceCardConfig): void {
     this._config = config;
   }
 
-  private readonly _schema: readonly FormRow[] = [
+  private get _schema(): FormRow[] { return [
     { name: "device_id", selector: { device: { integration: "solar_sanity" } } },
-  ];
+    languageRow(this._language),
+  ]; }
 
   private _changed(event: CustomEvent): void {
     event.stopPropagation();
@@ -245,15 +258,15 @@ export class SolarSanityBatteryCardEditor extends LitElement {
 
   protected render(): TemplateResult {
     return html`
-      <ha-form
+      <div lang=${this._language} dir=${this._language === "ar" ? "rtl" : "ltr"}><ha-form
         .hass=${this.hass}
         .data=${this._config}
         .schema=${this._schema}
-        .computeLabel=${LABELS}
-        .computeHelper=${HELPERS}
+        .computeLabel=${labels(this._language)}
+        .computeHelper=${helpers(this._language)}
         @value-changed=${this._changed}
       ></ha-form>
-      ${this._note()}
+      ${this._note()}</div>
     `;
   }
 
@@ -262,18 +275,16 @@ export class SolarSanityBatteryCardEditor extends LitElement {
     const withOutlook = findInstallations(this.hass).filter(hasOutlook).length;
     if (withOutlook === 0) {
       return html`<div class="found">
-        No installation has a battery outlook yet. Map the battery's charge level and enter
-        its capacity in Solar Sanity, Configure.
+        ${t(this._language, "No installation has a battery outlook yet. Map the battery's charge level and enter its capacity in Solar Sanity, Configure.")}
       </div>`;
     }
     if (withOutlook === 1) {
       return html`<div class="found">
-        Showing the only installation with a battery outlook, found automatically.
+        ${t(this._language, "Showing the only installation with a battery outlook, found automatically.")}
       </div>`;
     }
     return html`<div class="found">
-      ${withOutlook} installations have a battery outlook. Choose one: the card will not pick
-      for you.
+      ${t(this._language, "{n} installations have a battery outlook. Choose one: the card will not pick for you.", {n: number(withOutlook, this._language)})}
     </div>`;
   }
 

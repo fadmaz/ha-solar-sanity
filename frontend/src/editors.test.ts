@@ -108,7 +108,7 @@ describe("the battery card editor", () => {
   it("offers Home Assistant's own device picker, filtered to this integration", async () => {
     const rendered = await form(make({ type: "custom:solar-sanity-battery-card" }));
 
-    expect(rendered.schema?.map((row) => row.name)).toEqual(["device_id"]);
+    expect(rendered.schema?.map((row) => row.name)).toEqual(["device_id", "language"]);
     expect(rendered.schema?.[0]?.selector).toEqual({ device: { integration: "solar_sanity" } });
   });
 
@@ -178,7 +178,8 @@ describe("the forecast card editor", () => {
     const { editor } = await make(base, []);
     const rendered = editor.shadowRoot!.querySelector("ha-form") as Form;
 
-    expect(rendered.schema).toEqual([{ name: "provider", selector: { text: {} } }]);
+    expect(rendered.schema?.[0]).toEqual({ name: "provider", selector: { text: {} } });
+    expect(rendered.schema?.[1]?.name).toBe("language");
     expect(note(editor)).toContain("No day-ahead archive");
   });
 
@@ -196,7 +197,8 @@ describe("the forecast card editor", () => {
 
     // The free-text fallback specifically, not merely "a schema" — that would
     // pass without the `catch` too, since the first render is empty anyway.
-    expect(rendered.schema).toEqual([{ name: "provider", selector: { text: {} } }]);
+    expect(rendered.schema?.[0]).toEqual({ name: "provider", selector: { text: {} } });
+    expect(rendered.schema?.[1]?.name).toBe("language");
     expect(note(editor)).toContain("No day-ahead archive");
   });
 

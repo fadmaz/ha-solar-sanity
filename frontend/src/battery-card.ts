@@ -33,6 +33,8 @@ import {
   powerFlow,
   readOutlook,
 } from "./battery-model";
+import { languageOf, number, reasonText, t, validateLanguage, type LanguageSetting } from "./i18n";
+import { qualityPanel, qualityStyles } from "./quality";
 import type {
   GridOptions,
   HomeAssistant,
@@ -44,6 +46,7 @@ import type {
 export interface BatteryCardConfig extends LovelaceCardConfig {
   /** The installation to show, when there is more than one. */
   device_id?: string;
+  language?: LanguageSetting;
 }
 
 interface Note {
@@ -63,7 +66,13 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
     if (config.device_id !== undefined && typeof config.device_id !== "string") {
       throw new Error("`device_id` must be a device id");
     }
+    validateLanguage(config.language);
     this._config = config;
+  }
+
+  private get _language() { return languageOf(this.hass?.language, this._config?.language); }
+  private _t(source: string, values: Record<string, string | number> = {}): string {
+    return t(this._language, source, values);
   }
 
   public getCardSize(): number {
@@ -116,7 +125,7 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
       // reader may think is about the other.
       return {
         headline: "More than one installation",
-        body: `This card found ${withOutlook.length}. Choose one in the card's settings.`,
+        body: this._t("This card found {n}. Choose one in the card's settings.", {n: number(withOutlook.length, this._language)}),
       };
     }
     return withOutlook[0]!;
@@ -143,15 +152,16 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
       });
     }
 
-    const clock = clockFor(hass.language, hass.config.time_zone);
+    const clock = clockFor(this._language, hass.config.time_zone);
     const now = new Date();
     return html`
       <ha-card>
-        <div class="root">
+        <div class="root" lang=${this._language} dir=${this._language === "ar" ? "rtl" : "ltr"}>
           ${this._top(outlook, now, clock)} ${this._flow(hass, outlook)}
           ${outlook.reason
-            ? html`<p class="reason">${outlook.reason}</p>`
+            ? html`<p class="reason">${reasonText(this._language, outlook.reasonCode, outlook.reason)}</p>`
             : html`${this._figures(outlook, now, clock)} ${this._chart(outlook, clock)}`}
+          ${qualityPanel(hass, this._language, picked.deviceId)}
         </div>
       </ha-card>
     `;
@@ -161,14 +171,14 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
     const lead = outlook.reason ? null : headline(outlook, now, clock);
     return html`
       <div class="top">
-        <div class="soc" aria-label="Battery now" dir="ltr">
+        <div class="soc" aria-label=${this._t("Battery now")} dir="ltr">
           ${outlook.socPct !== null
-            ? html`<span class="number">${Math.round(outlook.socPct)}</span
+            ? html`<span class="number">${number(Math.round(outlook.socPct), this._language)}</span
                 ><span class="unit">%</span>`
             : html`<span class="number">—</span>`}
         </div>
         <div class="lead" data-tone=${lead?.tone ?? "neutral"}>
-          <h2 class="headline"><bdi>${lead?.text ?? "Battery outlook"}</bdi></h2>
+          <h2 class="headline"><bdi>${lead?.text ?? this._t("Battery outlook")}</bdi></h2>
           ${lead?.detail ? html`<p class="detail"><bdi>${lead.detail}</bdi></p>` : nothing}
         </div>
       </div>
@@ -177,10 +187,10 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
 
   /** The live flow, one line, or nothing when no power sensor is known. */
   private _flow(hass: HomeAssistant, outlook: Outlook): TemplateResult | typeof nothing {
-    const items = powerFlow(hass, outlook.powerSources);
+    const items = powerFlow(hass, outlook.powerSources, this._language);
     if (items.length === 0) return nothing;
     return html`
-      <p class="flow" aria-label="Power now">
+      <p class="flow" aria-label=${this._t("Power now")}>
         ${items.map(
           (item, index) =>
             html`${index > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : nothing}<span
@@ -230,12 +240,12 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
         </svg>
         ${shape.reserve !== null
           ? html`<span class="ref" style="top: ${percent(shape.reserve)}"
-              >Reserve ${Math.round(outlook.reservePct ?? 0)}%</span
+              ><bdi>${this._t("Reserve")} ${number(Math.round(outlook.reservePct ?? 0), this._language)}%</bdi></span
             >`
           : nothing}
         ${shape.target !== null
           ? html`<span class="ref" style="top: ${percent(shape.target)}"
-              >Target ${Math.round(outlook.targetPct ?? 0)}%</span
+              ><bdi>${this._t("Target")} ${number(Math.round(outlook.targetPct ?? 0), this._language)}%</bdi></span
             >`
           : nothing}
         <span
@@ -266,7 +276,7 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
             (point) =>
               html`<tr>
                 <th scope="row">${clock.time(point.at)}</th>
-                <td>${Math.round(point.soc)}%</td>
+                <td>${number(Math.round(point.soc), this._language)}%</td>
               </tr>`,
           )}
         </tbody>
@@ -298,24 +308,26 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
   private _summary(outlook: Outlook, clock: Clock): string {
     const first = outlook.trajectory[0];
     const last = outlook.trajectory[outlook.trajectory.length - 1];
-    if (!first || !last) return "Projected battery charge";
-    return `Projected battery charge from ${Math.round(first.soc)}% now to ${Math.round(
-      last.soc,
-    )}% at ${clock.time(last.at)}`;
+    if (!first || !last) return this._t("Projected battery charge");
+    return this._t("Projected battery charge from {first}% now to {last}% at {time}", {
+      first: number(Math.round(first.soc), this._language),
+      last: number(Math.round(last.soc), this._language), time: clock.time(last.at),
+    });
   }
 
   private _note(note: Note): TemplateResult {
     return html`
       <ha-card>
-        <div class="root">
-          <h2 class="headline">${note.headline}</h2>
-          <p class="detail">${note.body}</p>
+        <div class="root" lang=${this._language} dir=${this._language === "ar" ? "rtl" : "ltr"}>
+          <h2 class="headline">${this._t(note.headline)}</h2>
+          <p class="detail">${this._t(note.body)}</p>
         </div>
       </ha-card>
     `;
   }
 
   static styles = css`
+    ${qualityStyles}
     :host {
       display: block;
     }

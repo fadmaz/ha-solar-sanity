@@ -35,6 +35,7 @@ from .const import CONF_FORECAST_ENTRIES
 from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .entity import SolarSanityEntity
 from .journal import COLLECTION_REASONS, MODEL_REVISION
+from .statistics_source import forecast_statistic_id
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -200,6 +201,8 @@ class CaptureSensor(SolarSanityEntity, SensorEntity):
             "attempted_at": health.get("attempted_at"),
             "submitted_at": health.get("submitted_at"),
             "verification": health.get("verification", "pending"),
+            "forecast_statistic_id": forecast_statistic_id(self.provider_id),
+            "provider": self._attr_translation_placeholders["provider"],
         }
 
 
@@ -790,6 +793,20 @@ class OutlookSensor(SolarSanityEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        state = self.coordinator.battery.state
         if self.entity_description.live_attrs_fn is not None:
-            return self.entity_description.live_attrs_fn(self.coordinator)
-        return self.entity_description.attrs_fn(self.coordinator.battery.state)
+            attrs = self.entity_description.live_attrs_fn(self.coordinator)
+        else:
+            attrs = self.entity_description.attrs_fn(state)
+        if attrs.get("reason"):
+            codes = {
+                "battery_full_at": "no_full",
+                "battery_reserve_at": "reserve_not_reached",
+                "battery_lowest_before_sunrise": "no_night",
+                "safe_average_load": "no_takeover",
+                "expected_use_tonight": "no_takeover",
+                "spare_solar": "needs_forecast",
+                "spare_solar_power": "needs_forecast",
+            }
+            attrs["reason_code"] = state.reason or codes.get(self.entity_description.key)
+        return attrs
