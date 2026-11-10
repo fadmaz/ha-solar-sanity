@@ -33,6 +33,14 @@ function day(kwh: number[], label = "Forecast.Solar"): ProviderDay {
 }
 
 describe("buildPanel", () => {
+  it("draws exact corrected hours without applying the descriptive daily factor twice", () => {
+    // A shaped curve keeps the day's total while moving energy between hours.
+    const data = day([1, 1]);
+    const panel = buildPanel(data, {factor: 0.5, byKindOfDay: true,
+      hours: data.hours.map((hour, i) => ({...hour, kwh: [0.2, 0.8][i]!}))});
+    expect(panel.hours.map((hour) => hour.kwh)).toEqual([0.2, 0.8]);
+    expect(panel.kwh).toBe(1);
+  });
   it("labels the chart in the house's zone", () => {
     const data = day([1, 2]);
     data.hours[0]!.start = new Date("2026-11-10T06:00:00Z");

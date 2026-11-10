@@ -405,6 +405,7 @@ class SolarSanitySensor(SolarSanityEntity, SensorEntity):
     """One sensor, driven entirely by its description."""
 
     entity_description: SolarSanitySensorDescription
+    _unrecorded_attributes = frozenset({"corrected_hours"})
 
     def __init__(
         self,

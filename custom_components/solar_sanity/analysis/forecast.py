@@ -423,7 +423,7 @@ def correction(
     """
     if scale is not None:
         factor, days = scale
-        return Correction(factor=round(factor, CORRECTION_DECIMALS), basis="learned", days=days)
+        return Correction(factor=factor, basis="learned", days=days)
     if bias_pct is not None and bias_pct != 0:
         return Correction(
             factor=round(1.0 + bias_pct / 100.0, CORRECTION_DECIMALS),
@@ -450,6 +450,20 @@ class RoofForecast:
 
 
 HOUR = timedelta(hours=1)
+
+
+def corrected_hours(
+    points: Mapping[datetime, float],
+    *,
+    day_of: Callable[[datetime], date],
+    factor_for: Callable[[date], float | None],
+) -> dict[datetime, float]:
+    """Apply the chosen daily correction once; retain the caller's energy unit."""
+    return {
+        when: value * factor
+        for when, value in points.items()
+        if (factor := factor_for(day_of(when))) is not None
+    }
 
 
 def roof_forecast(

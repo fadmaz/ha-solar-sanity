@@ -15,6 +15,8 @@ from homeassistant.core import callback
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .analysis.daylight_shape import SHAPE_REVISION
+from .analysis.experiment import shape_gate
 from .analysis.grading import grade, summarize
 from .analysis.observations import soc_from_diagnostics
 from .const import (
@@ -325,7 +327,7 @@ class OutlookJournal:
         reason = "no_night" if end is None else None
         if kind == "morning" and not outlook.forecast_used:
             reason = "no_forecast"
-        return {
+        record = {
             "id": key,
             "checkpoint": kind,
             "issued_at": state.computed_at.isoformat(),
@@ -354,9 +356,32 @@ class OutlookJournal:
             else {"status": "pending"},
         }
 
+        shadow = state.shadow
+        if shadow is not None:
+            candidate = json.loads(json.dumps(record))
+            candidate["model_revision"] = SHAPE_REVISION
+            candidate["projection"] = _jsonable(asdict(shadow))
+            candidate["published"] = {
+                "lowest_pct": round(shadow.lowest_pct, 1)
+                if shadow.lowest_pct is not None
+                else None,
+                "reserve_at": _iso(state.shadow_reserve_at),
+                "full_at": _iso(state.shadow_full_at),
+            }
+            if kind == "evening":
+                candidate["until"] = _iso(shadow.takeover_at)
+                if shadow.takeover_at is None:
+                    candidate["result"] = {"status": "excluded", "reason_code": "no_night"}
+            record["shadow"] = candidate
+        record["shape_reason"] = state.shape_reason
+        record["shape_days"] = list(state.shape_days)
+        return record
+
     async def _grade_pending(self, now: datetime) -> bool:
         changed = False
-        for record in self.records:
+        for record in (
+            item for base in self.records for item in (base, base.get("shadow")) if item
+        ):
             if record["result"]["status"] != "pending":
                 continue
             end = datetime.fromisoformat(record["until"])
@@ -393,6 +418,7 @@ class OutlookJournal:
                     ) and now < end + timedelta(days=1):
                         continue
                 record["result"] = result
+            record["graded_at"] = now.isoformat()
             changed = True
         return changed
 
@@ -402,6 +428,9 @@ class OutlookJournal:
         today = now.astimezone(zone).date()
         since = datetime.combine(today - timedelta(days=days - 1), time(), tzinfo=zone)
         return summarize(self.records, self.context(), since)
+
+    def experiment(self) -> dict[str, Any]:
+        return shape_gate(self.records, self.context())
 
     def status(self) -> tuple[str, str | None]:
         if self.error:
@@ -443,6 +472,10 @@ def _valid_record(record: Any) -> bool:
     if not isinstance(record, dict):
         return False
     try:
+        if "shadow" in record and (
+            "shadow" in record["shadow"] or not _valid_record(record["shadow"])
+        ):
+            return False
         stamp = datetime.fromisoformat(record["issued_at"])
         valid = (
             stamp.tzinfo is not None

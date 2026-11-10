@@ -2,6 +2,39 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.37.0] - 2026-11-10
+
+### Added
+
+- A silent morning experiment learns three daylight parts from previous local
+  days only. Each part needs three usable days with battery charging room;
+  existing day-similarity weights and smoothing are reused. Distribution is
+  normalized to preserve the corrected daily energy. Missing daylight coverage
+  retains the baseline shape. Independent sunrise/sunset bounds may prove a
+  sparse provider's horizon; missing hours inside daylight never become zero.
+- The issued journal freezes a separate candidate alongside the active 08:00
+  and 20:00 outlook, grades both complete observation windows and reports the
+  paired promotion gates in diagnostics. The candidate remains inactive until
+  at least 14 new complete mornings and nights support every conservative gate.
+- `--shape-shadow` enables development replay, explicitly separate from new
+  issued evidence. Diagnostics retain daylight bounds needed to reproduce it.
+- The corrected tomorrow sensor includes exact `corrected_hours`; the forecast
+  card consumes them without applying the displayed daily factor twice.
+
+### Changed
+
+- Corrected forecast calculations keep the projection's unrounded learned
+  factor. The descriptive `factor` attribute remains rounded; `applied_factor`
+  states the exact multiplier. This removes small rounding disagreements
+  between forecast figures and the projection; battery projection is unchanged.
+
+### Notes
+
+- The baseline-0.34.2 projection is still active. No battery efficiency,
+  reserve threshold or settled-time rule changes. Candidate failures cannot
+  disable baseline calculation. Passing development data cannot promote it.
+- The product remains English only.
+
 ## [0.36.1] - 2026-11-10
 
 ### Removed

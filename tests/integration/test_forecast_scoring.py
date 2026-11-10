@@ -455,14 +455,17 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
         coordinator.notify_live_entities()
         await hass.async_block_till_done()
 
-        assert coordinator.expected_tomorrow_corrected_kwh == pytest.approx(18.0, abs=0.01)
+        # The descriptive factor stays short; exact applied_factor matches the
+        # battery projection and the hourly curve before final energy rounding.
+        assert coordinator.expected_tomorrow_corrected_kwh == pytest.approx(18.04, abs=0.01)
         state = next(
             state
             for state in hass.states.async_all("sensor")
             if state.attributes.get("forecast_statistic_id") == forecast_statistic_id("x")
         )
-        assert float(state.state) == pytest.approx(18.0, abs=0.01)
+        assert float(state.state) == pytest.approx(18.04, abs=0.01)
         assert state.attributes["factor"] == 0.52
+        assert state.attributes["applied_factor"] == 0.5213
         assert state.attributes["basis"] == "learned"
         assert state.attributes["days"] == 15
 

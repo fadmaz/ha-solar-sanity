@@ -40,7 +40,7 @@ from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
 
 from ._forecast_plan import forecast_is_fresh
 from ._local_time import local_day
-from .analysis.forecast import Correction, RoofForecast, correction, roof_forecast
+from .analysis.forecast import Correction, RoofForecast, corrected_hours, correction, roof_forecast
 from .analysis.model import Bucket, BucketSource, ChannelSpec, Quality, Role
 from .battery_outlook import BatteryOutlook
 from .const import (
@@ -1091,12 +1091,16 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             return None if found_for_day is None else found_for_day.factor
 
         totals = self.battery.day_totals(provider, now)
+        corrected = corrected_hours(
+            self.forecast_points[provider], day_of=day_of, factor_for=factor_for
+        )
+        factor = factor_for(today)
         return roof_forecast(
-            self.forecast_points[provider],
+            corrected,
             now,
             day_of=day_of,
-            factor_for=factor_for,
-            today_kwh=totals.get(today, 0.0) / 1000.0,
+            factor_for=lambda day: 1.0 if factor_for(day) is not None else None,
+            today_kwh=None if factor is None else totals.get(today, 0.0) * factor / 1000.0,
         )
 
     @property
@@ -1119,7 +1123,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         if found is None:
             attrs["reason"] = self._uncorrected_reason(provider)
             return attrs
-        attrs.update(factor=found.factor, basis=found.basis, days=found.days)
+        attrs.update(
+            factor=round(found.factor, 2),
+            applied_factor=found.factor,
+            basis=found.basis,
+            days=found.days,
+        )
         return attrs
 
     @property
@@ -1163,7 +1172,26 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             }
         found = self._tomorrow_correction()
         if found is not None:
-            attrs.update(factor=found.factor, basis=found.basis, days=found.days)
+            attrs.update(
+                factor=round(found.factor, 2),
+                applied_factor=found.factor,
+                basis=found.basis,
+                days=found.days,
+            )
+            zone = self._time_zone()
+            tomorrow = (
+                dt_util.utcnow().astimezone(zone).date() + timedelta(days=1)
+                if zone
+                else dt_util.utcnow().date() + timedelta(days=1)
+            )
+            hours = corrected_hours(
+                self.forecast_points.get(provider, {}),
+                day_of=lambda when: when.astimezone(zone).date() if zone else when.date(),
+                factor_for=lambda day: found.factor if day == tomorrow else None,
+            )
+            attrs["corrected_hours"] = [
+                {"start": t.isoformat(), "kwh": v} for t, v in sorted(hours.items())
+            ]
             return attrs
         attrs["reason"] = self._uncorrected_reason(provider)
         return attrs

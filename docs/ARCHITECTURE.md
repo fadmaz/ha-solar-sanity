@@ -704,3 +704,28 @@ battery device or forecast archive; it never grades observations in the browser.
 reconciles these after sampling; recovery deletes the issue. Startup cleanup is
 limited to retired check codes, and entry removal deletes only its own issues.
 Missing data and insufficient calibration samples are not configuration Repairs.
+
+### Silent daylight experiment (0.37.0)
+
+`analysis/daylight_shape.py` learns a ratio for each third of forecast daylight,
+using prior local days with valid measured PV and battery headroom. Each third
+needs three distinct days. `ForecastScale.for_day` supplies the same similarity
+weight and smoothing prior as the daily scale. The three ratios are normalized
+so the corrected daily sum stays fixed. Missing internal forecast hours or
+unproven daylight bounds retain the current distribution. HA's local sun helper
+can independently establish the daylight window without storing coordinates;
+explicit zero shoulders are the fallback when independent bounds are unavailable.
+
+BatteryOutlook computes a shadow after the active baseline, with isolated failure
+handling and its own settled times. The journal freezes and grades both. Shared
+context and candidate revision prevent unlike configurations entering a paired
+gate. `analysis/experiment.py` reports readiness only: no runtime promotion occurs.
+A later reviewed change needs 14 new complete mornings and nights, no extra false
+fills, fewer missed fills, no worse night error or reserve decisions, MAE <=5
+points and reserve accuracy >=85%. Historical development replay cannot count.
+
+The exact active corrected series is exposed to the forecast card as hourly
+energy. Calculations retain the unrounded learned factor; the descriptive factor
+stays rounded, with `applied_factor` available for reproducing the arithmetic.
+The curve attribute is excluded from recorder history. The active battery math
+continues to be baseline-0.34.2 while prospective evidence accumulates.

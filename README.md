@@ -376,3 +376,17 @@ it does not recompute scores in the browser. Unknown metrics mean there are no
 complete observations yet. Collection faults and stale forecasts have separate
 reasons. An unsupported energy classification also appears under Settings >
 Repairs with the required source fix.
+
+### Morning experiment
+
+Solar Sanity can record a silent alternative daylight distribution alongside
+issued forecasts. It does not change the active battery outlook. Diagnostics
+show paired sample counts and every promotion gate. It needs at least 14 new
+complete mornings and nights, no extra false fill promises, fewer missed fills
+and no worse night performance before a reviewed activation. Missing training
+or daylight coverage uses the existing shape. Historical replay is development
+evidence only; it is not prospective validation.
+
+The corrected tomorrow sensor's `corrected_hours` attribute carries the exact
+curve drawn by the forecast card. `applied_factor` preserves the unrounded
+multiplier; `factor` is the shorter descriptive figure.

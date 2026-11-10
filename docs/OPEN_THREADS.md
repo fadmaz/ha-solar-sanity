@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.36.1, 2026-11-10.
+Last updated at 0.37.0, 2026-11-10.
 
 ## Development sequence after 0.34.2
 
@@ -16,10 +16,16 @@ Last updated at 0.36.1, 2026-11-10.
   that release was published but never installed on the reference house. Keep
   the quality section and actionable configuration Repairs in English. Chat
   with the maintainer remains Arabic. Actual dashboard rendering is unverified.
-- **Morning experiment:** a normalized three-part daylight shape, compared
+- **0.37.0 morning experiment:** a normalized three-part daylight shape, compared
   silently over 14 new complete mornings. It must not add false fill calls,
   must reduce missed fill days, and must not worsen the night gate. Until that
-  evidence exists, the current model remains active.
+  evidence exists, baseline-0.34.2 remains active. The journal stores separate
+  candidate snapshots and diagnostics expose every paired gate. Promotion is a
+  subsequent reviewed change, never inferred from the development replay.
+  The old reference download lacks independent daylight bounds; requiring zero
+  shoulders alone correctly fell back on every day. New diagnostics provide
+  independent local sunrise/sunset windows so sparse-provider horizons can be
+  checked without assuming missing readings are zero.
 - **Evening interval:** 80% empirical range for the frozen 20:00 forecast,
   needing 30 calibration nights and 14 later complete shadow observations
   with at least 80% coverage. It is not a band around the live projection.
@@ -28,6 +34,16 @@ Last updated at 0.36.1, 2026-11-10.
   and 1.0 readiness cannot be asserted from the reference house alone.
 - Keep the owner's existing evening/morning scheduled checks active. Diagnostics
   and journal downloads stay private; test fixtures remain synthetic.
+
+## English-only installation verified
+
+- 0.36.1 was installed via HACS and loaded after restart on 2026-11-10. Core
+  reached RUNNING. Collection status is ok, archive read-back succeeds, the
+  outlook refreshes, and Solar Sanity has no warnings/errors. The card resource
+  points to `?v=0.36.1`. 0.36.0 was never installed on this house.
+- Synthetic phone/desktop checks confirm English card output on an RTL page
+  even with a legacy Arabic language option. Actual authenticated dashboard
+  rendering remains unverified. The current journal has no due checkpoints yet.
 
 ## Installed journal baseline
 
