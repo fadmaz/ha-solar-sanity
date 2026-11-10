@@ -90,19 +90,74 @@ export function providerLabel(meta: ArchiveMeta): string {
   return name.endsWith(NAME_SUFFIX) ? name.slice(0, -NAME_SUFFIX.length) : name;
 }
 
-/** Midnight to midnight, in the browser's zone — which is the user's. */
-export function localDayBounds(day: Date): { start: Date; end: Date } {
-  const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
-  return { start, end };
+/** The house's zone, with the browser's as a fallback for a missing/invalid one. */
+export function safeTimeZone(timeZone?: string): string {
+  try {
+    return new Intl.DateTimeFormat("en", { timeZone }).resolvedOptions().timeZone;
+  } catch {
+    return new Intl.DateTimeFormat("en").resolvedOptions().timeZone;
+  }
+}
+
+const calendars = new Map<string, Intl.DateTimeFormat>();
+const midnights = new Map<string, number>();
+
+/** A UTC date used only as a calendar label, never as the house's midnight. */
+function calendarDay(when: Date, zone: string): number {
+  let formatter = calendars.get(zone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone, calendar: "iso8601", numberingSystem: "latn",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    calendars.set(zone, formatter);
+  }
+  const parts = formatter.formatToParts(when);
+  const read = (type: string) => Number(parts.find((part) => part.type === type)!.value);
+  return Date.UTC(read("year"), read("month") - 1, read("day"));
+}
+
+function midnight(day: number, zone: string): Date {
+  const key = `${zone}:${day}`;
+  let result = midnights.get(key);
+  if (result === undefined) {
+    // Find the first instant of the calendar day. Adding 24 hours is wrong on
+    // DST changes; searching also handles zones whose midnight is skipped.
+    let low = day - 36 * 3_600_000;
+    let high = day + 36 * 3_600_000;
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2);
+      if (calendarDay(new Date(middle), zone) < day) low = middle;
+      else high = middle;
+    }
+    result = high;
+    if (midnights.size >= 64) midnights.clear();
+    midnights.set(key, result);
+  }
+  return new Date(result);
+}
+
+/** Midnight to midnight in the house's zone, including 23- and 25-hour days. */
+export function localDayBounds(day: Date, timeZone?: string): { start: Date; end: Date } {
+  const zone = safeTimeZone(timeZone);
+  const calendar = calendarDay(day, zone);
+  return { start: midnight(calendar, zone), end: midnight(calendar + 86_400_000, zone) };
 }
 
 /** Tomorrow, relative to a given moment. */
-export function tomorrow(now: Date): Date {
-  const day = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  day.setDate(day.getDate() + 1);
-  return day;
+export function tomorrow(now: Date, timeZone?: string): Date {
+  const zone = safeTimeZone(timeZone);
+  return midnight(calendarDay(now, zone) + 86_400_000, zone);
+}
+
+export function dayKey(day: Date, timeZone?: string): number {
+  return calendarDay(day, safeTimeZone(timeZone));
+}
+
+export function hourLabel(when: Date, timeZone?: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: safeTimeZone(timeZone), hour: "2-digit", hourCycle: "h23",
+  }).format(when);
 }
 
 /**
@@ -122,8 +177,8 @@ export function toHours(rows: readonly StatisticRow[] | undefined): Hour[] {
 }
 
 /** Only the hours belonging to one local day. */
-export function hoursOn(hours: readonly Hour[], day: Date): Hour[] {
-  const { start, end } = localDayBounds(day);
+export function hoursOn(hours: readonly Hour[], day: Date, timeZone?: string): Hour[] {
+  const { start, end } = localDayBounds(day, timeZone);
   return hours.filter((hour) => hour.start >= start && hour.start < end);
 }
 
@@ -157,6 +212,7 @@ export interface ProviderDay {
 export async function loadCurrentForecast(
   hass: HomeAssistant,
   day: Date,
+  timeZone = hass.config?.time_zone,
 ): Promise<ProviderDay[]> {
   const all = await hass.callWS<ArchiveMeta[]>({
     type: "recorder/list_statistic_ids",
@@ -168,7 +224,7 @@ export async function loadCurrentForecast(
   // archive list has to short-circuit rather than ask for nothing.
   if (archives.length === 0) return [];
 
-  const { start, end } = localDayBounds(day);
+  const { start, end } = localDayBounds(day, timeZone);
   const latest = archives.map((meta) => latestIdFor(meta.statistic_id));
   const rows = await hass.callWS<Record<string, StatisticRow[]>>({
     type: "recorder/statistics_during_period",
@@ -184,7 +240,7 @@ export async function loadCurrentForecast(
     statisticId: meta.statistic_id,
     latestId: latest[index]!,
     label: providerLabel(meta),
-    hours: hoursOn(toHours(rows?.[latest[index]!]), day),
+    hours: hoursOn(toHours(rows?.[latest[index]!]), day, timeZone),
   }));
 }
 

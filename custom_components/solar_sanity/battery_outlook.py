@@ -24,6 +24,7 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
+from ._forecast_plan import forecast_is_fresh
 from .analysis.model import Role
 from .analysis.outlook import (
     BatterySettings,
@@ -48,6 +49,7 @@ from .const import (
     CONF_FORECAST_ENTRIES,
     DEFAULT_RESERVE_PCT,
     DEFAULT_TARGET_PCT,
+    FORECAST_MAX_AGE,
     OPT_BATTERY_CAPACITY_KWH,
     OPT_BATTERY_RESERVE_PCT,
     OPT_BATTERY_SOC,
@@ -71,11 +73,6 @@ SOC_MAX_AGE: Final = timedelta(hours=2)
 #: the longer limit below applies instead.
 SOC_STALE_MOVEMENT: Final = 0.02
 SOC_MAX_AGE_UNCHECKED: Final = timedelta(hours=6)
-
-#: A forecast captured longer ago than this is not used. Captures run every
-#: thirty minutes; three hours without one means the provider has stopped, and
-#: its last revision is then describing weather that has already happened.
-FORECAST_MAX_AGE: Final = timedelta(hours=3)
 
 #: The open hour must have been watched for this long before its measured
 #: average replaces the expectation for the rest of it. Five minutes of a
@@ -476,37 +473,40 @@ class BatteryOutlook:
         reported = getattr(state, "last_reported", None) or state.last_updated
         age = max((now - reported).total_seconds(), 0.0)
         if age > SOC_MAX_AGE.total_seconds():
-            moved = self._battery_moved_wh(reported)
-            if moved is None:
-                if age > SOC_MAX_AGE_UNCHECKED.total_seconds():
-                    return None, age, "soc_stale"
-            elif moved > SOC_STALE_MOVEMENT * settings.capacity_wh:
+            moved, complete = self._battery_moved_wh(reported, now)
+            if moved > SOC_STALE_MOVEMENT * settings.capacity_wh or (
+                not complete and age > SOC_MAX_AGE_UNCHECKED.total_seconds()
+            ):
                 return None, age, "soc_stale"
         return value, age, ""
 
-    def _battery_moved_wh(self, since: datetime) -> float | None:
-        """Energy through the battery since ``since``, from closed hours.
+    def _battery_moved_wh(self, since: datetime, now: datetime) -> tuple[float, bool]:
+        """Observed movement and whether both directions have complete history.
 
-        ``None`` when no battery channel is mapped, which is "cannot tell", not
-        "did not move".
+        Missing buckets once returned zero and let a twelve-hour-old charge
+        reading survive indefinitely. Partial evidence can prove movement, but
+        only complete, usable hours in both directions can attest to quiet.
         """
         keys = [
             spec.key
             for spec in self.coordinator.specs
             if spec.role in (Role.BATTERY_CHARGE, Role.BATTERY_DISCHARGE)
         ]
-        if not keys:
-            return None
         floor = since.replace(minute=0, second=0, microsecond=0)
+        end = now.replace(minute=0, second=0, microsecond=0)
+        by_hour = {b.start_utc: b for b in self.coordinator.buckets if b.seconds == 3600}
+        complete = len(keys) == 2
         total = 0.0
-        for bucket in self.coordinator.buckets:
-            if bucket.start_utc < floor:
-                continue
+        while floor < end:
+            bucket = by_hour.get(floor)
             for key in keys:
-                value = bucket.value(key)
-                if value is not None and value > 0:
+                value = None if bucket is None else bucket.value(key)
+                if value is None or not math.isfinite(value) or value < 0:
+                    complete = False
+                else:
                     total += value
-        return total
+            floor += timedelta(hours=1)
+        return total, complete
 
     def _forecast(
         self, now: datetime
@@ -522,7 +522,7 @@ class BatteryOutlook:
         one. Unscaled until there is enough to learn from.
         """
         captured = self.coordinator.forecast_captured_at
-        if captured is None or now - captured > FORECAST_MAX_AGE:
+        if not forecast_is_fresh(captured, now, FORECAST_MAX_AGE):
             return None, None, None, {}
         hour = now.replace(minute=0, second=0, microsecond=0)
         points = self.coordinator.forecast_points

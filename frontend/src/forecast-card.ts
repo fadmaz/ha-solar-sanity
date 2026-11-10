@@ -12,8 +12,8 @@
  * `expected_tomorrow_corrected` sensor's factor, and the forecast for an ideal
  * roof is not shown at all: since 0.33.0, at the reference installation's
  * owner's request, because the provider's own sensors already show it.
- * Multiplied here rather than copied from the sensor's state, because this
- * card's "tomorrow" is the browser's day and the sensor's is Home Assistant's.
+ * Multiplied here rather than copied from the sensor's state, so the curve
+ * and total use exactly the same corrected hours in Home Assistant's zone.
  * Until there is a factor, the provider's forecast, and a line saying so.
  *
  * What it does not show, and why:
@@ -33,6 +33,9 @@ import { customElement, property, state } from "lit/decorators.js";
 import { areaPath, hourLabels, linePath, niceTicks, round, scaleLinear } from "./chart";
 import {
   loadCurrentForecast,
+  dayKey,
+  hourLabel,
+  safeTimeZone,
   peak,
   roofFactor,
   tomorrow,
@@ -96,7 +99,7 @@ interface Panel {
 }
 
 /** Everything the card needs to draw one provider's day, corrected when it can be. */
-export function buildPanel(day: ProviderDay, roof?: RoofFactor): Panel {
+export function buildPanel(day: ProviderDay, roof?: RoofFactor, timeZone?: string): Panel {
   const hours = roof
     ? day.hours.map((hour) => ({ ...hour, kwh: hour.kwh * roof.factor }))
     : day.hours;
@@ -116,7 +119,8 @@ export function buildPanel(day: ProviderDay, roof?: RoofFactor): Panel {
     area: areaPath(points, HEIGHT - PAD_BOTTOM),
     ticks: niceTicks(peak(hours)),
     tickY: (value: number) => round(y(value)),
-    labels: hourLabels(hours.map((hour) => hour.start)).map((text, index) => ({
+    labels: hourLabels(hours.map((hour) => hour.start), 6,
+      (when) => hourLabel(when, timeZone)).map((text, index) => ({
       x: round(x(index)),
       text,
     })),
@@ -130,6 +134,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   @state() private _days?: ProviderDay[];
   @state() private _failed = false;
   @state() private _day = tomorrow(new Date());
+  private _timeZone = safeTimeZone();
   /** The lifecycle phase the last failure happened in. */
   private _failedDuring?: string;
   /** When the last failure happened, so the latch can expire on its own. */
@@ -203,8 +208,10 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
     if (phase !== "RUNNING") return;
 
     // Midnight moves the question, and what is held answers yesterday's.
-    const wanted = tomorrow(new Date());
-    if (wanted.getTime() !== this._day.getTime()) {
+    const zone = safeTimeZone(this.hass.config.time_zone);
+    const wanted = tomorrow(new Date(), zone);
+    if (wanted.getTime() !== this._day.getTime() || zone !== this._timeZone) {
+      this._timeZone = zone;
       this._day = wanted;
       this._days = undefined;
       this._failed = false;
@@ -227,28 +234,34 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
 
   private async _load(): Promise<void> {
     if (!this.hass) return;
-    this._inflight = this._loadOnce(this._day).finally(() => {
+    this._inflight = this._loadOnce(this._day, this._timeZone).finally(() => {
       this._inflight = undefined;
+      // A zone/day change can discard the request while it is in flight.
+      // Load its replacement even if no further entity state changes arrive.
+      if (this._days === undefined && !this._failed && this.hass?.config.state === "RUNNING") {
+        void this._load();
+      }
     });
     return this._inflight;
   }
 
-  private async _loadOnce(day: Date): Promise<void> {
+  private async _loadOnce(day: Date, timeZone: string): Promise<void> {
     if (!this.hass) return;
     try {
-      const days = await loadCurrentForecast(this.hass, day);
+      const days = await loadCurrentForecast(this.hass, day, timeZone);
       // The day may have moved while this was in flight. A request started at
       // 23:59:59 answers about the day that has just become today, and
       // publishing it would leave the card showing yesterday's forecast under
       // the word "Tomorrow" until something else happened to reload it — which,
       // on a card that only loads when `_days` is undefined, is nothing.
-      if (day.getTime() !== this._day.getTime()) return;
+      if (day.getTime() !== this._day.getTime() || timeZone !== this._timeZone) return;
       this._days = this._config?.provider
         ? days.filter((d) => d.statisticId === this._config!.provider)
         : days;
       this._loadedAt = Date.now();
       this._failedDuring = undefined;
     } catch {
+      if (day.getTime() !== this._day.getTime() || timeZone !== this._timeZone) return;
       // A failed refresh leaves what is already on screen alone: half an hour
       // old is still the forecast, and a blip should not replace it with an
       // apology. It is tried again after the same interval.
@@ -287,7 +300,8 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       );
     }
 
-    const panels = this._days.map((day) => buildPanel(day, roofFactor(this.hass, day.latestId)));
+    const panels = this._days.map((day) =>
+      buildPanel(day, roofFactor(this.hass, day.latestId), this._timeZone));
     const withData = panels.filter((panel) => panel.hours.length > 1);
 
     if (withData.length === 0) {
@@ -329,11 +343,10 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
    * for the card to stay honest.
    */
   private _heading(): string {
-    const midnight = new Date();
-    midnight.setHours(0, 0, 0, 0);
-    const days = Math.round((this._day.getTime() - midnight.getTime()) / 86_400_000);
-    if (days === 1) return "Tomorrow";
-    if (days === 0) return "Today";
+    const now = new Date();
+    const key = dayKey(this._day, this._timeZone);
+    if (key === dayKey(tomorrow(now, this._timeZone), this._timeZone)) return "Tomorrow";
+    if (key === dayKey(now, this._timeZone)) return "Today";
     return "Forecast";
   }
 
@@ -342,6 +355,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       weekday: "long",
       day: "numeric",
       month: "long",
+      timeZone: this._timeZone,
     });
   }
 
@@ -386,7 +400,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
           <tbody>
             ${panel.hours.map(
               (hour) => html`<tr>
-                <th scope="row">${String(hour.start.getHours()).padStart(2, "0")}:00</th>
+                <th scope="row">${hourLabel(hour.start, this._timeZone)}:00</th>
                 <td>${hour.kwh.toFixed(2)} kWh</td>
               </tr>`,
             )}

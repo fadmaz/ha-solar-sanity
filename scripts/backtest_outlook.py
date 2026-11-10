@@ -109,6 +109,7 @@ class SocSeries:
         self.values = [value for _, value in ordered]
         self.minima = minima or {}
         self.maxima = maxima or {}
+        self.hourly_extremes = minima is not None or maxima is not None
 
     def __bool__(self) -> bool:
         return bool(self.times)
@@ -127,6 +128,8 @@ class SocSeries:
 
     def lowest(self, start: datetime, end: datetime) -> tuple[float, datetime] | None:
         """The lowest level between two moments, and when it was first reached."""
+        if not self.covers(start, end):
+            return None
         first, last = self.at(start), self.at(end)
         if first is None or last is None:
             return None
@@ -138,17 +141,40 @@ class SocSeries:
     def lowest_reading(self, start: datetime, end: datetime) -> tuple[float, datetime] | None:
         """The lowest reading in the hours from ``start`` up to ``end``.
 
-        From the hourly minima when there are any, else from the means.
+        An incomplete night is not evidence that the battery stayed above reserve.
         """
         hours = _hours(start, end)
-        known = [(self.minima[hour], hour) for hour in hours if hour in self.minima]
-        if not known:
+        if not self.covers(start, end):
+            return None
+        if not self.hourly_extremes:
             return self.lowest(start, end)
-        return min(known)
+        return min((self.minima[hour], hour) for hour in hours)
+
+    def covers(self, start: datetime, end: datetime, *, extreme: str = "min") -> bool:
+        """Whether the entire interval can be graded, not just its surviving rows.
+
+        The audit accepted eight hours of night from one hourly minimum. Raw CSV
+        points need both endpoints and every internal gap within MAX_GAP instead.
+        """
+        if end <= start:
+            return False
+        if self.hourly_extremes:
+            values = self.maxima if extreme == "max" else self.minima
+            return all(h in values and math.isfinite(values[h]) for h in _hours(start, end))
+        if self.at(start) is None or self.at(end) is None:
+            return False
+        lo = max(0, bisect_right(self.times, start) - 1)
+        hi = bisect_left(self.times, end) + 1
+        return all(
+            after - before <= MAX_GAP
+            for before, after in zip(self.times[lo:hi], self.times[lo + 1 : hi], strict=False)
+        )
 
     def first_at_or_above(self, level: float, start: datetime, end: datetime) -> datetime | None:
         """When the level was first reached, to the hour where extremes exist."""
-        if self.maxima:
+        if not self.covers(start, end, extreme="max"):
+            return None
+        if self.hourly_extremes:
             hour = next(
                 (h for h in _hours(start, end) if self.maxima.get(h, -math.inf) >= level), None
             )
@@ -156,7 +182,9 @@ class SocSeries:
         return self._first_crossing(level, start, end, rising=True)
 
     def first_at_or_below(self, level: float, start: datetime, end: datetime) -> datetime | None:
-        if self.minima:
+        if not self.covers(start, end):
+            return None
+        if self.hourly_extremes:
             hour = next(
                 (h for h in _hours(start, end) if self.minima.get(h, math.inf) <= level), None
             )
@@ -409,7 +437,7 @@ def replay_nights(
     zone: ZoneInfo,
     evening: int | Sequence[int],
 ) -> tuple[list[Night], dict[str, int]]:
-    skipped = {"no_soc": 0, "not_ready": 0, "no_takeover": 0, "no_actual": 0}
+    skipped = {"no_soc": 0, "not_ready": 0, "no_takeover": 0, "no_actual": 0, "incomplete_soc": 0}
     nights: list[Night] = []
     hours = [evening] if isinstance(evening, int) else list(evening)
     first = buckets[0].start_utc.astimezone(zone).date()
@@ -448,6 +476,9 @@ def replay_nights(
         if outlook.takeover_at is None or outlook.lowest_pct is None:
             skipped["no_takeover"] += 1
             continue
+        if not soc.covers(now, outlook.takeover_at):
+            skipped["incomplete_soc"] += 1
+            continue
         lowest = soc.lowest_reading(now, outlook.takeover_at)
         if lowest is None:
             skipped["no_actual"] += 1
@@ -483,6 +514,7 @@ def replay_mornings(
     battery: BatterySettings,
     zone: ZoneInfo,
     morning: int,
+    skipped: dict[str, int] | None = None,
 ) -> list[tuple[datetime, datetime | None, datetime | None]]:
     """Predicted against actual "full at", one projection each morning."""
     out = []
@@ -508,6 +540,10 @@ def replay_mornings(
             continue
         outlook = project(start_soc, learned(buckets, battery, now), steps, forecast_used=True)
         dusk = now + timedelta(hours=14)
+        if not soc.covers(now, dusk, extreme="max"):
+            if skipped is not None:
+                skipped["incomplete_soc"] = skipped.get("incomplete_soc", 0) + 1
+            continue
         actual = soc.first_at_or_above(full_level, now, dusk)
         predicted = outlook.full_at if outlook.full_at and outlook.full_at <= dusk else None
         out.append((now, predicted, actual))
@@ -705,12 +741,21 @@ def main() -> int:
         print(f"gate        {verdict} (>= 14 nights, mean |error| <= 5, calls >= 85%)")
 
     if forecast:
+        morning_skipped: dict[str, int] = {}
         mornings = replay_mornings(
-            buckets, soc, forecast, battery=battery, zone=zone, morning=args.morning
+            buckets,
+            soc,
+            forecast,
+            battery=battery,
+            zone=zone,
+            morning=args.morning,
+            skipped=morning_skipped,
         )
         both = [(p, a) for _, p, a in mornings if p and a]
         print()
-        print(f"mornings    {len(mornings)} projected at {args.morning}:00")
+        print(
+            f"mornings    {len(mornings)} projected at {args.morning}:00, skipped {morning_skipped}"
+        )
         if args.verbose:
             for now, p, a in mornings:
                 shown_p = f"{p.astimezone(zone):%H:%M}" if p else "  -  "

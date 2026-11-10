@@ -88,6 +88,9 @@ SCORING_INTERVAL: Final = timedelta(hours=6)
 #: forecast later, and it is the one thing in this product that cannot be
 #: backfilled.
 FORECAST_CAPTURE_INTERVAL: Final = timedelta(minutes=30)
+#: Shared by the projection and every corrected figure. An eight-hour-old
+#: capture was still published by the corrected sensors in the 2026-11 audit.
+FORECAST_MAX_AGE: Final = timedelta(hours=3)
 FORECAST_STATISTIC_PREFIX: Final = f"{DOMAIN}:forecast_"
 
 #: The day-ahead archive, kept separately from the rolling one above.

@@ -22,6 +22,11 @@ from typing import Any
 type Point = tuple[datetime, float]
 
 
+def forecast_is_fresh(captured: datetime | None, now: datetime, max_age: timedelta) -> bool:
+    """One age rule for the projection and all figures derived from a capture."""
+    return captured is not None and now - captured <= max_age
+
+
 def by_period_start(wh_hours: Mapping[str, Any]) -> dict[str, Any]:
     """A ``wh_hours`` map keyed by the end of each period, re-keyed by its start.
 

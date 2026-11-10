@@ -146,7 +146,7 @@ greps for it.
 
 | Every | Timer | What runs |
 | --- | --- | --- |
-| state change | `async_track_power` | Power channels are integrated over the durations they held, not sampled. |
+| state change | `async_track_power` | Close elapsed hours first, then integrate power over the durations held. |
 | 30 s | `LIVE_INTERVAL` | `battery.refresh()`, which recomputes only if the charge level changed; then `notify_live_entities()`. |
 | 5 min | `BUCKET_INTERVAL` | `accumulate()`: energy counters are differenced, and the hour closes on the boundary. Then `battery.refresh(force=True)` and `notify_live_entities()`. |
 | hour close | `_close_bucket` | The bucket is stamped with `Quality` and `BucketSource`, then the window is saved (5.4). |
@@ -155,6 +155,12 @@ greps for it.
 
 `notify_live_entities` is `async_update_listeners`. It is how every sensor is rewritten,
 because `CoordinatorEntity` writes only on a coordinator update and the refresh is six-hourly.
+
+`_advance_hour` is shared by state events and sampling. It settles each boundary
+before a new value can cross it, and closes delayed hours individually. Energy
+channels are differenced only for `total` and `total_increasing`. Other energy
+classifications are excluded, with a warning on entry into that condition and a
+`reason` in coverage diagnostics; arrival of a valid cumulative state recovers it.
 
 Every function handed to a timer or a listener is `async def` or `@callback`. Home Assistant
 runs anything else in a worker thread, where `async_write_ha_state` raises for a custom
@@ -310,7 +316,7 @@ it understates the sun by day.
 - **The night** (`night_window`) is anchored on darkness, judged from forecast or profile
   production and never the measured anchor, so a cloud at noon does not open one. It
   begins at the deficit run leading into the dark and ends at the takeover: the first later
-  step where production covers load.
+  step where production covers the house load plus the inverter's standby.
 - **The safe load** is bisected on shortfall ≤ 1 Wh, which is monotone in the load.
 - **Tonight's use** (`Outlook.night_load_wh`) is the load plus the standby over the night
   window's steps, from its start or now until the takeover; none without a takeover.
@@ -333,8 +339,12 @@ it understates the sun by day.
   the charge reading was enough.
 - **The charge level is refused** if it is not numeric or not between 0 and 100. It is also
   refused if it is over 2 h old while the battery moved more than 2% of its capacity, or
-  over 6 h old when no battery channel can tell.
-- **A forecast is stale** after 3 h without a capture.
+  over 6 h old when complete usable history in both battery directions cannot
+  establish quiet. Observed movement can reject a reading even with partial history.
+- **A forecast is stale** after 3 h without a capture. The projection, all six
+  corrected forecast sensors and the forecast input to live spare power share
+  this rule. Corrected sensors carry a reason while unknown; learned factors
+  and archive rows survive the outage.
 
 ### 4.5 Grading
 
@@ -344,14 +354,19 @@ forecast. It grades against each hour's lowest and highest charge reading, not t
 reports the night's lowest error, the reserve call, the reserve time, and the daytime fill
 calls.
 
+Every hourly minimum must exist for a night to count; mornings require every
+hourly maximum through the observation window. Missing extremes do not fall
+back to hourly means. CSV replays require both endpoints and no internal gap
+longer than two hours. Incomplete intervals are reported separately.
+
 Two options:
 - `--period-end-before` re-keys a Forecast.Solar archive written before 2026.11 (3.7).
 - `--raw` replays without the learned standby and scale.
 
 **The gate.** The energy-balance check was deleted after this gate passed: at least 14
 distinct nights, mean absolute lowest error ≤ 5 points, reserve called right ≥ 85%. On the
-reference installation it passed on 27 nights with an error of 2.8 points, a bias of 0.0,
-and 72 of 80 reserve calls right.
+reference installation at 0.34.2 it passes on 29 nights with an error of 2.47
+points, a bias of +0.1, and 78 of 85 reserve calls right.
 
 ---
 
@@ -470,6 +485,12 @@ rolling archive with a `factor`, the curve and the total are multiplied by it an
 uncorrected figure is not shown (0.33.0); otherwise the provider's forecast, and a line
 saying it is not corrected. It reads again every 30 minutes, keeping what is
 on screen meanwhile and through a failed refresh.
+
+The forecast card's calendar and every hour label use `hass.config.time_zone`,
+falling back to the browser only for an absent or invalid zone. Calendar-day
+bounds are resolved as UTC instants rather than by adding 24 hours. Changing
+the zone or day invalidates cached panels and discards an in-flight response
+for the old question.
 
 **Editors** wrap Home Assistant's `<ha-form>`: a device picker filtered to the integration,
 and a provider picker read from `recorder/list_statistic_ids`.
@@ -599,9 +620,10 @@ The version lives in `manifest.json` and nowhere else that matters. Its heading 
      figures (3.7).
 4. **Daytime read-outs depend on the forecast's weather.**
    - The scale corrects an overestimate by the kind of day forecast, not a wrong day.
-   - "Full at" was wrong on 6 of 28 mornings on the reference installation, before and
-     after 0.32.0. On the four it called right, the median error went from 81 minutes
-     early to 1 minute.
+   - On the 2026-11-10 replay after excluding incomplete observation windows,
+     "full at" misses six fill days and falsely predicts two, over 26 mornings.
+     Only two correctly called fill days have complete observation windows;
+     their median timing error is eight minutes late.
    - A provider whose forecast stops partway through tomorrow makes tomorrow look
      cloudier than it is. Its hours still to come are then scaled up.
 5. **Card delivery rests on undocumented Lovelace internals** (`resource_mode`, the

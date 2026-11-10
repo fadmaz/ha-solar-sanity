@@ -25,6 +25,7 @@ from unittest.mock import patch
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
@@ -56,7 +57,11 @@ async def _coordinator(hass: HomeAssistant, entry: MockConfigEntry):
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    return entry.runtime_data.coordinator
+    coordinator = entry.runtime_data.coordinator
+    # Tests below inject captured forecast totals directly. Their timestamp
+    # must represent the same successful capture, just as the real path does.
+    coordinator.forecast_captured_at = dt_util.utcnow()
+    return coordinator
 
 
 class TestTheUnitsAreConverted:

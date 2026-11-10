@@ -116,8 +116,11 @@ export function niceTicks(max: number, count = 4): number[] {
  * Takes the dates rather than assuming a day starts at midnight or has
  * twenty-four hours, because two days a year it does neither.
  */
-export function hourLabels(hours: readonly Date[], every = 6): string[] {
+export function hourLabels(
+  hours: readonly Date[], every = 6,
+  format: (when: Date) => string = (when) => String(when.getHours()).padStart(2, "0"),
+): string[] {
   return hours.map((hour, index) =>
-    index % every === 0 ? String(hour.getHours()).padStart(2, "0") : "",
+    index % every === 0 ? format(hour) : "",
   );
 }
