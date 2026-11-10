@@ -747,3 +747,26 @@ The public view expires at the saved takeover boundary; old records without an
 interval remain explicitly unrecorded. Calibration does not affect collection
 health, Repairs, battery math or the current trajectory chart. The two rolling
 percentage sensors have no cumulative state class.
+
+### Comparable installation reports (0.39.0)
+
+`scripts/evaluate_installation.py` takes one download and explicit installation
+label/time zone. It fingerprints source bytes, separates provider/algorithm/
+settings contexts and requires explicit timing verification before the night
+accuracy gate can pass. Multiple providers require an explicit selection. No
+learning or calibration is pooled across installations. Reports expose mapped
+channel kinds and export presence without copying house entity IDs.
+
+Historical 08:00/20:00 predictions use the shipping profile, scale, projection
+and shared observation grader. Exact state histories alone can supply minute
+errors; hourly extremes can grade fill occurrence only. Candidate development
+comparisons use matched complete pairs with proven daylight coverage. Only
+actual issued journal rows are passed to prospective gates, grouped by context
+and revision. Historical replay cannot fabricate issued evidence.
+
+The report always leaves generalization unproven pending independent provenance
+review and an actual independent download. `--kind synthetic` is a testing label,
+not evidence of another house. Synthetic real-HA tests exercise both power and
+cumulative collection with and without export across time-zone/capacity variants
+and clock changes. Counter cadence limits attribution precision; conservation
+includes the current open bucket rather than discarding its pending increment.

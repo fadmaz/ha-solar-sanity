@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.38.0, 2026-11-10.
+Last updated at 0.39.0, 2026-11-10.
 
 ## Development sequence after 0.34.2
 
@@ -32,11 +32,35 @@ Last updated at 0.38.0, 2026-11-10.
   held-out issues; public bounds stay unknown until the gate passes and expire
   at the saved night boundary. No calibration or prospective interval evidence
   is available yet. This remains an open live-data gate.
-- **Second installation:** synthetic variants and a common comparison report
-  can be prepared now; no independent house's data is available. Generalization
-  and 1.0 readiness cannot be asserted from the reference house alone.
+- **0.39.0 second-installation tooling:** the unified private evaluation report
+  and synthetic export/meter/time-zone/capacity variants are implemented.
+  Real HA tests cover collection conservation across clock changes. No
+  independent house's download is available; provider timing/completeness,
+  independent provenance and the night gate still need actual evidence.
+  Generalization and 1.0 readiness remain unproven.
 - Keep the owner's existing evening/morning scheduled checks active. Diagnostics
   and journal downloads stay private; test fixtures remain synthetic.
+
+## Evaluation evidence and open live-data gates
+
+- Strict 08:00/20:00 replay of the same private reference download: 29 complete
+  nights, MAE 2.531 points, reserve calls 27/29 (93.1%). Only two mornings are
+  gradable after shared external-charge and completeness screening; fill-time
+  MAE is unknown because these are hourly extremes. The old multi-evening
+  baseline remains 2.47 points and 78/85; its 26 morning observations were a
+  broader group that did not all screen external charging. Do not conflate them.
+- Adding independently calculated daylight windows to the private development
+  copy still yields no eligible historical candidate pairs. No improvement is
+  claimed. The legacy period-end archive cannot recover a missing sunset split;
+  actual complete new days and three usable training days per part are needed.
+- The first actual 20:00 issue is still pending at delivery time. Checkpoint
+  persistence, completed-window grading, 14 new paired mornings/nights, and
+  30+14-night interval calibration/validation remain open. The active projection
+  stays baseline-0.34.2. No threshold, efficiency or settled-time rule changed.
+- No independent-installation evidence exists. Synthetic tests do not close it.
+- The product is English only. Actual authenticated dashboard rendering remains
+  unverified; synthetic English phone/desktop, both themes and parent directions
+  passed, including known/unknown interval details with no horizontal overflow.
 
 ## English-only installation verified
 
