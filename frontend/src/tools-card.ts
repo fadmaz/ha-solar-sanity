@@ -3,6 +3,7 @@ import { LitElement, css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { findInstallations, hasOutlook } from "./battery-model";
 import { safeTimeZone } from "./forecast-data";
+import { changesPanel } from "./changes";
 import "./simulation-panel";
 import type { GridOptions, HomeAssistant, LovelaceCardConfig } from "./types/hass";
 
@@ -36,7 +37,7 @@ export class SolarSanityToolsCard extends LitElement {
   public setConfig(config: ToolsCardConfig): void {
     if (config.device_id !== undefined && typeof config.device_id !== "string") throw new Error("Select an installation.");
     this._config = config;
-    this._tab = config.default_tab === "what_if" ? "what_if" : "history";
+    this._tab = ["what_if", "changes"].includes(config.default_tab ?? "") ? config.default_tab! : "history";
   }
   public getCardSize(): number { return 8; }
   public getGridOptions(): GridOptions { return {rows: "auto", columns: 12, min_columns: 6}; }
@@ -139,10 +140,11 @@ export class SolarSanityToolsCard extends LitElement {
     const note = !this.hass ? "Waiting for Home Assistant." : this.hass.config.state !== "RUNNING" ? "Home Assistant is still starting."
       : !this._device() ? "Choose an installation with a battery outlook in the card editor." : null;
     return html`<ha-card><div class="root" lang="en" dir="ltr"><h2>Solar Sanity tools</h2>
-      ${note ? html`<p>${note}</p>` : html`<div role="tablist" aria-label="Solar Sanity tools">${["history", "what_if"].map(tab => html`<button role="tab" id=${`tab-${tab}`} aria-selected=${this._tab === tab} aria-controls=${`panel-${tab}`} tabindex=${this._tab === tab ? 0 : -1}
-        @click=${()=>{this._tab=tab;}} @keydown=${(e:KeyboardEvent)=>{if(["ArrowLeft","ArrowRight","Home","End"].includes(e.key)){e.preventDefault();this._tab=e.key==="Home"?"history":e.key==="End"?"what_if":this._tab==="history"?"what_if":"history";void this.updateComplete.then(()=>this.shadowRoot?.querySelector<HTMLElement>(`#tab-${this._tab}`)?.focus());}}}>${tab === "history" ? "History" : "What if"}</button>`)}</div>
+      ${note ? html`<p>${note}</p>` : html`<div role="tablist" aria-label="Solar Sanity tools">${["history", "what_if", "changes"].map(tab => html`<button role="tab" id=${`tab-${tab}`} aria-selected=${this._tab === tab} aria-controls=${`panel-${tab}`} tabindex=${this._tab === tab ? 0 : -1}
+        @click=${()=>{this._tab=tab;}} @keydown=${(e:KeyboardEvent)=>{if(["ArrowLeft","ArrowRight","Home","End"].includes(e.key)){e.preventDefault();const tabs=["history","what_if","changes"];this._tab=e.key==="Home"?"history":e.key==="End"?"changes":tabs[(tabs.indexOf(this._tab)+(e.key==="ArrowLeft"?2:1))%3]!;void this.updateComplete.then(()=>this.shadowRoot?.querySelector<HTMLElement>(`#tab-${this._tab}`)?.focus());}}}>${tab === "history" ? "History" : tab === "what_if" ? "What if" : "Changes"}</button>`)}</div>
         <div role="tabpanel" id="panel-history" aria-labelledby="tab-history" ?hidden=${this._tab!=="history"}>${this._historyPanel()}</div>
-        <div role="tabpanel" id="panel-what_if" aria-labelledby="tab-what_if" ?hidden=${this._tab!=="what_if"}><solar-sanity-simulation .hass=${this.hass} .deviceId=${this._device()??""} .projectionId=${projectionId} .active=${this._tab==="what_if"}></solar-sanity-simulation></div>`}</div></ha-card>`;
+        <div role="tabpanel" id="panel-what_if" aria-labelledby="tab-what_if" ?hidden=${this._tab!=="what_if"}><solar-sanity-simulation .hass=${this.hass} .deviceId=${this._device()??""} .projectionId=${projectionId} .active=${this._tab==="what_if"}></solar-sanity-simulation></div>
+        <div role="tabpanel" id="panel-changes" tabindex="0" aria-labelledby="tab-changes" ?hidden=${this._tab!=="changes"}>${changesPanel(attrs?.outlook_changes,this.hass?.config.time_zone)}</div>`}</div></ha-card>`;
   }
   public static styles = css`
     :host {display:block;color:var(--primary-text-color);font-family:var(--ha-card-header-font-family,inherit)}
@@ -152,11 +154,12 @@ export class SolarSanityToolsCard extends LitElement {
     .toolbar {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
     button,select {font:inherit;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:8px 12px;cursor:pointer}
     button:disabled {cursor:wait;opacity:.6} button:hover {background:var(--secondary-background-color)}
-    button:focus-visible,select:focus-visible {outline:2px solid var(--primary-color);outline-offset:3px}
+    button:focus-visible,select:focus-visible,[role=tabpanel]:focus-visible {outline:2px solid var(--primary-color);outline-offset:3px}
     article {border-top:1px solid var(--divider-color);padding:16px 0} article header {display:flex;gap:12px;justify-content:space-between;flex-wrap:wrap}
     dl {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0} dt {margin-bottom:4px} dd {margin:0;line-height:1.5;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
     .outcome {grid-column:1/-1} .outcome dd {display:flex;gap:4px 12px;flex-wrap:wrap} .status {font-weight:500}
     ::selection {background:var(--primary-color);color:var(--text-primary-color,#fff)}
+    .changes{width:100%;border-collapse:collapse;table-layout:fixed;font-size:.875rem}.changes td,.changes th{text-align:left;padding:12px 4px;border-bottom:1px solid var(--divider-color);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.changes th{font-weight:500}.changes tbody th{color:var(--secondary-text-color)}
     @media(max-width:420px){.root{padding:16px}dl{grid-template-columns:1fr}.outcome{grid-column:auto}}
   `;
 }

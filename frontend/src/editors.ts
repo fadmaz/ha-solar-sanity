@@ -300,7 +300,7 @@ export class SolarSanityToolsCardEditor extends LitElement {
   protected render(): TemplateResult {
     const schema: FormRow[] = [
       {name: "device_id", selector: {device: {integration: "solar_sanity"}}},
-      {name: "default_tab", selector: {select: {options: [{value: "history", label: "History"}, {value: "what_if", label: "What if"}]}}},
+      {name: "default_tab", selector: {select: {options: [{value: "history", label: "History"}, {value: "what_if", label: "What if"}, {value: "changes", label: "Changes"}]}}},
     ];
     return html`<div lang="en" dir="ltr"><ha-form .hass=${this.hass} .data=${this._config} .schema=${schema}
       .computeLabel=${(r: FormRow) => r.name === "device_id" ? "Installation" : "Default tab"}

@@ -710,6 +710,19 @@ and background tabs stop requests. Scheduled times resolve against the HA zone;
 DST gaps are rejected and folds require an explicit occurrence. A finished run
 stops even without a new projection. Scenario fields remain temporary UI state.
 
+### Input changes (0.42.0)
+
+`analysis/changes.py` retains only two valid input snapshots in memory. Their
+context includes the journal setup/revision/zone and the actual forecast source.
+Invalid data, reversed publication time or changed context starts a new pair.
+Solar and load energy are integrated over the intersection of both future
+horizons, proportionally at partial-step boundaries. Missing estimates are
+not numerical zero changes. A comparison failure cannot suppress a projection.
+
+The minimum-charge sensor exposes the bounded `outlook_changes` display object,
+excluded from Recorder. The tools Changes tab reads it through registry discovery;
+it makes no service call or causal calculation. No persistence schema changes.
+
 1. `analysis/outlook.py`: the whole projection, about 470 lines.
 2. `analysis/profile.py`: everything learned from the house.
 3. `battery_outlook.py`: how the projection meets Home Assistant.

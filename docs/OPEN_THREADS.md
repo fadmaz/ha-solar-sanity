@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.41.0, 2026-11-10.
+Last updated at 0.42.0, 2026-11-10.
 
 ## Resumed development and installation evidence
 
@@ -16,6 +16,11 @@ Last updated at 0.41.0, 2026-11-10.
   Production projection, morning shadow and interval gates stay unchanged.
   UI/API checks and reference replay are recorded in its PR; authenticated
   dashboard rendering remains a separate open acceptance check.
+- 0.41.0 shipped through PR133 after 675 Python tests at each supported HA
+  version and 201 card tests passed. HACS installed it and restart was sent;
+  post-start runtime/API checks are pending. The reference replay was unchanged.
+- 0.42.0 adds bounded in-memory input comparisons over the common future only.
+  Its UI does not attribute causality or compare estimates from different setups.
 
 ## Tools development sequence
 
@@ -24,7 +29,7 @@ Last updated at 0.41.0, 2026-11-10.
   and read permissions. Synthetic UI checks cover desktop/phone layouts.
   Real authenticated dashboard rendering and nonempty journal restart
   persistence remain open until observed; no checkpoint is fabricated.
-- Next: 0.42.0 input-change explanations.
+- Next: 0.43.0 optional alternate-schedule experiment.
   0.43.0 prepares alternate schedule learning, with an empty day selection by
   default for every installation, including the reference house. Operational
   comparison waits for a documented close of the morning experiment.

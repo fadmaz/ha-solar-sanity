@@ -28,12 +28,14 @@ from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
 from ._forecast_plan import forecast_is_fresh
+from .analysis.changes import InputChanges, InputSnapshot
 from .analysis.daylight_shape import DaylightShape, learn_shape
 from .analysis.forecast import corrected_hours
 from .analysis.model import Role
 from .analysis.outlook import (
     BatterySettings,
     Outlook,
+    Step,
     build_steps,
     project,
     settle_full,
@@ -110,6 +112,7 @@ class OutlookState:
 
     outlook: Outlook | None = None
     projection_id: str | None = None
+    outlook_changes: dict[str, Any] = field(default_factory=dict)
     reason: str | None = "soc_unavailable"
     soc_age_s: float | None = None
     #: The charge level the projection started from, kept even when there is
@@ -188,6 +191,7 @@ class BatteryOutlook:
         self.hass = hass
         self.coordinator = coordinator
         self.state = OutlookState()
+        self._changes = InputChanges()
         self._dirty = True
         self._scales: dict[str, ForecastScale | None] = {}
         #: Each provider's day-ahead archive, in Wh per UTC hour, from the last
@@ -445,14 +449,47 @@ class BatteryOutlook:
         settings = self.settings
         if settings is None:
             self.state = OutlookState(reason=None)
+            self.state.outlook_changes = self._changes.publish(None)
             return
         try:
-            self.state = self._compute(settings, now or dt_util.utcnow())
+            state = self._compute(settings, now or dt_util.utcnow())
         except Exception:
+            self.state.outlook_changes = self._changes.publish(None)
             # The outlook is a reading, never a reason to take the integration
             # down: a bad state from somebody else's sensor must cost this
             # projection, not the forecast archive beside it.
             _LOGGER.warning("Battery outlook could not be computed", exc_info=True)
+            return
+        try:
+            snapshot = None
+            if state.outlook is not None and state.reason is None:
+                snapshot = InputSnapshot(
+                    context=f"{self.coordinator.journal.context()}:{self._forecast_provider_id}:"
+                    f"{state.outlook.forecast_used}",
+                    at=state.computed_at,
+                    soc_pct=state.soc_pct,
+                    steps=tuple(
+                        Step(
+                            datetime.fromisoformat(r["start"]),
+                            r["hours"],
+                            r["pv_wh"],
+                            r["load_wh"],
+                            r["daylight_wh"],
+                        )
+                        for r in state.inputs["steps"]
+                    ),
+                    scale=state.scale.factor if state.scale is not None else None,
+                    scale_today=state.scale_today,
+                    scale_tomorrow=state.scale_tomorrow,
+                    max_charge_w=state.max_charge_w,
+                    standby_w=state.standby_w,
+                )
+            state.outlook_changes = self._changes.publish(snapshot)
+        except Exception:
+            # An optional explanation must never suppress a valid projection.
+            state.outlook_changes = self._changes.publish(None)
+            _LOGGER.debug("Could not compare projection inputs", exc_info=True)
+        self.state = state
 
     def _compute(self, settings: BatterySettings, now: datetime) -> OutlookState:
         coordinator = self.coordinator
