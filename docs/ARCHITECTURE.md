@@ -683,6 +683,15 @@ The version lives in `manifest.json` and nowhere else that matters. Its heading 
 
 ## 9. Where to start reading
 
+### Issued history tools (0.40.0)
+
+The tools card reads a native response action rather than copying the journal
+into recorder attributes. The action resolves one loaded installation, enforces
+read access and returns only bounded display fields. Presentation uses the
+original local checkpoint date; missed slots have a scheduled time and no issue
+time. Pure history shaping never grades, captures or changes the stored record.
+The existing journal envelope and projection math are unchanged.
+
 1. `analysis/outlook.py`: the whole projection, about 470 lines.
 2. `analysis/profile.py`: everything learned from the house.
 3. `battery_outlook.py`: how the projection meets Home Assistant.

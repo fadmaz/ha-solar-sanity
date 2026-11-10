@@ -11,14 +11,16 @@
 import "./editors";
 import { SolarSanityBatteryCard } from "./battery-card";
 import { SolarSanityForecastCard } from "./forecast-card";
+import { SolarSanityToolsCard } from "./tools-card";
 // Imported for its registrations: two strategies and one dashboard entry.
 import "./strategy";
 import { VERSION } from "./types/hass";
 
-export { SolarSanityBatteryCard, SolarSanityForecastCard };
+export { SolarSanityBatteryCard, SolarSanityForecastCard, SolarSanityToolsCard };
 
 window.customCards = window.customCards ?? [];
 window.customCards.push(
+  {type: "solar-sanity-tools-card", name: "Solar Sanity: tools", description: "Issued forecasts compared with what the battery actually did.", preview: true, documentationURL: "https://github.com/fadmaz/ha-solar-sanity"},
   {
     type: "solar-sanity-battery-card",
     name: "Solar Sanity: battery",

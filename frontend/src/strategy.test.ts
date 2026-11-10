@@ -22,6 +22,7 @@ describe("buildCards", () => {
     expect(cards.map((c) => c.type)).toEqual([
       "custom:solar-sanity-battery-card",
       "custom:solar-sanity-forecast-card",
+      "custom:solar-sanity-tools-card",
     ]);
   });
 
@@ -34,7 +35,7 @@ describe("buildCards", () => {
     // not be looking at.
     const cards = buildCards(hass({ ...outlookOf("dev-b"), ...outlookOf("dev-a") }));
 
-    expect(cards.map((c) => c.device_id)).toEqual(["dev-a", "dev-b", undefined]);
+    expect(cards.map((c) => c.device_id)).toEqual(["dev-a", "dev-b", undefined, "dev-a", "dev-b"]);
   });
 
   it("still lays out a view when there is no outlook to show", () => {
@@ -77,7 +78,7 @@ describe("the strategies themselves", () => {
   it("the view fills itself with cards", async () => {
     const view = await SolarSanityViewStrategy.generate({}, hass(outlookOf("dev-a")));
 
-    expect((view.cards as unknown[]).length).toBe(2);
+    expect((view.cards as unknown[]).length).toBe(3);
   });
 
   it("the dashboard delegates to the view rather than repeating it", async () => {

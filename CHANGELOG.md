@@ -2,6 +2,25 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.40.0] - 2026-11-10
+
+### Added
+
+- Solar Sanity: tools, a separate English card showing issued predictions
+  against observed battery results. Choose 7, 28 or 90 days, with seven days
+  shown at a time. Pending, excluded and missed checkpoints remain explicit;
+  hourly observations never claim precise fill times.
+- The read-only `get_forecast_history` response action, scoped to one device
+  with read-permission checks. It returns display fields from the existing
+  journal without replay inputs or source entity IDs. Generated dashboards
+  include the tools card for each battery installation.
+
+### Notes
+
+- The active projection, morning experiment and interval gates are unchanged.
+  No due checkpoint has been fabricated for testing. Load simulation and
+  change explanations follow in separate feature releases.
+
 ## [0.39.1] - 2026-11-10
 
 ### Fixed

@@ -291,3 +291,20 @@ declare global {
     "solar-sanity-forecast-card-editor": SolarSanityForecastCardEditor;
   }
 }
+
+@customElement("solar-sanity-tools-card-editor")
+export class SolarSanityToolsCardEditor extends LitElement {
+  @property({attribute: false}) public hass?: HomeAssistant;
+  @state() private _config: LovelaceCardConfig = {type: "custom:solar-sanity-tools-card"};
+  public setConfig(config: LovelaceCardConfig): void { this._config = config; }
+  protected render(): TemplateResult {
+    const schema: FormRow[] = [
+      {name: "device_id", selector: {device: {integration: "solar_sanity"}}},
+      {name: "default_tab", selector: {select: {options: [{value: "history", label: "History"}]}}},
+    ];
+    return html`<div lang="en" dir="ltr"><ha-form .hass=${this.hass} .data=${this._config} .schema=${schema}
+      .computeLabel=${(r: FormRow) => r.name === "device_id" ? "Installation" : "Default tab"}
+      @value-changed=${(e: CustomEvent) => {e.stopPropagation(); const values = {...e.detail.value}; delete values.language;
+        this._config = {...pruned(values), type: "custom:solar-sanity-tools-card"}; emit(this, this._config);}}></ha-form></div>`;
+  }
+}
