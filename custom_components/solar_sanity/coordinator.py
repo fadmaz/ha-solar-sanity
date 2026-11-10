@@ -890,7 +890,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             seen = True
 
         # No entries for tomorrow is not zero production — it is no forecast.
-        return round(total / 1000.0, 2) if seen else None
+        # Round only after roof correction. Early rounding once made the live
+        # total disagree with the exact corrected hourly curve by 0.01 kWh.
+        return total / 1000.0 if seen else None
 
     # -- scoring ------------------------------------------------------------
 

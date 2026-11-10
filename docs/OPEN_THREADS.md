@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.39.0, 2026-11-10.
+Last updated at 0.39.1, 2026-11-10.
 
 ## Development sequence after 0.34.2
 
@@ -41,9 +41,13 @@ Last updated at 0.39.0, 2026-11-10.
 - Keep the owner's existing evening/morning scheduled checks active at 20:00
   on Nov 10 and 09:00 on Nov 11. They remain read-only, preserve immutable issue
   evidence, and distinguish pending morning/interval gates from faults.
-- Startup verification now waits for Core to start: on the real house an
-  unrelated slow startup exceeded the read-back retry window. Verify that the
-  new post-start read-back returns collection health to ok.
+- Startup verification waits for Core to start: on the real house an unrelated
+  slow startup exceeded the read-back retry window. The 0.39.0 post-start
+  read-back succeeded and returned collection health to ok.
+- **0.39.1 precision fix:** live comparison exposed early rounding of tomorrow's
+  raw total, shifting its corrected sensor by 0.01 kWh from its hourly curve.
+  Preserve precision until final correction. This does not change the battery
+  projection. Recheck the exact live curve sum after installing the patch.
 - Diagnostics and journal downloads stay private; test fixtures remain synthetic.
 
 ## Evaluation evidence and open live-data gates
@@ -67,27 +71,27 @@ Last updated at 0.39.0, 2026-11-10.
   unverified; synthetic English phone/desktop, both themes and parent directions
   passed, including known/unknown interval details with no horizontal overflow.
 
-## English-only installation verified
+## Release validation on 2026-11-10
 
-- 0.36.1 was installed via HACS and loaded after restart on 2026-11-10. Core
-  reached RUNNING. Collection status is ok, archive read-back succeeds, the
-  outlook refreshes, and Solar Sanity has no warnings/errors. The card resource
-  points to `?v=0.36.1`. 0.36.0 was never installed on this house.
-- Synthetic phone/desktop checks confirm English card output on an RTL page
-  even with a legacy Arabic language option. Actual authenticated dashboard
-  rendering remains unverified. The current journal has no due checkpoints yet.
-
-## Installed journal baseline
-
-- 0.35.0 was installed through HACS on 2026-11-10 and loaded after a Core restart.
-  Core reached RUNNING, with no Solar Sanity warnings/errors. Runtime
-  diagnostics confirm a valid outlook and collection status `ok`, with
-  a matching archive read-back five seconds after capture. No checkpoints had
-  occurred since installation, so metrics correctly remain unknown with zero
-  samples. Actual checkpoint persistence and completed-window grading remain
-  pending the scheduled evening/morning observations.
-- The existing two scheduled checks remain active and now verify the installed
-  stable version and journal instead of requiring the older 0.34.2 string.
+- 0.39.0 is loaded after its HACS update and restart; Core is RUNNING. Its
+  first capture at 12:11:51 UTC was verified at 12:18:38 UTC, after the slow
+  startup completed. Collection is ok, the outlook refreshes, all five channels
+  are readable and there are no Solar Sanity warnings/errors. The 769 measured
+  buckets, both 386-row forecast series and 30/35/100 battery settings survive;
+  dayahead contents are identical. The card resource uses `?v=0.39.0`.
+- 0.39.0 passes every CI gate, including 629 Python tests at each of HA
+  2025.11.0 and 2026.2.3, plus 179 card tests. The local full check passes
+  362 Python tests with nine HA-dependent modules skipped; the upstream HA
+  harness needs Linux's fcntl. CI includes both startup-state regressions.
+- Synthetic English phone/desktop checks pass with both themes and parent
+  directions, including expanded interval details without overflow. Actual
+  authenticated dashboard rendering remains unverified. 0.36.0 was never
+  installed on the reference house; the English-only correction was installed
+  before the later features.
+- Scheduled checks verify the actual loaded stable version and journal;
+  they do not require the older 0.34.2 version string. No due checkpoint has
+  occurred yet, so persistence of a nonempty issued journal and completed
+  observation grading remain open.
 
 ## Observe 0.34.2 through a real night and morning
 

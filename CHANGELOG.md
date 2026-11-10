@@ -2,6 +2,14 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.39.1] - 2026-11-10
+
+### Fixed
+
+- Round tomorrow's solar total after applying the roof correction. Early
+  rounding could move the displayed total by 0.01 kWh from the sum of its
+  corrected hourly curve. Battery projection arithmetic is unchanged.
+
 ## [0.39.0] - 2026-11-10
 
 ### Fixed

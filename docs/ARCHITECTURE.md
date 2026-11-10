@@ -668,8 +668,8 @@ The version lives in `manifest.json` and nowhere else that matters. Its heading 
 6. **Side features fail into a debug log.** A forecast scale that cannot be learned, or a
    charge-level history that cannot be read, is logged at debug, so nothing on screen says
    the outlook runs unscaled.
-7. **Card text is English only.** Times and numbers follow the language, the sentences do
-   not.
+7. **The product is English only by explicit choice.** Card text, dates and
+   numbers stay English regardless of the Home Assistant user's language.
 8. **Dead keys in older entries.**
    - `entry.data` and `entry.options` of entries made before 0.30.0 hold six keys nothing
      reads (3.6).
