@@ -393,6 +393,7 @@ async def test_today_is_judged_by_the_archive_for_the_hours_gone(
     coordinator.forecast_points = {
         "provider": {at(day, h): 2.0 for day in (today, tomorrow) for h in range(8, 16)}
     }
+    coordinator.forecast_captured_at = dt_util.utcnow()
 
     factors = battery.day_factors("provider", at(today, 12))
 
