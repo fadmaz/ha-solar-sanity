@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
@@ -24,14 +25,16 @@ async def test_startup_verification_waits_for_core_and_unload_cancels_it(
 ):
     """A slow startup used to exhaust read-back retries before the recorder settled."""
     _, journal = await _journal(hass, entry_data)
-    assert not hass.is_running
     expected = {"solar_sanity:forecast_synthetic": [(NOW, 1.0)]}
     with patch.object(journal, "_verify_archive", new=AsyncMock()) as verify:
-        await journal.captured("provider", {NOW: 1.0}, expected)
-        assert not verify.called
-        assert journal.health["provider"]["verification"] == "pending"
-        if cancel:
-            journal.cancel()
+        # The upstream fixture starts Core already. Explicitly reproduce the
+        # STARTING phase instead of assuming its default state.
+        with patch.object(hass, "state", CoreState.starting):
+            await journal.captured("provider", {NOW: 1.0}, expected)
+            assert not verify.called
+            assert journal.health["provider"]["verification"] == "pending"
+            if cancel:
+                journal.cancel()
         hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
         await hass.async_block_till_done()
         assert verify.called is not cancel
