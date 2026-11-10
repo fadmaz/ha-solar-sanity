@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.36.0, 2026-11-10.
+Last updated at 0.36.1, 2026-11-10.
 
 ## Development sequence after 0.34.2
 
@@ -11,11 +11,11 @@ Last updated at 0.36.0, 2026-11-10.
   performance sensors, collection status and per-provider capture/read-back
   timestamps. The projection remains baseline-0.34.2. Live journal grading
   needs the first actual checkpoints and their completed observation windows.
-- **0.36.0:** Arabic/English cards, editors and integration strings, performance
-  details and actionable configuration Repairs. Synthetic cards passed desktop
-  (1280px) and phone (390px), Arabic/English, light/dark, LTR/RTL, including
-  expanded quality content without horizontal overflow. The actual authenticated
-  dashboard remains unverified (screenshot capability/session unavailable).
+- **0.36.1:** the product is English only, as explicitly clarified by the
+  maintainer. The language selector and Arabic resources from 0.36.0 are removed;
+  that release was published but never installed on the reference house. Keep
+  the quality section and actionable configuration Repairs in English. Chat
+  with the maintainer remains Arabic. Actual dashboard rendering is unverified.
 - **Morning experiment:** a normalized three-part daylight shape, compared
   silently over 14 new complete mornings. It must not add false fill calls,
   must reduce missed fill days, and must not worsen the night gate. Until that

@@ -74,8 +74,7 @@
       if (params.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
       if (params.get("dir") === "rtl") document.documentElement.dir = "rtl";
 
-      const language = params.get("language") === "ar" ? "ar" : "en";
-      document.documentElement.lang = language;
+      const language = "en";
       const DAYAHEAD = "solar_sanity:dayahead_harness";
       // The card finds providers by the day-ahead archive and draws the latest one.
       const LATEST = "solar_sanity:forecast_harness";

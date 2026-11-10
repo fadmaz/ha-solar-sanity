@@ -2,6 +2,22 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.36.1] - 2026-11-10
+
+### Removed
+
+- Arabic translations and the card language selector. The product is English
+  only, including cards, editors, setup, entity labels and reasons. The
+  maintainer clarified this requirement after 0.36.0 was published; that
+  release had not been installed on the reference Home Assistant.
+- Previously saved card `language` fields are ignored, and editing a card
+  drops that obsolete field. User/provider names remain as entered.
+
+### Notes
+
+- The accuracy and data-quality section and actionable configuration Repairs
+  from 0.36.0 remain available in English. No projection calculation changes.
+
 ## [0.36.0] - 2026-11-10
 
 ### Added

@@ -690,16 +690,17 @@ The version lives in `manifest.json` and nowhere else that matters. Its heading 
 5. `frontend/src/battery-model.ts`: what the card reads, and why.
 6. `scripts/backtest_outlook.py`: how any of it is known to be right.
 
-### Card translations and configuration Repairs (0.36.0)
+### English product interface and configuration Repairs (0.36.1)
 
-`frontend/src/i18n.ts` supplies the same dictionary to both cards and editors.
-The user's HA language is the default; a card-level auto/ar/en choice overrides
-it. Known reason codes translate without changing the legacy reason sentence.
+Cards, editors, setup, entity labels, reasons and documentation are English
+only. Card content stays left-to-right with English dates and number formatting,
+independent of the Home Assistant user's language. User/provider names are not
+translated. The obsolete card language field from 0.36.0 is ignored and removed
+when the card is edited. Stable reason codes accompany compatible reason text.
+
 `quality.ts` reads registry-discovered metric and health entities, scoped to the
 battery device or forecast archive; it never grades observations in the browser.
-Backend Arabic uses the same keys and placeholders as strings.json/en.json.
-
 `repairs.py` owns only non-cumulative energy configuration issues. The timer
-reconciles these after sampling; recovery deletes the issue. The startup cleanup
-is limited to retired check codes, and entry removal deletes only its own issues.
+reconciles these after sampling; recovery deletes the issue. Startup cleanup is
+limited to retired check codes, and entry removal deletes only its own issues.
 Missing data and insufficient calibration samples are not configuration Repairs.
