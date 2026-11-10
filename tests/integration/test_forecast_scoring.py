@@ -342,6 +342,40 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
     multiplied the first provider's forecast.
     """
 
+    async def test_tomorrow_is_rounded_after_correction_to_match_its_hourly_curve(
+        self, hass, enable_custom_integrations, entry
+    ):
+        """Live validation found an early-rounded total differing from its own curve."""
+        from custom_components.solar_sanity.analysis.profile import ForecastScale
+        from custom_components.solar_sanity.statistics_source import forecast_statistic_id
+
+        coordinator = await _coordinator(hass, entry)
+        await hass.config.async_set_time_zone("UTC")
+        tomorrow = (dt_util.utcnow() + timedelta(days=1)).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        )
+        raw = {tomorrow.isoformat(): 4003, (tomorrow + timedelta(hours=1)).isoformat(): 6003}
+        coordinator._expected_tomorrow_kwh = coordinator._sum_for_tomorrow(raw)
+        coordinator._expected_tomorrow_provider = "synthetic"
+        coordinator.forecast_points = {
+            "synthetic": {tomorrow: 4.003, tomorrow + timedelta(hours=1): 6.003}
+        }
+        coordinator.battery._scales = {"synthetic": ForecastScale(factor=0.7, hours=100, days=15)}
+        attrs = coordinator.expected_tomorrow_corrected_attrs
+        curve_sum = sum(hour["kwh"] for hour in attrs["corrected_hours"])
+        assert coordinator.expected_tomorrow_kwh == pytest.approx(10.006)
+        assert coordinator.expected_tomorrow_corrected_kwh == round(curve_sum, 2) == 7.0
+        coordinator.notify_live_entities()
+        state = next(
+            s
+            for s in hass.states.async_all("sensor")
+            if s.attributes.get("forecast_statistic_id") == forecast_statistic_id("synthetic")
+            and "corrected_hours" in s.attributes
+        )
+        assert float(state.state) == round(
+            sum(hour["kwh"] for hour in state.attributes["corrected_hours"]), 2
+        )
+
     async def test_no_correction_means_no_figure_and_says_why(
         self,
         hass: HomeAssistant,
