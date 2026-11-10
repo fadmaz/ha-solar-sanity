@@ -3,7 +3,19 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.34.1, 2026-11-10.
+Last updated at 0.34.2, 2026-11-10.
+
+## Observe 0.34.2 through a real night and morning
+
+- **What:** the eight audit findings are fixed and have synthetic regression
+  coverage. The reference archive still passes: 29 nights, mean absolute
+  lowest error 2.47 points, reserve right on 78 of 85 projections.
+- **Delivery:** one stable release, followed by installation through HACS and
+  verification on the reference Home Assistant. Its history and settings must
+  survive, forecast capture must continue, and live read-outs must keep moving.
+- **Pending:** record the installed version and the first post-update night and
+  morning against actual charge readings. Do not describe that observation as
+  complete based on the historical replay alone.
 
 ## Grade the factor by the kind of day on the next download
 
@@ -15,7 +27,9 @@ Last updated at 0.34.1, 2026-11-10.
 - **Next:** the maintainer was asked for a diagnostics download around 2026-11-15. Run the
   backtest as `AGENTS.md` shows. The gate must still pass: at least 14 nights, mean absolute
   lowest error at most 5, reserve calls at least 85%.
-- **State at 2026-11-10:** 29 nights, 2.4, 78 of 85.
+- **State at 2026-11-10, after the 0.34.2 night-window correction:** 29 nights,
+  2.47, 78 of 85. The earlier 2.44 becomes slightly larger because the night
+  includes the inverter until solar covers it too; reserve decisions do not change.
 
 ## Sunny mornings may be under-predicted
 
@@ -23,7 +37,7 @@ Last updated at 0.34.1, 2026-11-10.
   and it filled at 13:30. Over the hours the battery had room, the roof delivered 0.53 of the
   forecast while the factor used was 0.43. The morning hours ran at 0.8 to 1.25 of the
   forecast.
-- **The backtest's mornings line, on the 2026-11-10 download:**
+- **The backtest's mornings line, on the 2026-11-10 download, before 0.34.2:**
   - with the factor by the kind of day: "filled, predicted not" on 6 of 29 mornings;
   - with one factor (`--one-factor`): 5;
   - "predicted full, did not fill": 2 either way.
@@ -31,6 +45,10 @@ Last updated at 0.34.1, 2026-11-10.
   So the 08:00 projection misses fill days whichever factor it uses. The kind of day only
   moved the timing on the days it calls right, from a median of 81 minutes early to 2 minutes
   late.
+- **0.34.2 excludes three incomplete mornings:** 26 complete mornings remain;
+  six missed fill days and two false fill calls. The kind-of-day run has only
+  two correctly timed fill days, with a median eight minutes late. The earlier
+  29-morning count included missing maximum readings in its observation windows.
 - **One day is not evidence.**
   - First check whether the next download repeats it.
   - A per-hour shape on top of the kind-of-day factor is the obvious candidate. Per-hour

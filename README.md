@@ -78,12 +78,14 @@ grid recently, an attribute says so.
 
 Every night it can be graded against what the battery really did.
 `scripts/backtest_outlook.py` replays a month of a diagnostics download. On the
-installation it was built on (30 kWh, reserve 35%, Forecast.Solar), over 27 real
+installation it was built on (30 kWh, reserve 35%, Forecast.Solar), over 29 real
 nights:
-- the lowest-battery figure was off by 2.8 points on average, with no bias;
+- the lowest-battery figure was off by 2.5 points on average, with a bias of +0.1;
 - the call on whether the battery reaches its reserve before sunrise was right
-  72 times out of 80;
-- the "will it be full today" call was wrong on 6 of 27 mornings.
+  78 times out of 85 projections;
+- the "will it be full today" call was wrong on 8 of 26 complete mornings.
+
+Incomplete nights and mornings are excluded, with a reason in the replay.
 
 ## What it deliberately does not do
 
@@ -222,6 +224,9 @@ privately rather than attaching it to a public issue.
 1. **Map your sensors.** They are pre-filled from your Energy Dashboard where
    possible. Consumption and generation are required: the outlook learns the house
    from what it uses.
+   Power readings use W or kW. Energy readings must be cumulative totals with
+   `state_class: total` or `total_increasing`; an unclassified energy reading
+   has no known period and is excluded, with the reason in the log and diagnostics.
 2. **Pick the battery's charge level, if you have one.** The wizard then asks how
    big the battery is:
    - **usable capacity;**

@@ -570,6 +570,21 @@ class TestWhatTheBatteryHoldsNow:
 class TestWhatTheHouseUsesTonight:
     """0.34.0. Beside what the battery holds, what the night will ask of it."""
 
+    def test_covering_the_house_alone_does_not_end_the_night(self) -> None:
+        """A 06:00 house-only takeover hid the battery reaching reserve at 06:26."""
+        start = MIDNIGHT + timedelta(hours=5)
+        steps = tuple(
+            Step(start + timedelta(hours=i), 1, produced, 200, produced)
+            for i, produced in enumerate((0, 250, 1000))
+        )
+        result = project(
+            70, BatterySettings(1000, 35, 100, standby_w=100), steps, forecast_used=True
+        )
+        assert result.takeover_at == start + timedelta(hours=2)
+        assert result.reserve_at == start + timedelta(hours=1, minutes=26, seconds=24)
+        assert result.lowest_pct == 35
+        assert result.shortfall_wh > 0
+
     def test_the_night_is_counted_from_dusk_to_the_takeover_with_the_standby(self) -> None:
         """Four dark hours at 600 W between two sunny ones: 2.4 kWh, and 2.8
         with the inverter's 100 W on top. The sunny hours are not night."""

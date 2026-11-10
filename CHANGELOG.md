@@ -2,6 +2,48 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.34.2] - 2026-11-10
+
+### Fixed
+
+- **The night ends when solar covers the house and the inverter.** A morning
+  covering only the house could end the night an hour early, overstate its
+  lowest charge and hide a reserve crossing while the inverter still needed
+  the battery.
+- **Old charge readings need evidence that the battery stayed still.** Missing
+  history, a missing direction or an unreadable battery channel no longer
+  counts as zero movement. Without complete evidence, the existing six-hour
+  limit applies; observed movement still rejects an old reading after two hours.
+- **Corrected forecasts expire with the battery outlook's forecast.** After
+  three hours without a successful capture, all six corrected sensors say why
+  they are unknown. An expired forecast cannot supply the live spare-power
+  estimate. The archive and the learned correction are kept for recovery.
+- **Power belongs to the hour when it flowed.** A change arriving just after
+  an hour boundary used to credit that slice to the preceding hour. Delayed
+  sampling now closes each elapsed hour separately, including recording gaps.
+- **Energy readings without a cumulative classification are excluded.** A
+  reading with no `state_class`, or with `measurement`, was added again every
+  five minutes. Use `total` or `total_increasing`; the log and diagnostics say
+  why an unsupported channel is excluded, and it recovers when corrected.
+- **The same house cannot slip through setup behind a shared solar sensor.**
+  A shared consumption channel is checked across all matches and entries,
+  regardless of their order, during setup and reconfiguration.
+- **The forecast card follows the house's time zone.** Tomorrow, day boundaries,
+  chart labels and the accessible table agree with Home Assistant, including
+  daylight-saving changes and a browser in another country. A zone change
+  discards the old request and reads the right day again.
+
+### Internal
+
+- The backtest excludes incomplete nights and mornings rather than grading
+  surviving readings as a whole interval. Raw history exports must have both
+  endpoints and no internal gap longer than the existing two-hour limit.
+- On the reference installation's 29 nights, the night-window correction
+  changes the mean absolute lowest error from 2.44 to 2.47 points; reserve
+  decisions remain correct on 78 of 85 projections. The slightly longer night
+  includes the inverter's draw. Three incomplete mornings are excluded, leaving
+  26: two predicted fill days did not fill and six fill days were missed.
+
 ## [0.34.1] - 2026-11-10
 
 ### Fixed

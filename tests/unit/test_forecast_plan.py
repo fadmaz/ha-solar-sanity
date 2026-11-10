@@ -18,7 +18,23 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from _forecast_plan import by_period_start, dayahead_write_plan, eligible, running_totals
+from _forecast_plan import (
+    by_period_start,
+    dayahead_write_plan,
+    eligible,
+    forecast_is_fresh,
+    running_totals,
+)
+
+
+def test_every_forecast_consumer_shares_the_same_expiry_boundary() -> None:
+    """The corrected sensors once kept publishing after the outlook's three hours."""
+    now = datetime(2026, 11, 1, tzinfo=UTC)
+    limit = timedelta(hours=3)
+    assert not forecast_is_fresh(None, now, limit)
+    assert forecast_is_fresh(now - limit, now, limit)
+    assert not forecast_is_fresh(now - limit - timedelta(microseconds=1), now, limit)
+
 
 LEAD = 12
 NOW = datetime(2026, 8, 27, 9, 0, tzinfo=UTC)

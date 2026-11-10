@@ -38,6 +38,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
 
+from ._forecast_plan import forecast_is_fresh
 from ._local_time import local_day
 from .analysis.forecast import Correction, RoofForecast, correction, roof_forecast
 from .analysis.model import Bucket, BucketSource, ChannelSpec, Quality, Role
@@ -50,6 +51,7 @@ from .const import (
     CONF_ROLE,
     DOMAIN,
     ENERGY_MAX_AGE_SECONDS,
+    FORECAST_MAX_AGE,
     OPT_BATTERY_POWER,
     OPT_BATTERY_POWER_CHARGING_POSITIVE,
     POWER_GAP_TOLERANCE_SECONDS,
@@ -169,6 +171,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         self._gap_seconds: dict[str, float] = {}
         #: Channels whose current hour saw a reset and cannot be trusted.
         self._suspect: set[str] = set()
+        self._unsupported_energy: set[str] = set()
         #: When sampling began, so a partial first hour is labelled honestly.
         self._first_sample_at: datetime | None = None
         #: Latest forecast total for tomorrow, in kWh, and the provider it is
@@ -270,16 +273,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             return
 
         now = dt_util.utcnow()
-        hour = now.replace(minute=0, second=0, microsecond=0)
-
-        if self._accumulator_start is None:
-            self._accumulator_start = hour
-            # Only a full hour of samples earns a full-hour bucket.
-            self._first_sample_at = now
-        elif hour != self._accumulator_start:
-            self._close_bucket(self._accumulator_start, hour)
-            self._accumulator_start = hour
-            self._first_sample_at = None
+        self._advance_hour(now)
 
         for spec in specs:
             state = self.hass.states.get(spec.entity_id)
@@ -300,11 +294,22 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 continue
 
             if not energy_is_cumulative(state):
-                # A `measurement` energy sensor already reports the amount for
-                # the period, so it is added rather than differenced.
-                self._accumulator[spec.key] = self._accumulator.get(spec.key, 0.0) + value
+                # A period is not specified by an energy unit. The audit's
+                # unchanged 1000 Wh reading became 12000 Wh in one hour when
+                # it was added on every tick. Refuse rather than invent a period.
+                if spec.key not in self._unsupported_energy:
+                    _LOGGER.warning(
+                        "Energy channel %s needs state_class total or total_increasing; "
+                        "its readings are excluded until it reports a cumulative total",
+                        spec.entity_id,
+                    )
+                self._unsupported_energy.add(spec.key)
+                self._last_energy.pop(spec.key, None)
+                self._accumulator.pop(spec.key, None)
+                self._suspect.add(spec.key)
                 continue
 
+            self._unsupported_energy.discard(spec.key)
             held = self._last_energy.get(spec.key)
             self._last_energy[spec.key] = (value, now)
             if held is None:
@@ -332,6 +337,23 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 continue
 
             self._accumulator[spec.key] = self._accumulator.get(spec.key, 0.0) + delta
+
+    def _advance_hour(self, now: datetime) -> None:
+        """Close each elapsed hour before an event can contribute to the next.
+
+        A change two minutes past a boundary used to put those two minutes in
+        the previous hour. A delayed tick must also produce separate buckets,
+        with each gap settled at its own boundary rather than one merged hour.
+        """
+        hour = now.replace(minute=0, second=0, microsecond=0)
+        if self._accumulator_start is None:
+            self._accumulator_start = hour
+            self._first_sample_at = now
+        while self._accumulator_start < hour:
+            boundary = self._accumulator_start + timedelta(hours=1)
+            self._close_bucket(self._accumulator_start, boundary)
+            self._accumulator_start = boundary
+            self._first_sample_at = None
 
     @callback
     def async_track_power(self) -> Callable[[], None]:
@@ -368,6 +390,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         when = fired if isinstance(fired, datetime) else dt_util.utcnow()
         value, kind = read_channel(state)
 
+        if kind != KIND_POWER and key not in self._live_power and key not in self._gap_since:
+            return
+        self._advance_hour(when)
         held = self._live_power.get(key)
         if held is not None:
             self._integrate(key, held[0], held[1], when)
@@ -442,6 +467,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         out: dict[str, float] = {}
         for spec in self.specs:
             key = spec.key
+            state = self.hass.states.get(spec.entity_id)
+            if channel_kind(state) == KIND_ENERGY and not energy_is_cumulative(state):
+                continue
             if key in self._suspect or key in self._gap_since or self._gap_seconds.get(key):
                 continue
             accumulated = self._accumulator.get(key)
@@ -1020,6 +1048,8 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         beside them. ``None`` until there is a correction, because without one
         the figure is the provider's own sensor.
         """
+        if not forecast_is_fresh(self.forecast_captured_at, dt_util.utcnow(), FORECAST_MAX_AGE):
+            return None
         provider = self._roof_provider()
         if provider is None:
             return None
@@ -1057,6 +1087,11 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             return {"reason": "No forecast has been captured yet."}
         entry = self.hass.config_entries.async_get_entry(provider)
         attrs: dict[str, Any] = {"provider": entry.title if entry is not None else provider}
+        if not forecast_is_fresh(self.forecast_captured_at, dt_util.utcnow(), FORECAST_MAX_AGE):
+            return {
+                **attrs,
+                "reason": "The solar forecast has not been refreshed within three hours.",
+            }
         now = dt_util.utcnow()
         tz = self._time_zone()
         today = now.astimezone(tz).date() if tz is not None else now.date()
@@ -1077,6 +1112,8 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         day, so the scored bias was never stated, while the battery outlook had
         learned 0.52 from the same archive within three days.
         """
+        if not forecast_is_fresh(self.forecast_captured_at, dt_util.utcnow(), FORECAST_MAX_AGE):
+            return None
         base = self.expected_tomorrow_kwh
         found = self._tomorrow_correction()
         if base is None or found is None:
@@ -1099,6 +1136,11 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             "provider": entry.title if entry is not None else provider,
             "forecast_statistic_id": forecast_statistic_id(provider),
         }
+        if not forecast_is_fresh(self.forecast_captured_at, dt_util.utcnow(), FORECAST_MAX_AGE):
+            return {
+                **attrs,
+                "reason": "The solar forecast has not been refreshed within three hours.",
+            }
         found = self._tomorrow_correction()
         if found is not None:
             attrs.update(factor=found.factor, basis=found.basis, days=found.days)
@@ -1226,6 +1268,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         for spec in specs:
             state = self.hass.states.get(spec.entity_id)
             value, kind = read_channel(state)
+            unsupported = kind == KIND_ENERGY and not energy_is_cumulative(state)
             channels.append(
                 {
                     "key": spec.key,
@@ -1234,7 +1277,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                     "state_now": None if state is None else state.state,
                     "unit": spec.declared_unit,
                     "kind": kind,
-                    "readable_now": value is not None,
+                    "readable_now": value is not None and not unsupported,
+                    "reason": (
+                        "Energy readings need state_class total or total_increasing."
+                        if unsupported
+                        else None
+                    ),
                     "statistics": self.statistics_classes.get(spec.entity_id, "unknown"),
                     "backfilled_rows": self.backfill_rows.get(spec.entity_id, 0),
                     "hours_with_value": sum(

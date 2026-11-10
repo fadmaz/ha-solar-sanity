@@ -10,6 +10,7 @@
  */
 
 import type { HassEntity, HomeAssistant } from "./types/hass";
+import { tomorrow } from "./forecast-data";
 
 export const PLATFORM = "solar_sanity";
 
@@ -298,7 +299,7 @@ export function clockFor(language: string | undefined, timeZone: string | undefi
     day: (when, now) => {
       const key = date.format(when);
       if (key === date.format(now)) return "today";
-      if (key === date.format(new Date(now.getTime() + 86_400_000))) return "tomorrow";
+      if (key === date.format(tomorrow(now, timeZone))) return "tomorrow";
       return weekday.format(when);
     },
   };

@@ -517,6 +517,22 @@ class TestDuplicateInstallations:
         assert found.decisive is True
         assert found.title == "Solar Sanity"
 
+    def test_a_pv_warning_cannot_mask_the_same_house(self) -> None:
+        """The wizard offers PV before load, so the first match was misleading."""
+        from custom_components.solar_sanity._identity import find_overlap
+
+        found = find_overlap(self._existing(), {"pv": "sensor.p", "load": "sensor.l"})
+        assert found is not None and found.decisive
+
+    def test_a_warning_in_another_entry_cannot_mask_a_decisive_load(self) -> None:
+        """Entry ordering must not decide whether a duplicate house is accepted."""
+        from custom_components.solar_sanity._identity import find_overlap
+
+        warning = self._entry("B", "Other", {"grid_import": "sensor.shared"})
+        for entries in ([warning, *self._existing()], [*self._existing(), warning]):
+            found = find_overlap(entries, {"grid_import": "sensor.shared", "load": "sensor.l"})
+            assert found is not None and found.decisive
+
     def test_a_shared_meter_is_reported_but_not_decisive(self) -> None:
         """One grid meter serving two sub-systems is a real arrangement."""
         from custom_components.solar_sanity._identity import find_overlap

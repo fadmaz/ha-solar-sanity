@@ -50,6 +50,7 @@ def find_overlap(
     serving two sub-systems is a real arrangement, and a flat refusal would push
     the user straight back to the workaround this exists to remove.
     """
+    warning: Overlap | None = None
     for entry in entries:
         if ignore_entry_id is not None and entry.entry_id == ignore_entry_id:
             continue
@@ -60,10 +61,16 @@ def find_overlap(
         for role_key, entity_id in channels.items():
             if entity_id not in theirs:
                 continue
-            return Overlap(
+            found = Overlap(
                 title=entry.title or "another installation",
                 role_key=role_key,
                 entity_id=entity_id,
                 decisive=role_key == Role.LOAD.key and theirs[entity_id] == Role.LOAD.key,
             )
-    return None
+            # PV is offered before load in the wizard. Its warning must not
+            # mask a decisive shared load later in this entry or another one.
+            if found.decisive:
+                return found
+            if warning is None:
+                warning = found
+    return warning

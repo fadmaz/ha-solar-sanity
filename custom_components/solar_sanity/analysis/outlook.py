@@ -332,7 +332,7 @@ def _dark(steps: Sequence[Step]) -> list[bool]:
     return [step.daylight_wh / step.hours < threshold for step in steps]
 
 
-def night_window(steps: Sequence[Step], first: int = 0) -> Night | None:
+def night_window(steps: Sequence[Step], first: int = 0, *, standby_w: float = 0.0) -> Night | None:
     """The next night at or after step ``first``, anchored on darkness.
 
     Not simply "production below consumption": an overcast noon is that too,
@@ -354,11 +354,20 @@ def night_window(steps: Sequence[Step], first: int = 0) -> Night | None:
         return None
 
     start = darkest
-    while start > begin and steps[start - 1].pv_wh < steps[start - 1].load_wh:
+    # A morning covering only the house still discharges the battery to run
+    # the inverter. The 2026-11 audit hid a 06:26 reserve crossing behind a
+    # 06:00 takeover by leaving that draw out of the night boundary.
+    while start > begin and steps[start - 1].pv_wh < (
+        steps[start - 1].load_wh + standby_w * steps[start - 1].hours
+    ):
         start -= 1
 
     end = next(
-        (i for i in range(darkest + 1, len(steps)) if steps[i].pv_wh >= steps[i].load_wh),
+        (
+            i
+            for i in range(darkest + 1, len(steps))
+            if steps[i].pv_wh >= steps[i].load_wh + standby_w * steps[i].hours
+        ),
         None,
     )
     return Night(start=start, end=end)
@@ -411,7 +420,7 @@ def project(
     has room, and the takeover comes with the morning, when it has room too.
     """
     run = simulate(soc_pct, battery, steps)
-    night = night_window(steps)
+    night = night_window(steps, standby_w=battery.standby_w)
 
     lowest_pct = lowest_at = night_from = takeover_at = None
     safe_load_w = shortfall_wh = night_load_wh = None
@@ -442,7 +451,7 @@ def project(
         if night.start > 0:
             day = range(night.start)
         elif night.end is not None:
-            following = night_window(steps, first=night.end)
+            following = night_window(steps, first=night.end, standby_w=battery.standby_w)
             if following is not None:
                 day = range(night.end, following.start)
         if day is not None and len(day) > 0:

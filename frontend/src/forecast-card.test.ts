@@ -33,6 +33,11 @@ function day(kwh: number[], label = "Forecast.Solar"): ProviderDay {
 }
 
 describe("buildPanel", () => {
+  it("labels the chart in the house's zone", () => {
+    const data = day([1, 2]);
+    data.hours[0]!.start = new Date("2026-11-10T06:00:00Z");
+    expect(buildPanel(data, undefined, "Asia/Jerusalem").labels[0]!.text).toBe("08");
+  });
   it("draws the shape, and the shape is the contract", () => {
     // The `d` attribute is the drawing. Snapshotting it is the one rendering
     // test worth having: short, readable in a diff, and it fails on a change
@@ -543,5 +548,48 @@ describe("staying honest over time", () => {
     await settle(card);
 
     expect(calls.filter((c) => c === "recorder/list_statistic_ids").length).toBeGreaterThan(before);
+  });
+
+  it("discards an in-flight response when the house's zone changes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-10T23:30:00Z"));
+    const card = document.createElement("solar-sanity-forecast-card") as SolarSanityForecastCard;
+    card.setConfig({ type: "custom:solar-sanity-forecast-card" });
+    document.body.append(card);
+    let finishOld!: (value: unknown) => void;
+    const requests: Record<string, unknown>[] = [];
+    const callWS = vi.fn((msg: Record<string, unknown>) => {
+      if (msg.type === "recorder/list_statistic_ids") return Promise.resolve([{ statistic_id: ID }]);
+      requests.push(msg);
+      if (requests.length === 1) return new Promise((resolve) => { finishOld = resolve; });
+      return Promise.resolve({ [LATEST]: [
+        { start: Date.parse("2026-11-12T06:00:00Z"), state: 2 },
+        { start: Date.parse("2026-11-12T07:00:00Z"), state: 3 },
+      ] });
+    });
+    const make = (zone: string) => ({
+      config: { state: "RUNNING", time_zone: zone }, states: {}, language: "en", callWS,
+    }) as unknown as HomeAssistant;
+    const step = async () => {
+      await card.updateComplete;
+      await vi.advanceTimersByTimeAsync(1);
+      await card.updateComplete;
+    };
+    try {
+      card.hass = make("America/Los_Angeles");
+      await step();
+      expect(requests[0]!.start_time).toBe("2026-11-11T08:00:00.000Z");
+      card.hass = make("Asia/Jerusalem");
+      await step();
+      finishOld({ [LATEST]: [{ start: Date.parse("2026-11-11T08:00:00Z"), state: 99 }] });
+      await step();
+      expect(requests[1]!.start_time).toBe("2026-11-11T22:00:00.000Z");
+      expect(card.shadowRoot?.textContent).toContain("5.0 kWh");
+      expect(card.shadowRoot?.textContent).not.toContain("99.0");
+      expect(card.shadowRoot?.querySelector("th")?.textContent).toBe("08:00");
+    } finally {
+      card.remove();
+      vi.useRealTimers();
+    }
   });
 });

@@ -72,6 +72,7 @@ class _Stub:
 
     specs = (SPEC,)
     accumulate = SolarSanityCoordinator.accumulate
+    _advance_hour = SolarSanityCoordinator._advance_hour
     _close_bucket = SolarSanityCoordinator._close_bucket
     _counter_went_quiet = SolarSanityCoordinator._counter_went_quiet
     _settle_power = SolarSanityCoordinator._settle_power
@@ -84,6 +85,7 @@ class _Stub:
         self._first_sample_at: datetime | None = None
         self._last_energy: dict[str, tuple[float, datetime]] = {}
         self._suspect: set[str] = set()
+        self._unsupported_energy: set[str] = set()
         self._live_power: dict[str, tuple[float, datetime]] = {}
         self._gap_since: dict[str, datetime] = {}
         self._gap_seconds: dict[str, float] = {}

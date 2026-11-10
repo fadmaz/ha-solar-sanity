@@ -55,12 +55,25 @@ class _Stub:
     _close_gap = SolarSanityCoordinator._close_gap
     _settle_power = SolarSanityCoordinator._settle_power
     _async_power_changed = SolarSanityCoordinator._async_power_changed
+    _advance_hour = SolarSanityCoordinator._advance_hour
+    _close_bucket = SolarSanityCoordinator._close_bucket
+    _counter_went_quiet = SolarSanityCoordinator._counter_went_quiet
 
     def __init__(self) -> None:
         self._accumulator: dict[str, float] = {}
         self._live_power: dict[str, tuple[float, datetime]] = {}
         self._gap_since: dict[str, datetime] = {}
         self._gap_seconds: dict[str, float] = {}
+        self._accumulator_start = None
+        self._first_sample_at = None
+        self._last_energy = {}
+        self._suspect = set()
+        self._buckets = []
+        self._store = SimpleNamespace(async_delay_save=lambda *args: None)
+        self._payload = dict
+
+    def _local_day(self, when):
+        return when.date(), False
 
 
 def _stub() -> _Stub:
@@ -227,23 +240,50 @@ class TestTheHourBoundary:
     every power channel, every hour, forever.
     """
 
+    @pytest.mark.parametrize("minute", [59, 60, 61])
+    def test_each_side_of_the_boundary_gets_only_its_own_energy(self, minute) -> None:
+        """A 61-minute 600 W run must split as 600 Wh and 10 Wh, not 610 and zero."""
+        stub = _stub()
+        stub._async_power_changed(_event(600, START))
+        stub._async_power_changed(_event(0, START + timedelta(minutes=minute)))
+        stub._advance_hour(START + timedelta(hours=2))
+        assert stub._buckets[0].value(SPEC.key) == pytest.approx(600 * min(minute, 60) / 60)
+        assert stub._buckets[1].value(SPEC.key) == pytest.approx(600 * max(minute - 60, 0) / 60)
+
+    def test_a_three_hour_delay_still_closes_three_separate_hours(self) -> None:
+        """A delayed sampling tick must not label three hours of flow as one hour."""
+        stub = _stub()
+        stub._async_power_changed(_event(400, START))
+        stub._advance_hour(START + timedelta(hours=3))
+        assert len(stub._buckets) == 3
+        assert [b.seconds for b in stub._buckets] == [3600] * 3
+        assert [b.value(SPEC.key) for b in stub._buckets] == [400] * 3
+
+    def test_a_recording_gap_is_split_at_every_elapsed_boundary(self) -> None:
+        """Recovery after two hours must not move the whole gap into its last hour."""
+        stub = _stub()
+        stub._async_power_changed(_event(400, START))
+        stub._async_power_changed(_event(None, START + timedelta(minutes=30)))
+        stub._async_power_changed(_event(400, START + timedelta(minutes=150)))
+        stub._advance_hour(START + timedelta(hours=3))
+        assert len(stub._buckets) == 3
+        assert all(b.value(SPEC.key) is None for b in stub._buckets)
+
     def test_a_late_rollover_does_not_count_a_slice_twice(self) -> None:
         stub = _stub()
         stub._async_power_changed(_event(1000.0, START))
         # 10:01 — past the boundary, before the tick that notices it.
         stub._async_power_changed(_event(2000.0, START + timedelta(minutes=61)))
         stub._settle_power(START + timedelta(hours=1))
-        first_hour = stub._accumulator[SPEC.key]
+        first_hour = stub._buckets[0].value(SPEC.key)
 
-        stub._accumulator.clear()
         stub._settle_power(START + timedelta(hours=2))
         second_hour = stub._accumulator[SPEC.key]
 
-        # 1000 W held for the 61 minutes up to the second event.
-        assert first_hour == pytest.approx(1000.0 * 61 / 60)
-        # 2000 W from that event to the end of the next hour — 59 minutes, not
-        # 60. The extra minute belongs to the hour that already counted it.
-        assert second_hour == pytest.approx(2000.0 * 59 / 60)
+        # The boundary splits the held value: one minute of 1000 W belongs
+        # to the second hour, followed by 59 minutes of 2000 W.
+        assert first_hour == pytest.approx(1000.0)
+        assert second_hour == pytest.approx((1000.0 + 2000.0 * 59) / 60)
 
     def test_the_cursor_is_never_moved_backwards(self) -> None:
         stub = _stub()
@@ -263,15 +303,13 @@ class TestTheHourBoundary:
         stub = _stub()
         watts = 800.0
         stub._async_power_changed(_event(watts, START))
-        total = 0.0
         for hour in range(1, 25):
             # Every rollover is noticed a minute late, as a five-minute tick
             # against a wall-clock hour boundary guarantees it will be.
             stub._async_power_changed(_event(watts, START + timedelta(hours=hour, minutes=1)))
-            stub._settle_power(START + timedelta(hours=hour))
-            total += stub._accumulator.get(SPEC.key, 0.0)
-            stub._accumulator.clear()
 
+        total = sum(b.value(SPEC.key) for b in stub._buckets)
+        total += stub._accumulator.get(SPEC.key, 0.0)
         covered_hours = 24 + 1 / 60
         assert total == pytest.approx(watts * covered_hours, rel=1e-9)
 
