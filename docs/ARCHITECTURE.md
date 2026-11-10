@@ -445,6 +445,43 @@ one resource entry by URL prefix. `tests/test_card_registration.py` covers it.
 
 ---
 
+### 5.8 Issued prediction journal (0.35.0)
+
+`journal.py` owns a separate `solar_sanity.outlook_journal.<entry_id>` Store,
+version 1. Its envelope is independent of the measurement window's version 1.1.
+It contains immutable issued records, settled outcomes, provider capture health,
+the journal's creation instant and last checked instant. At most 180 records
+and 90 days are retained. Unknown versions and malformed records disable journal
+writes while leaving the file and the battery outlook alone.
+
+The live and five-minute ticks schedule one journal task at a time. Only a real
+projection computed during the five-minute 08:00/20:00 checkpoint window can be
+captured. Repeated times and restarts cannot duplicate a local date/slot. An
+outage is represented by missed slots after installation, not by backfilling
+predictions. Frozen inputs include the exact simulation steps, battery settings
+and corrected forecast. The model revision remains `baseline-0.34.2`.
+
+After the recorded observation window ends, hourly charge extremes grade the
+minimum or fill call. `analysis/observations.py` is also used by the historical
+replay; `analysis/grading.py` reports explicit exclusions. Failed recorder reads
+are distinct from empty history and retry for one day. Grid charging is screened
+with the replay's existing rule. Fill-time error needs a real recorded crossing;
+an hourly maximum never supplies invented minutes.
+
+Provider health separates attempted, captured, submitted and verified timestamps.
+The writer supplies its exact batches, then a background read-back tries at
+5, 30 and 120 seconds. Matching rows attest to content, not a physical write
+instant; exhaustion remains unverified. A no-op day-ahead append does not reset
+its history. Unload cancels verification and journal tasks. Entry removal also
+removes the journal. None of these paths change the projection or its constants.
+
+Four descriptive sensors summarize 28 days, with a seven-day summary and counts;
+they have no cumulative state class. Collection status and per-provider capture
+and archive-verification timestamps expose operational evidence. Card discovery
+continues to use stable registry translation keys rather than generated IDs.
+
+---
+
 ## 6. The card
 
 ### 6.1 What ships

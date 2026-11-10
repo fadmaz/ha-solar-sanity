@@ -60,6 +60,7 @@ from .const import (
     STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
 )
+from .journal import OutlookJournal
 from .statistics_source import (
     async_forecast_series,
     async_get_solar_forecasts,
@@ -205,6 +206,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         #: Where the battery is heading. Built here because it reads the window,
         #: the forecast and the open hour, all of which this class owns.
         self.battery = BatteryOutlook(hass, self)
+        self.journal = OutlookJournal(self)
 
     # -- configuration ------------------------------------------------------
 
@@ -699,6 +701,11 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         if not entry_ids:
             return 0
 
+        attempted = dt_util.utcnow().isoformat()
+        for entry_id in entry_ids:
+            self.journal.health.setdefault(entry_id, {}).update(
+                attempted_at=attempted, reason_code="capture_unavailable"
+            )
         forecasts = await async_get_solar_forecasts(self.hass, entry_ids)
         written = 0
         tomorrow_kwh: float | None = None
@@ -714,10 +721,21 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             # The same hour-aligned figures the archive is written from, so the
             # outlook and the archive cannot disagree about what was forecast.
             points[entry_id] = dict(normalise_wh_hours(wh_hours))
+            if not points[entry_id] or not all(
+                math.isfinite(value) and value >= 0 for value in points[entry_id].values()
+            ):
+                del points[entry_id]
+                continue
+            submitted: dict[str, list[tuple[datetime, float]]] = {}
             if self._owns_archive(entry_id) and await async_record_forecast(
-                self.hass, entry_id, await self._provider_name(provider), wh_hours
+                self.hass,
+                entry_id,
+                await self._provider_name(provider),
+                wh_hours,
+                submitted=submitted,
             ):
                 written += 1
+            await self.journal.captured(entry_id, points[entry_id], submitted)
 
             # Surface the first provider's figure. Once accuracy scoring exists
             # this should prefer whichever provider has been most accurate here.
@@ -731,6 +749,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         if points:
             self.forecast_points = points
             self.forecast_captured_at = dt_util.utcnow()
+        await self.journal.async_save()
         return written
 
     async def _provider_name(self, provider: ConfigEntry) -> str:

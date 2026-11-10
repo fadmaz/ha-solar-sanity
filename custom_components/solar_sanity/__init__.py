@@ -38,6 +38,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .coordinator import SolarSanityCoordinator, SolarSanityData
+from .journal import JOURNAL_KEY, JOURNAL_VERSION
 from .statistics_source import (
     async_classify_statistics,
     async_hourly_series,
@@ -118,6 +119,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     """Set up one monitored installation."""
     coordinator = SolarSanityCoordinator(hass, entry)
     await coordinator.async_restore()
+    await coordinator.journal.async_restore()
+    entry.async_on_unload(coordinator.journal.cancel)
 
     await _async_backfill(hass, coordinator)
     await coordinator.async_config_entry_first_refresh()
@@ -139,6 +142,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     def _tripwire(_now: Any) -> None:
         coordinator.battery.refresh()
         coordinator.notify_live_entities()
+        coordinator.journal.schedule()
 
     entry.async_on_unload(async_track_time_interval(hass, _tripwire, LIVE_INTERVAL))
 
@@ -154,6 +158,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
         # The sensors describe now and must not wait for the coordinator's
         # six-hourly refresh before they are rewritten.
         coordinator.notify_live_entities()
+        coordinator.journal.schedule()
 
     entry.async_on_unload(async_track_time_interval(hass, _sample, BUCKET_INTERVAL))
 
@@ -177,6 +182,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     # Before the platforms are set up, so the outlook sensors are born with a
     # projection, or with the reason there is none, rather than blank.
     coordinator.battery.refresh(force=True)
+    await coordinator.journal.async_update()
 
     _remove_retired_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -199,6 +205,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await store.async_remove()
     except Exception:
         _LOGGER.debug("could not remove state for %s", entry.entry_id, exc_info=True)
+    await Store(hass, JOURNAL_VERSION, f"{JOURNAL_KEY}.{entry.entry_id}").async_remove()
 
 
 async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinator) -> None:

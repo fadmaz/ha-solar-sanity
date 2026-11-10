@@ -53,6 +53,18 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Any) ->
         "window": data.coordinator.window_snapshot() if data else None,
         # The battery outlook as it stands, with everything it was computed from.
         "outlook": _outlook(data.coordinator.battery.state) if data else None,
+        "outlook_journal": data.coordinator.journal.records if data else [],
+        "collection": (
+            {
+                "status": data.coordinator.journal.status()[0],
+                "reason_code": data.coordinator.journal.status()[1],
+                "capture": data.coordinator.journal.health,
+                "last_28_days": data.coordinator.journal.summary(),
+                "last_7_days": data.coordinator.journal.summary(7),
+            }
+            if data
+            else None
+        ),
         # What the battery actually did, and what was forecast a day ahead.
         # Together with `window`, enough to replay the outlook hour by hour and
         # grade it against the charge level it predicted.

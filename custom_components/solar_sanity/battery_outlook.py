@@ -133,6 +133,9 @@ class OutlookState:
     load_profile: tuple[float | None, ...] = ()
     pv_profile: tuple[float | None, ...] = ()
     settings: dict[str, float] = field(default_factory=dict)
+    #: Exact steps used at issue time; the journal must never reconstruct them
+    #: from a later forecast or a later consumption profile.
+    inputs: dict[str, Any] = field(default_factory=dict)
 
     @property
     def soc_readable(self) -> bool:
@@ -448,6 +451,25 @@ class BatteryOutlook:
             return base
 
         outlook = project(soc, settings, steps, forecast_used=forecast is not None)
+        base.inputs = {
+            "forecast_wh": (
+                {when.isoformat(): value for when, value in forecast.items()}
+                if forecast is not None
+                else None
+            ),
+            "day_factors": {day.isoformat(): value for day, value in factors.items()},
+            "steps": [
+                {
+                    "start": step.start.isoformat(),
+                    "hours": step.hours,
+                    "load_wh": step.load_wh,
+                    "pv_wh": step.pv_wh,
+                    "daylight_wh": step.daylight_wh,
+                }
+                for step in steps
+            ],
+            "battery": {name: getattr(settings, name) for name in settings.__dataclass_fields__},
+        }
         base.outlook = outlook
         base.reason = None
         base.provider = provider

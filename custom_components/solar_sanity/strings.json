@@ -160,6 +160,33 @@
       },
       "spare_solar_power": {
         "name": "Spare solar power now"
+      },
+      "night_lowest_mae": {
+        "name": "Night minimum mean absolute error"
+      },
+      "reserve_call_accuracy": {
+        "name": "Reserve prediction accuracy"
+      },
+      "morning_fill_accuracy": {
+        "name": "Morning fill prediction accuracy"
+      },
+      "fill_time_mae": {
+        "name": "Fill time mean absolute error"
+      },
+      "forecast_last_captured_at": {
+        "name": "{provider} forecast last captured"
+      },
+      "forecast_archive_verified_at": {
+        "name": "{provider} archive last verified"
+      },
+      "collection_status": {
+        "name": "Collection status",
+        "state": {
+          "starting": "Starting",
+          "ok": "OK",
+          "degraded": "Degraded",
+          "error": "Error"
+        }
       }
     }
   },

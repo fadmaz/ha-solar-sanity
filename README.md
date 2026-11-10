@@ -98,6 +98,43 @@ Incomplete nights and mornings are excluded, with a reason in the replay.
 
 ---
 
+## Issued predictions and collection health
+
+Since 0.35.0, the integration keeps its first published prediction in the five
+minutes after 08:00 and 20:00 in Home Assistant's time zone. Each record stays
+unchanged. An outage or a missing outlook produces a missed checkpoint, not a
+prediction reconstructed with the benefit of hindsight.
+
+The night is graded after its recorded takeover time. The morning's fill call
+is graded through 22:00 local, so a battery not yet full at 09:00 has not failed
+a prediction for the afternoon. Incomplete observations and grid charging that
+disturbs the result are excluded with reasons. An hourly maximum proves that
+full occurred; minute-level timing is graded only when state history supplies it.
+
+Four new sensors expose descriptive performance over the last 28 days:
+
+| Translation key | Meaning |
+| --- | --- |
+| `night_lowest_mae` | Mean absolute lowest-charge error in percentage points (`pp`) |
+| `reserve_call_accuracy` | Correct reserve calls, percent |
+| `morning_fill_accuracy` | Correct morning fill calls, percent |
+| `fill_time_mae` | Mean absolute fill-time error, minutes; only precisely observed crossings |
+
+Each carries its sample count, pending/excluded counts and a seven-day summary.
+No samples means unknown. These rolling figures are not cumulative counters and
+do not make a claim about another installation.
+
+`collection_status` reports starting, OK, degraded or error. Per provider,
+`forecast_last_captured_at` is the integration's last usable capture and
+`forecast_archive_verified_at` is its last read-back of matching archive data.
+Verification is distinct from submitting a batch to the recorder. Its timestamp
+does not claim to be the physical disk-write time.
+
+The journal is local and private, retained for 90 days and at most 180 records
+per installation. Diagnostics include it; inspect the download before sharing.
+Battery settings, sources, time zone and model revision separate the scoring
+contexts. Updating a display name does not change an entity's identity.
+
 ## Forecast history
 
 Home Assistant throws away yesterday's solar forecast. Its forecast
