@@ -47,7 +47,8 @@ Last updated at 0.39.1, 2026-11-10.
 - **0.39.1 precision fix:** live comparison exposed early rounding of tomorrow's
   raw total, shifting its corrected sensor by 0.01 kWh from its hourly curve.
   Preserve precision until final correction. This does not change the battery
-  projection. Recheck the exact live curve sum after installing the patch.
+  projection. The loaded patch's live sensor is 22.96 kWh and its exact curve
+  sums to 22.955206 kWh, agreeing after final rounding.
 - Diagnostics and journal downloads stay private; test fixtures remain synthetic.
 
 ## Evaluation evidence and open live-data gates
@@ -73,13 +74,20 @@ Last updated at 0.39.1, 2026-11-10.
 
 ## Release validation on 2026-11-10
 
-- 0.39.0 is loaded after its HACS update and restart; Core is RUNNING. Its
+- **Current installed version: 0.39.1.** HACS installation and restart are
+  verified; Core is RUNNING. The 12:29:05 UTC capture was verified by read-back
+  at 12:36:09 UTC, after startup. Collection is ok, all five input channels
+  are readable and there are no Solar Sanity warnings/errors. All 769 measured
+  buckets and both 386-row archives survive, dayahead is unchanged, and battery
+  settings remain 30 kWh / 35% / 100%. The corrected sensor agrees with its
+  hourly curve and the card resource points to `?v=0.39.1`.
+- 0.39.0 was also verified after its HACS update and restart. Its
   first capture at 12:11:51 UTC was verified at 12:18:38 UTC, after the slow
   startup completed. Collection is ok, the outlook refreshes, all five channels
   are readable and there are no Solar Sanity warnings/errors. The 769 measured
   buckets, both 386-row forecast series and 30/35/100 battery settings survive;
   dayahead contents are identical. The card resource uses `?v=0.39.0`.
-- 0.39.0 passes every CI gate, including 629 Python tests at each of HA
+- 0.39.1 passes every CI gate, including 630 Python tests at each of HA
   2025.11.0 and 2026.2.3, plus 179 card tests. The local full check passes
   362 Python tests with nine HA-dependent modules skipped; the upstream HA
   harness needs Linux's fcntl. CI includes both startup-state regressions.
@@ -93,7 +101,7 @@ Last updated at 0.39.1, 2026-11-10.
   occurred yet, so persistence of a nonempty issued journal and completed
   observation grading remain open.
 
-## Observe 0.34.2 through a real night and morning
+## Observe the baseline through a real night and morning
 
 - **What:** the eight audit findings are fixed and have synthetic regression
   coverage. The reference archive still passes: 29 nights, mean absolute
