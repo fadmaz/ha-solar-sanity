@@ -38,14 +38,13 @@ Last updated at 0.39.0, 2026-11-10.
   independent house's download is available; provider timing/completeness,
   independent provenance and the night gate still need actual evidence.
   Generalization and 1.0 readiness remain unproven.
-- Keep the owner's existing evening/morning scheduled checks active at20:00
-  on Nov10 and09:00 on Nov11. They remain read-only, preserve immutable issue
+- Keep the owner's existing evening/morning scheduled checks active at 20:00
+  on Nov 10 and 09:00 on Nov 11. They remain read-only, preserve immutable issue
   evidence, and distinguish pending morning/interval gates from faults.
 - Startup verification now waits for Core to start: on the real house an
   unrelated slow startup exceeded the read-back retry window. Verify that the
   new post-start read-back returns collection health to ok.
-- Keep the owner's existing evening/morning scheduled checks active. Diagnostics
-  and journal downloads stay private; test fixtures remain synthetic.
+- Diagnostics and journal downloads stay private; test fixtures remain synthetic.
 
 ## Evaluation evidence and open live-data gates
 
@@ -181,8 +180,6 @@ Last updated at 0.39.0, 2026-11-10.
 
 ## Not decided
 
-- **Card text is English only** (ARCHITECTURE risk 7). The maintainer reads Arabic, and the
-  cards are right-to-left-safe but not translated. Ask before starting.
 - **Auto-merge.** GitHub auto-merge and required checks on `main` are off. The maintainer was
   given the two `gh api` commands to turn them on and has not yet. Until then, merge by hand
   when CI is green.
