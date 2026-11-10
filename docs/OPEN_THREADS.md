@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.42.0, 2026-11-10.
+Last updated at 0.43.0, 2026-11-10.
 
 ## Resumed development and installation evidence
 
@@ -17,10 +17,19 @@ Last updated at 0.42.0, 2026-11-10.
   UI/API checks and reference replay are recorded in its PR; authenticated
   dashboard rendering remains a separate open acceptance check.
 - 0.41.0 shipped through PR133 after 675 Python tests at each supported HA
-  version and 201 card tests passed. HACS installed it and restart was sent;
-  post-start runtime/API checks are pending. The reference replay was unchanged.
+  version and 201 card tests passed. HACS install/restart and Core RUNNING are
+  verified. Archive read-back succeeded at 15:35 UTC, sensors advanced and the
+  resource uses `?v=0.41.0`. Real simulation returned identical zero-load curves
+  and exactly 1 kWh for a 1000 W/60 minute scenario. No warnings/errors appeared;
+  the archive and 30/35/100 settings survived. Reference replay was unchanged.
 - 0.42.0 adds bounded in-memory input comparisons over the common future only.
   Its UI does not attribute causality or compare estimates from different setups.
+- 0.42.0 shipped through PR134 after 686 Python tests at each supported HA
+  version and 203 card tests passed. HACS install/restart and Core RUNNING are
+  verified. Archive read-back succeeded at 15:51 UTC, the resource uses
+  `?v=0.42.0` and the real sensor compared its 15:44/15:49 UTC issues over their
+  common future. Collection is ok, no warnings/errors appeared, dayahead and
+  30/35/100 settings survived. No actual journal checkpoint is due yet.
 
 ## Tools development sequence
 
@@ -29,10 +38,13 @@ Last updated at 0.42.0, 2026-11-10.
   and read permissions. Synthetic UI checks cover desktop/phone layouts.
   Real authenticated dashboard rendering and nonempty journal restart
   persistence remain open until observed; no checkpoint is fabricated.
-- Next: 0.43.0 optional alternate-schedule experiment.
-  0.43.0 prepares alternate schedule learning, with an empty day selection by
+- 0.43.0 prepares alternate schedule learning, with an empty day selection by
   default for every installation, including the reference house. Operational
   comparison waits for a documented close of the morning experiment.
+- The day-group learner, separate sister records and acceptance gate are ready
+  for synthetic verification. The release-reviewed morning decision remains
+  explicitly unset. Selecting days does not activate production or begin live
+  comparison while that prerequisite is open. No days are applied to the house.
 - The current baseline, morning and interval gates and existing read-only
   scheduled observations remain unchanged.
 
@@ -105,7 +117,7 @@ Last updated at 0.42.0, 2026-11-10.
 
 ## Release validation on 2026-11-10
 
-- **Current installed version: 0.39.1.** HACS installation and restart are
+- **Earlier 0.39.1 verification.** HACS installation and restart are
   verified; Core is RUNNING. The 12:29:05 UTC capture was verified by read-back
   at 12:36:09 UTC, after startup. Collection is ok, all five input channels
   are readable and there are no Solar Sanity warnings/errors. All 769 measured

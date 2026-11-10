@@ -43,6 +43,8 @@ OPT_BATTERY_POWER: Final = "battery_power_entity"
 #: Whether that sensor is positive while the battery charges. Inverters disagree;
 #: absent means yes.
 OPT_BATTERY_POWER_CHARGING_POSITIVE: Final = "battery_power_charging_positive"
+# Empty for every installation until its owner chooses a separate day group.
+OPT_LOAD_PROFILE_ALTERNATE_DAYS: Final = "load_profile_alternate_days"
 #: Defaults for the two above. Twenty percent is a common lithium cut-off and
 #: errs early for the ones set lower.
 DEFAULT_RESERVE_PCT: Final = 20.0

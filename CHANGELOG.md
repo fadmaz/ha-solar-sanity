@@ -2,6 +2,33 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.43.0] - 2026-11-10
+
+### Added
+
+- Alternate schedule days in integration settings, independently per installation.
+  The default is empty for everyone. Select one to six days to define a second
+  routine; all seven are rejected with guidance to leave the list empty instead.
+- A gated consumption experiment using the previous 28 local calendar dates,
+  requiring three distinct dates per used hour. Repeated clock hours count once
+  per date, missing hours remain missing and the measured anchor is preserved.
+- Separate candidate snapshots and a persistent experiment epoch. Changing or
+  clearing days resets its comparisons while retaining production metrics.
+  Candidate grading/calibration remains separate from the morning experiment.
+- Prospective acceptance counts and reasons in private diagnostics and the
+  unified evaluation report. Promotion needs 14 new complete night/morning
+  pairs, evidence from both groups and every error/accuracy gate to pass.
+
+### Notes
+
+- The morning experiment remains open. Live day-group comparison is blocked
+  until a reviewed, documented morning decision; choosing days cannot bypass
+  it. The production model is unchanged. No reference-house days are preset,
+  no candidate activates automatically, and promotion needs a later release.
+- Old journal envelopes remain readable. Unknown experiment metadata is preserved
+  without overwrite. The measurement-window Store and existing services/entities
+  are unchanged; no production dependency or CI change is included.
+
 ## [0.42.0] - 2026-11-10
 
 ### Added

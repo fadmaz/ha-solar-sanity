@@ -17,7 +17,7 @@ import hashlib
 import logging
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, Final
 
@@ -31,6 +31,7 @@ from ._forecast_plan import forecast_is_fresh
 from .analysis.changes import InputChanges, InputSnapshot
 from .analysis.daylight_shape import DaylightShape, learn_shape
 from .analysis.forecast import corrected_hours
+from .analysis.load_schedule import group_steps, learn_groups
 from .analysis.model import Role
 from .analysis.outlook import (
     BatterySettings,
@@ -150,6 +151,12 @@ class OutlookState:
     shadow_reserve_at: datetime | None = None
     shape_reason: str = "insufficient_shape_days"
     shape_days: tuple[int, ...] = ()
+    load_shadow: Outlook | None = None
+    load_shadow_full_at: datetime | None = None
+    load_shadow_reserve_at: datetime | None = None
+    load_shadow_context: str | None = None
+    load_reason: str = "load_schedule_not_selected"
+    load_profile_dates: tuple[tuple[int, ...], ...] = ()
 
     @property
     def soc_readable(self) -> bool:
@@ -563,13 +570,14 @@ class BatteryOutlook:
             base.reason = "no_production_expectation"
             return base
 
+        anchor = self._anchor(now)
         steps = build_steps(
             now,
             load=load.wh,
             local_hour=local_hour,
             pv_forecast=forecast,
             pv_profile=None if forecast is not None else pv.wh,
-            anchor=self._anchor(now),
+            anchor=anchor,
         )
         if not steps:
             base.reason = "no_horizon"
@@ -630,11 +638,54 @@ class BatteryOutlook:
         except Exception:
             base.shape_reason = "shape_computation_failed"
             _LOGGER.debug("Daylight-shape shadow failed", exc_info=True)
+        try:
+            self._load_shadow(base, steps, settings, now, anchored_first=anchor is not None)
+        except Exception:
+            base.load_shadow = None
+            base.load_shadow_context = None
+            base.inputs.pop("load_shadow_steps", None)
+            base.load_reason = "load_profile_computation_failed"
+            _LOGGER.debug("Alternate load shadow failed", exc_info=True)
         base.reason = None
         base.provider = provider
         base.full_at = settle_full(self.state.full_at, outlook, settings, now)
         base.reserve_at = settle_reserve(self.state.reserve_at, outlook, settings, now)
         return base
+
+    def _load_shadow(self, base, steps, settings, now, *, anchored_first):
+        trial = self.coordinator.journal.load_trial
+        base.load_reason = trial.blocked(now)
+        if base.load_reason is not None:
+            return
+        zone = self.coordinator.time_zone
+
+        def local(when):
+            stamp = when.astimezone(zone)
+            return stamp.date(), stamp.hour
+
+        profile = learn_groups(
+            self.coordinator.buckets, Role.LOAD.key, trial.days, local, until=now
+        )
+        base.load_profile_dates = profile.dates
+        candidate = group_steps(steps, profile, trial.days, local, anchored_first=anchored_first)
+        if candidate is None:
+            base.load_reason = "load_profile_incomplete"
+            return
+        base.load_reason = "shadow_only"
+        base.load_shadow_context = trial.context()
+        base.load_shadow = project(
+            base.soc_pct, settings, candidate, forecast_used=base.outlook.forecast_used
+        )
+        same = self.state.load_shadow_context == base.load_shadow_context
+        base.load_shadow_full_at = settle_full(
+            self.state.load_shadow_full_at if same else None, base.load_shadow, settings, now
+        )
+        base.load_shadow_reserve_at = settle_reserve(
+            self.state.load_shadow_reserve_at if same else None, base.load_shadow, settings, now
+        )
+        base.inputs["load_shadow_steps"] = [
+            {**asdict(s), "start": s.start.isoformat()} for s in candidate
+        ]
 
     def _read_soc(
         self, settings: BatterySettings, now: datetime

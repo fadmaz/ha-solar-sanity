@@ -135,6 +135,24 @@ per installation. Diagnostics include it; inspect the download before sharing.
 Battery settings, sources, time zone and model revision separate the scoring
 contexts. Updating a display name does not change an entity's identity.
 
+In **Configure**, **Alternate schedule days** optionally separates selected
+weekdays from the rest. The default is empty for every installation: one weekly
+schedule remains active until you choose days. Select one to six days; selecting
+all seven is rejected. Days follow Home Assistant's time zone. Changing or
+clearing the selection restarts only this experiment, preserving production
+results and the existing forecast model.
+
+This experiment is prepared but waits for the morning experiment to close with
+a documented decision. Once unlocked in a reviewed release, it learns each
+group/hour from the previous 28 local calendar dates, with at least three
+distinct dates per used hour. Missing evidence uses the current model; repeated
+clock hours count as one date. Separate sister snapshots then need 14 complete
+new nights and 14 mornings, including at least three of each group in each
+period. Night MAE must improve and stay at most five points, reserve accuracy
+must remain at least 85% without more errors, and neither kind of fill error may
+increase. Passing requests review; activation requires a later feature release.
+Diagnostics show the gate and counts. Insufficient samples are not a fault.
+
 ## Forecast history
 
 Home Assistant throws away yesterday's solar forecast. Its forecast
