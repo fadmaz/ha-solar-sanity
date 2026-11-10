@@ -3,6 +3,7 @@ import { LitElement, css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { findInstallations, hasOutlook } from "./battery-model";
 import { safeTimeZone } from "./forecast-data";
+import "./simulation-panel";
 import type { GridOptions, HomeAssistant, LovelaceCardConfig } from "./types/hass";
 
 export interface HistoryRow {
@@ -24,6 +25,7 @@ export class SolarSanityToolsCard extends LitElement {
   @property({attribute: false}) public hass?: HomeAssistant;
   @state() protected _config: ToolsCardConfig = {type: "custom:solar-sanity-tools-card"};
   @state() protected _days = 28;
+  @state() protected _tab = "history";
   @state() protected _visibleDays = 7;
   @state() protected _history?: HistoryResponse;
   @state() protected _loading = false;
@@ -34,6 +36,7 @@ export class SolarSanityToolsCard extends LitElement {
   public setConfig(config: ToolsCardConfig): void {
     if (config.device_id !== undefined && typeof config.device_id !== "string") throw new Error("Select an installation.");
     this._config = config;
+    this._tab = config.default_tab === "what_if" ? "what_if" : "history";
   }
   public getCardSize(): number { return 8; }
   public getGridOptions(): GridOptions { return {rows: "auto", columns: 12, min_columns: 6}; }
@@ -58,7 +61,7 @@ export class SolarSanityToolsCard extends LitElement {
       .map(e => { const a = hass.states[e.entity_id]?.attributes; return [a?.sample_count, a?.pending, a?.excluded]; });
     const outlook = Object.values(hass.entities ?? {}).find(e => e.device_id === device && e.platform === "solar_sanity" && e.translation_key === "battery_lowest_before_sunrise");
     const key = JSON.stringify([device, this._days, metrics, hass.config.time_zone, outlook ? hass.states[outlook.entity_id]?.attributes.computed_at : null]);
-    if (this._key !== key) { this._key = key; void this._load(device); }
+    if (this._tab === "history" && this._key !== key) { this._key = key; void this._load(device); }
   }
   private async _load(device: string): Promise<void> {
     const generation = ++this._generation;
@@ -130,14 +133,21 @@ export class SolarSanityToolsCard extends LitElement {
         ${dates.length > this._visibleDays ? html`<button @click=${() => {this._visibleDays += 7;}}>Show earlier days</button>` : nothing}</div>` : nothing}`;
   }
   protected render(): TemplateResult {
+    const source = Object.values(this.hass?.entities ?? {}).find(e => e.platform === "solar_sanity" && e.device_id === this._device() && e.translation_key === "battery_lowest_before_sunrise");
+    const attrs = source ? this.hass?.states[source.entity_id]?.attributes : undefined;
+    const projectionId = Array.isArray(attrs?.trajectory) && attrs.trajectory.length ? String(attrs.projection_id ?? "") : "";
     const note = !this.hass ? "Waiting for Home Assistant." : this.hass.config.state !== "RUNNING" ? "Home Assistant is still starting."
       : !this._device() ? "Choose an installation with a battery outlook in the card editor." : null;
     return html`<ha-card><div class="root" lang="en" dir="ltr"><h2>Solar Sanity tools</h2>
-      ${note ? html`<p>${note}</p>` : html`<h3>History</h3>${this._historyPanel()}`}</div></ha-card>`;
+      ${note ? html`<p>${note}</p>` : html`<div role="tablist" aria-label="Solar Sanity tools">${["history", "what_if"].map(tab => html`<button role="tab" id=${`tab-${tab}`} aria-selected=${this._tab === tab} aria-controls=${`panel-${tab}`} tabindex=${this._tab === tab ? 0 : -1}
+        @click=${()=>{this._tab=tab;}} @keydown=${(e:KeyboardEvent)=>{if(["ArrowLeft","ArrowRight","Home","End"].includes(e.key)){e.preventDefault();this._tab=e.key==="Home"?"history":e.key==="End"?"what_if":this._tab==="history"?"what_if":"history";void this.updateComplete.then(()=>this.shadowRoot?.querySelector<HTMLElement>(`#tab-${this._tab}`)?.focus());}}}>${tab === "history" ? "History" : "What if"}</button>`)}</div>
+        <div role="tabpanel" id="panel-history" aria-labelledby="tab-history" ?hidden=${this._tab!=="history"}>${this._historyPanel()}</div>
+        <div role="tabpanel" id="panel-what_if" aria-labelledby="tab-what_if" ?hidden=${this._tab!=="what_if"}><solar-sanity-simulation .hass=${this.hass} .deviceId=${this._device()??""} .projectionId=${projectionId} .active=${this._tab==="what_if"}></solar-sanity-simulation></div>`}</div></ha-card>`;
   }
   public static styles = css`
     :host {display:block;color:var(--primary-text-color);font-family:var(--ha-card-header-font-family,inherit)}
     .root {padding:20px} h2 {font-size:1.2rem;font-weight:500;margin:0 0 20px} h3 {font-size:1rem;margin:0 0 12px}
+    [hidden]{display:none!important}[role=tablist]{display:flex;gap:8px;border-bottom:1px solid var(--divider-color);padding-bottom:12px;margin-bottom:16px}[role=tab][aria-selected=true]{font-weight:600;border-color:var(--primary-color)}
     p {line-height:1.6} .muted,dt {color:var(--secondary-text-color);font-size:.875rem}
     .toolbar {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
     button,select {font:inherit;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:8px 12px;cursor:pointer}

@@ -577,6 +577,7 @@ def _lowest_attrs(state: OutlookState) -> dict[str, Any]:
         # chart's lines come from the same refresh as the line between them.
         "soc_pct": round(state.soc_pct, 1) if state.soc_pct is not None else None,
         "computed_at": _iso(state.computed_at),
+        "projection_id": state.projection_id,
         "reserve_pct": state.settings.get("reserve_pct"),
         "target_pct": state.settings.get("target_pct"),
         "consumption_days": state.load_days,
@@ -824,7 +825,9 @@ class OutlookSensor(SolarSanityEntity, SensorEntity):
     #: not for the recorder: it is a kilobyte rewritten every five minutes. The
     #: starting charge and the time of the refresh change on every refresh too,
     #: and the charge-level sensor already records the first of them.
-    _unrecorded_attributes = frozenset({"trajectory", "soc_pct", "computed_at", "potential_w"})
+    _unrecorded_attributes = frozenset(
+        {"trajectory", "soc_pct", "computed_at", "projection_id", "potential_w"}
+    )
 
     def __init__(
         self,

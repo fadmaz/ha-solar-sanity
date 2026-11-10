@@ -13,6 +13,7 @@ is an answer ("unavailable") rather than an error.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 from collections.abc import Callable
@@ -108,6 +109,7 @@ class OutlookState:
     """The latest projection, or the reason there is none."""
 
     outlook: Outlook | None = None
+    projection_id: str | None = None
     reason: str | None = "soc_unavailable"
     soc_age_s: float | None = None
     #: The charge level the projection started from, kept even when there is
@@ -479,6 +481,9 @@ class BatteryOutlook:
             standby_w=0.0 if standby is None else standby,
         )
         base = OutlookState(
+            projection_id=hashlib.sha256(
+                f"{coordinator.journal.context()}:{now.isoformat()}".encode()
+            ).hexdigest(),
             computed_at=now,
             load_days=load.days,
             grid_charged_hours=grid_charged_hours(

@@ -5,6 +5,29 @@ design: when you close a thread, delete it; when you leave one open, add it with
 
 Last updated at 0.40.0, 2026-11-10.
 
+## Paused for the owner's PC restart, 2026-11-10
+
+- Resume branch: `feat/load-simulation`. The 0.41.0 work is a local checkpoint,
+  not a release or an installed version. Finish the remaining approved phases;
+  do not restart the plan or preset alternate schedule days.
+- 0.40.0 shipped through PR132, merge7c19598, release workflow42831993363.
+  CI passed645 Python tests at each HA version and188 card tests. Local369
+  Python tests passed with nine HA modules skipped. Independent visual review
+  scored its paging and empty-state fixes resolved. Reference replay unchanged:
+  29 nights, MAE2.531, reserve27/29. Real dashboard remains unverified.
+- HACS installed0.40.0 and its restart was authorized. At14:24UTC, the entry
+  was loaded, Core STARTING, collection ok, with the new archive read-back
+  still pending. Confirm RUNNING and fresh read-back before another deployment.
+  The new history action worked on the real device and returned starting/empty;
+  no actual checkpoint is due yet, so nonempty persistence remains unverified.
+- The simulation engine, response action, projection identity, time-zone helper,
+  and initial UI are in progress. Pure scenario/purity checks27 passed; latest
+  Ruff and TypeScript passed. Full0.41 checks, UI async tests, service strings,
+  version/docs, visual review and release are not complete. The existing History
+  test's Refresh button selector needs updating after adding tab buttons.
+- The loopback preview server was stopped for this pause. Private restart
+  instructions and evidence locations are in `diagnostics/RESUME-2026-11-10.md`.
+
 ## Tools development sequence
 
 - 0.40.0 adds issued history and a separate tools card. Native read-only

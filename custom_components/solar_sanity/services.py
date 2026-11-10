@@ -1,6 +1,7 @@
 """Read-only tools over the loaded installation's private in-memory data."""
 
-from datetime import UTC, timedelta
+import math
+from datetime import UTC, datetime, timedelta
 
 import voluptuous as vol
 from homeassistant.auth.permissions.const import POLICY_READ
@@ -12,8 +13,46 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
+from ._forecast_plan import forecast_is_fresh
 from .analysis.history import history_rows
-from .const import DOMAIN
+from .analysis.outlook import BatterySettings, Step
+from .analysis.scenarios import compare_load
+from .const import DOMAIN, FORECAST_MAX_AGE
+from .journal import MODEL_REVISION
+
+
+def _power(value):
+    try:
+        number = float(value)
+    except (ValueError, TypeError) as err:
+        raise vol.Invalid("Power must be a number.") from err
+    if isinstance(value, bool) or not math.isfinite(number) or number < 0:
+        raise vol.Invalid("Power must be finite and non-negative.")
+    return number
+
+
+def _duration(value):
+    number = _power(value)
+    if not number.is_integer() or not 1 <= number <= 1440:
+        raise vol.Invalid("Duration must be whole minutes from one minute to 24 hours.")
+    return int(number)
+
+
+def _start_time(value):
+    parsed = dt_util.parse_datetime(value) if isinstance(value, str) else None
+    if parsed is None or parsed.tzinfo is None:
+        raise vol.Invalid("Use an ISO8601 start time with a UTC offset.")
+    return parsed
+
+
+def _projection_view(outlook, uncovered_wh):
+    return {
+        "lowest_pct": outlook.lowest_pct if outlook.takeover_at is not None else None,
+        "full_at": outlook.full_at.isoformat() if outlook.full_at else None,
+        "reserve_at": outlook.reserve_at.isoformat() if outlook.reserve_at else None,
+        "uncovered_energy_kwh": uncovered_wh / 1000,
+        "trajectory": [{"at": t.isoformat(), "soc": value} for t, value in outlook.trajectory],
+    }
 
 
 async def coordinator_for(hass: HomeAssistant, call: ServiceCall):
@@ -75,6 +114,84 @@ def async_setup_tools(hass: HomeAssistant) -> None:
                 vol.Optional("days", default=28): vol.All(
                     vol.Coerce(int), vol.Range(min=1, max=90)
                 ),
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def simulate_load(call: ServiceCall):
+        coordinator = await coordinator_for(hass, call)
+        state = coordinator.battery.state
+        now = dt_util.utcnow()
+        # Two missed five-minute recomputations cannot be called a current basis.
+        if (
+            state.outlook is None
+            or state.reason
+            or state.computed_at is None
+            or not state.projection_id
+            or state.soc_pct is None
+            or state.computed_at > now
+            or now - state.computed_at > timedelta(minutes=10)
+        ):
+            raise ServiceValidationError("No current valid battery projection is available.")
+        if state.outlook.forecast_used and not forecast_is_fresh(
+            coordinator.forecast_captured_at, now, FORECAST_MAX_AGE
+        ):
+            raise ServiceValidationError(
+                "The solar forecast has not been refreshed within three hours."
+            )
+        try:
+            steps = tuple(
+                Step(
+                    datetime.fromisoformat(row["start"]),
+                    row["hours"],
+                    row["pv_wh"],
+                    row["load_wh"],
+                    row["daylight_wh"],
+                )
+                for row in state.inputs["steps"]
+            )
+            settings = BatterySettings(**state.inputs["battery"])
+            comparison = compare_load(
+                state.soc_pct,
+                settings,
+                steps,
+                forecast_used=state.outlook.forecast_used,
+                power_w=call.data["power_w"],
+                duration_minutes=call.data["duration_minutes"],
+                start_at=call.data.get("start_at", now),
+                now=now,
+            )
+        except (ValueError, KeyError, TypeError) as err:
+            raise ServiceValidationError(str(err)) from err
+        return {
+            "basis": {
+                "projection_id": state.projection_id,
+                "computed_at": state.computed_at.isoformat(),
+                "horizon_end": state.outlook.horizon_end.isoformat(),
+                "time_zone": hass.config.time_zone,
+                "model_revision": MODEL_REVISION,
+                "forecast_used": state.outlook.forecast_used,
+                "reserve_pct": settings.reserve_pct,
+                "target_pct": settings.target_pct,
+            },
+            "applied_start": comparison.applied_start.isoformat(),
+            "applied_end": comparison.applied_end.isoformat(),
+            "additional_energy_kwh": comparison.additional_wh / 1000,
+            "baseline": _projection_view(comparison.baseline, comparison.baseline_uncovered_wh),
+            "scenario": _projection_view(comparison.scenario, comparison.scenario_uncovered_wh),
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        "simulate_load",
+        simulate_load,
+        schema=vol.Schema(
+            {
+                vol.Required("device_id"): cv.string,
+                vol.Required("power_w"): _power,
+                vol.Required("duration_minutes"): _duration,
+                vol.Optional("start_at"): _start_time,
             }
         ),
         supports_response=SupportsResponse.ONLY,
