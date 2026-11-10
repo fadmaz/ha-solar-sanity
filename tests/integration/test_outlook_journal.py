@@ -85,7 +85,7 @@ async def test_an_outage_records_missed_slots_between_runs(
 ):
     """A restart three days later must not conceal its unobserved checkpoints."""
     _, journal = await _journal(hass, entry_data)
-    journal.capture(NOW + timedelta(days=3))
+    journal.capture(NOW + timedelta(days=3, minutes=5))
     assert len(journal.records) == 7
     assert all(r["result"]["status"] == "missed" for r in journal.records)
 
