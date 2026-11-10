@@ -24,7 +24,8 @@ Last updated at 0.34.2, 2026-11-10.
   release asset exactly.
 - **Visual checks:** synthetic desktop/phone cards passed in light/dark and
   LTR/RTL. Rendering the actual dashboard remains unverified: the MCP screenshot
-  feature is disabled and the Chrome connection was unavailable.
+  feature is disabled, the Chrome connection was unavailable, and the in-app
+  browser reaches a login form without an authenticated session.
 - **Pending:** verify the periodic forecast capture and the first post-update
   night and morning against actual charge readings. Do not describe that
   observation as complete based on the historical replay alone.
