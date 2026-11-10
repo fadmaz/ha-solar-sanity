@@ -19,6 +19,9 @@ Last updated at 0.34.2, 2026-11-10.
   The 766 stored buckets and both 386-row forecast series survive unchanged;
   capacity, reserve and target remain 30 kWh, 35% and 100%. Startup forecast
   capture succeeds and there are no Solar Sanity warnings or errors.
+  Core reaches RUNNING and the existing card resource updates itself to
+  `?v=0.34.2` after the started event. The served card's SHA-256 matches the
+  release asset exactly.
 - **Visual checks:** synthetic desktop/phone cards passed in light/dark and
   LTR/RTL. Rendering the actual dashboard remains unverified: the MCP screenshot
   feature is disabled and the Chrome connection was unavailable.
