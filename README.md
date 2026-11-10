@@ -202,6 +202,13 @@ can differ from the main card's settled times. Inputs stay in the card.
 `solar_sanity.simulate_load` provides the same read-only comparison by device,
 including additional and uncovered energy. It never controls an appliance.
 
+**Changes** compares the inputs of the last two valid outlooks: battery charge,
+corrected solar, expected consumption, correction factors and learned charging
+ceiling/standby. Energy is compared only over their common future interval.
+The view shows both publication times and values, without assigning a causal
+share of the changed result. Restarting, changing setup or losing a valid
+source starts a new comparison. These two snapshots stay in memory only.
+
 All three ship inside the integration and register themselves. One install, always
 version-matched.
 

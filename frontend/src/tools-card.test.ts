@@ -68,4 +68,23 @@ describe("issued history tools",()=>{
     expect(c.shadowRoot!.textContent).toContain("No predictions in the selected period");
     expect(c.shadowRoot!.textContent).not.toContain("No issued predictions yet");
   });
+  it("reads input changes from the chosen sensor without requesting or inferring history",async()=>{
+    const call=vi.fn(),data=hass(call);data.config.time_zone="Asia/Jerusalem";
+    data.states["sensor.renamed"]={entity_id:"sensor.renamed",state:"40",last_updated:"",attributes:{outlook_changes:{status:"ok",previous_at:"2026-11-10T12:00:00Z",current_at:"2026-11-10T12:05:00Z",common_start:"2026-11-10T12:05:00Z",common_end:"2026-11-11T12:00:00Z",fields:[{key:"solar_energy",previous:8,current:9,unit:"kWh"}]}}};
+    const c=new SolarSanityToolsCard();c.setConfig({type:"custom:solar-sanity-tools-card",default_tab:"changes"});c.hass=data;document.body.append(c);await settle(c);
+    const panel=c.shadowRoot!.querySelector("#panel-changes")!;
+    expect(panel.getAttribute("tabindex")).toBe("0");
+    expect(panel.textContent).toContain("Nov 10, 14:05");expect(panel.textContent).toContain("8 kWh");expect(panel.textContent).toContain("9 kWh");expect(panel.textContent).toContain("common future");
+    expect(call).not.toHaveBeenCalled();expect(c.shadowRoot!.querySelector("#tab-changes")!.getAttribute("aria-selected")).toBe("true");
+    c.shadowRoot!.querySelector("#tab-changes")!.dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowRight"}));await settle(c);
+    expect(c.shadowRoot!.querySelector("#tab-history")!.getAttribute("aria-selected")).toBe("true");
+  });
+  it("distinguishes an unchanged pair, initial collection and a failed projection",async()=>{
+    const c=new SolarSanityToolsCard();c.setConfig({type:"custom:solar-sanity-tools-card",default_tab:"changes"});c.hass=hass(vi.fn());document.body.append(c);await settle(c);
+    const panel=()=>c.shadowRoot!.querySelector("#panel-changes")!;
+    expect(panel().textContent).toContain("Waiting for two valid outlooks");
+    const update=async(value:unknown)=>{c.hass={...c.hass!,states:{"sensor.renamed":{entity_id:"sensor.renamed",state:"40",last_updated:"",attributes:{outlook_changes:value}}}};await settle(c);};
+    await update({status:"ok",fields:[]});expect(panel().textContent).toContain("Comparable inputs are unchanged");expect(panel().textContent).toContain("Unavailable estimates are omitted");
+    await update({status:"unavailable"});expect(panel().textContent).toContain("valid outlook is unavailable");expect(panel().querySelector("table")).toBeNull();
+  });
 });

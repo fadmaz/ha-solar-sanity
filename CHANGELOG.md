@@ -2,6 +2,22 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.42.0] - 2026-11-10
+
+### Added
+
+- Changes in the tools card: previous/current battery charge, corrected solar,
+  expected consumption, correction factors and learned charge/standby estimates
+  when they change. Solar and load share the same future interval, so elapsed
+  hours and a moving horizon do not create false input changes.
+- Bounded `outlook_changes` on the existing minimum-charge sensor, excluded from
+  Recorder. Two valid snapshots stay in memory and reset after restart, invalid
+  data or a changed setup/source. No causal shares of result changes are claimed.
+
+### Notes
+
+- Production projection and all prospective experiment gates remain unchanged.
+
 ## [0.41.0] - 2026-11-10
 
 ### Added
