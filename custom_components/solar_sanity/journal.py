@@ -13,7 +13,7 @@ from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-from homeassistant.core import callback
+from homeassistant.core import CoreState, callback
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -214,7 +214,8 @@ class OutlookJournal:
                 self._verify_archive(provider, expected), f"{DOMAIN} archive read-back"
             )
 
-        if self.hass.is_running:
+        # is_running includes CoreState.starting, before the started event.
+        if self.hass.state is CoreState.running:
             _start()
         else:
             # On the real installation, unrelated startup work lasted longer
