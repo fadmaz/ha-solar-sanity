@@ -2,6 +2,42 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.39.0] - 2026-11-10
+
+### Fixed
+
+- Defer startup archive read-back until Home Assistant has started. An unrelated
+  slow startup on the reference house outlasted all bounded retries and left
+  a healthy queued archive marked unverified until the next capture. Pending
+  startup verification is cancelled when an entry unloads or a newer batch wins.
+
+### Added
+
+- A unified private evaluation command, `scripts/evaluate_installation.py`,
+  reports one installation at a time with source fingerprint, time zone,
+  battery settings, provider timing checks and algorithm/context separation.
+  It reuses the shipping projection and observation grader, including external
+  charging exclusions. Hourly observations never produce invented minute
+  precision. Historical development evidence stays separate from actual
+  issued-journal promotion and interval-validation evidence.
+- Synthetic coverage spans export/no-export, power/cumulative meters,
+  capacities and time zones. Real Home Assistant collection tests verify energy
+  conservation across spring and autumn clock changes.
+
+### Notes
+
+- No independent installation download is available. Synthetic tests and the
+  reference house cannot establish generalization or 1.0 readiness.
+- The strict 08:00/20:00 reference replay grades 29 complete nights with MAE
+  2.53 points and reserve decisions correct on 27/29. Only two mornings remain
+  gradable after external-charge and completeness exclusions. The older
+  multi-evening replay remains unchanged at 2.47 points and 78/85 reserve calls;
+  its 26 morning observations had not all excluded external charging. These
+  are different denominators, not a changed battery projection.
+- The old reference archive still lacks eligible three-part daylight training
+  after horizon checks. The candidate remains inactive, with prospective
+  morning/night, interval-coverage and independent-installation gates open.
+
 ## [0.38.0] - 2026-11-10
 
 ### Fixed

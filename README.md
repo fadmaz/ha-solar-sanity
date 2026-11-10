@@ -400,3 +400,24 @@ boundary, calibration/validation counts and measured coverage. The target is
 14 later complete validation nights reach that target. They expire when the
 saved night ends. Insufficient samples are an expected collection stage, not
 an integration fault. The range is experimental and offers no battery guarantee.
+
+### Compare installations privately
+
+Run one report per installation; keep downloads and reports in ignored
+`diagnostics/`. Never pool learning or calibration across houses. For example:
+
+```bash
+python scripts/evaluate_installation.py diagnostics/house.json --installation reference --kind reference --tz Asia/Jerusalem --period-end-before 2026-11-08T00:00:00+00:00 --output diagnostics/reference-report.json
+```
+
+The cutoff above applies to the reference installation's old archive. For a
+new installation, verify its provider's timestamp convention and use
+`--keying period-start`, `--keying period-end` or its measured mixed-keying
+cutoff. Unverified timing prevents the night gate passing. Select `--provider`
+when several archives exist. A raw charge export can be supplied with `--soc-csv`;
+hourly extrema alone cannot claim minute timing accuracy.
+
+The report separates historical development from actual issued journal evidence
+and records sample/exclusion counts. Synthetic variants test implementation,
+while independent-installation validation and 1.0 readiness remain open until
+an actual independent download and its provenance have been reviewed.
