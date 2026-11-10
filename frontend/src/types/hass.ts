@@ -62,7 +62,8 @@ export interface LovelaceCardEditor extends HTMLElement {
 }
 
 export interface GridOptions {
-  rows?: number;
+  /** `"auto"`: the card's own height, which the sections view leaves alone. */
+  rows?: number | "auto";
   min_rows?: number;
   max_rows?: number;
   columns?: number | "full";

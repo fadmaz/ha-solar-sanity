@@ -67,11 +67,18 @@ export class SolarSanityBatteryCard extends LitElement implements LovelaceCard {
   }
 
   public getCardSize(): number {
-    return 5;
+    return 8;
   }
 
+  /**
+   * As tall as its content, not a fixed number of rows. 0.34.0 added the live
+   * flow and a second row of figures to a card fixed at five rows, and on the
+   * reference installation's sections dashboard its chart then ran under the
+   * card below it. The content is not a fixed height: a reason replaces the
+   * figures, the flow line comes and goes, and figures wrap on a narrow column.
+   */
   public getGridOptions(): GridOptions {
-    return { rows: 5, min_rows: 4, columns: 12, min_columns: 6 };
+    return { rows: "auto", columns: 12, min_columns: 6 };
   }
 
   public static getConfigElement(): LovelaceCardEditor {

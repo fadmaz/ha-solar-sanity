@@ -93,6 +93,12 @@ describe("the battery card", () => {
     return card.shadowRoot?.textContent?.replace(/\s+/g, " ").trim() ?? "";
   };
 
+  it("takes the height its content needs on a sections dashboard", () => {
+    // 0.34.1: fixed at five rows, the card ran under the one below it on the
+    // reference installation once 0.34.0 added the live flow and a second row.
+    expect(card.getGridOptions().rows).toBe("auto");
+  });
+
   it("waits rather than claiming anything before Home Assistant arrives", async () => {
     expect(await text()).toContain("Waiting for Home Assistant");
   });
