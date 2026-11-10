@@ -1,0 +1,70 @@
+# Open threads
+
+Where the work stands, for whoever picks it up next. This is the one place for state rather than
+design: when you close a thread, delete it; when you leave one open, add it with its evidence.
+
+Last updated at 0.34.1, 2026-11-10.
+
+## Grade the factor by the kind of day on the next download
+
+- **What:** 0.32.0 corrects the forecast with a factor learned mostly from days whose forecast
+  looked like the one ahead (`ForecastScale.for_day`).
+- **Evidence so far** is the reference installation's month up to 2026-11-09. Graded each day on
+  what was learned before it, the sunny-day bias went from +26% to +8% and the hourly error from
+  42% to 36%.
+- **Next:** the maintainer was asked for a diagnostics download around 2026-11-15. Run the
+  backtest as `AGENTS.md` shows. The gate must still pass: at least 14 nights, mean absolute
+  lowest error at most 5, reserve calls at least 85%.
+- **State at 2026-11-10:** 29 nights, 2.4, 78 of 85.
+
+## Sunny mornings may be under-predicted
+
+- **2026-11-09, a forecast of 48 kWh:** the 08:00 projection said the battery would not fill,
+  and it filled at 13:30. Over the hours the battery had room, the roof delivered 0.53 of the
+  forecast while the factor used was 0.43. The morning hours ran at 0.8 to 1.25 of the
+  forecast.
+- **The backtest's mornings line, on the 2026-11-10 download:**
+  - with the factor by the kind of day: "filled, predicted not" on 6 of 29 mornings;
+  - with one factor (`--one-factor`): 5;
+  - "predicted full, did not fill": 2 either way.
+
+  So the 08:00 projection misses fill days whichever factor it uses. The kind of day only
+  moved the timing on the days it calls right, from a median of 81 minutes early to 2 minutes
+  late.
+- **One day is not evidence.**
+  - First check whether the next download repeats it.
+  - A per-hour shape on top of the kind-of-day factor is the obvious candidate. Per-hour
+    factors alone did no better than one factor when tried in November 2026: an hourly error
+    of 41.5-41.8% against 41.8%.
+  - Any change must pass the gate and must not break the reference installation's night
+    figures.
+
+## A recurring morning load on the reference installation
+
+- **What:** about 3 kWh in the 06:00 local hour on 2026-11-08 and 2026-11-10. The battery drops
+  about ten points in that hour.
+- **Status:** the learned load profile includes it, and the night figures were right on
+  2026-11-09 (predicted 52.7%, actual 53%).
+- **Action:** none, unless the maintainer wants it pointed out.
+
+## The battery power option is not set yet
+
+- **What:** 0.34.0 added an optional battery power sensor (`OPT_BATTERY_POWER`) for the battery
+  card's live line.
+- **Why it matters:** the reference installation's battery channels are energy counters, so its
+  live line shows no battery until the option is set.
+- **Status:** the maintainer was asked to set it and to check its sign.
+
+## Dependabot PR 106
+
+- **What:** a dev-dependency bump, open since 2026-10-20.
+- **Rule:** Dependabot PRs are not merged as opened. Redo the bumps as one `chore/` PR through
+  the full gate, then close 106.
+
+## Not decided
+
+- **Card text is English only** (ARCHITECTURE risk 7). The maintainer reads Arabic, and the
+  cards are right-to-left-safe but not translated. Ask before starting.
+- **Auto-merge.** GitHub auto-merge and required checks on `main` are off. The maintainer was
+  given the two `gh api` commands to turn them on and has not yet. Until then, merge by hand
+  when CI is green.

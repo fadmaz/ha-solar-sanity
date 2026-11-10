@@ -1,0 +1,2 @@
+# Aider reads AGENTS.md as read-only context, the instructions every coding agent here uses.
+read: AGENTS.md
