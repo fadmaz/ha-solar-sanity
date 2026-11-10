@@ -7,10 +7,12 @@ import hashlib
 import json
 import logging
 import math
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import callback
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -75,6 +77,7 @@ class OutlookJournal:
         self._task: asyncio.Task | None = None
         self._next_grade: datetime | None = None
         self._verification: dict[str, asyncio.Task] = {}
+        self._startup_verification: dict[str, Callable[[], None]] = {}
         self._store = Store(
             self.hass, JOURNAL_VERSION, f"{JOURNAL_KEY}.{coordinator.entry.entry_id}"
         )
@@ -165,6 +168,9 @@ class OutlookJournal:
             self._task.cancel()
         for task in self._verification.values():
             task.cancel()
+        for unsubscribe in self._startup_verification.values():
+            unsubscribe()
+        self._startup_verification.clear()
 
     async def captured(
         self,
@@ -175,14 +181,15 @@ class OutlookJournal:
         now = dt_util.utcnow().isoformat()
         health = self.health.setdefault(provider, {})
         health.update(captured_at=now, reason_code=None)
+        previous = self._verification.get(provider)
+        if previous is not None:
+            previous.cancel()
+        unsubscribe = self._startup_verification.pop(provider, None)
+        if unsubscribe is not None:
+            unsubscribe()
         if submitted:
             health.update(submitted_at=now, verification="pending")
-            previous = self._verification.get(provider)
-            if previous is not None:
-                previous.cancel()
-            self._verification[provider] = self.hass.async_create_background_task(
-                self._verify_archive(provider, submitted), f"{DOMAIN} archive read-back"
-            )
+            self._queue_verification(provider, submitted)
         elif self.coordinator._owns_archive(provider):
             health.update(reason_code="archive_not_submitted", verification="unverified")
         else:
@@ -190,13 +197,31 @@ class OutlookJournal:
             # without pretending that it submitted another entry's batch.
             from .statistics_source import forecast_statistic_id
 
-            self._verification[provider] = self.hass.async_create_background_task(
-                self._verify_archive(
-                    provider, {forecast_statistic_id(provider): list(points.items())}
-                ),
-                f"{DOMAIN} shared archive read-back",
+            health["verification"] = "pending"
+            self._queue_verification(
+                provider, {forecast_statistic_id(provider): list(points.items())}
             )
         await self.async_save()
+
+    @callback
+    def _queue_verification(self, provider, expected):
+        """Startup queues can wait for Core; do not exhaust retries before it starts."""
+
+        @callback
+        def _start(_event=None):
+            self._startup_verification.pop(provider, None)
+            self._verification[provider] = self.hass.async_create_background_task(
+                self._verify_archive(provider, expected), f"{DOMAIN} archive read-back"
+            )
+
+        if self.hass.is_running:
+            _start()
+        else:
+            # On the real installation, unrelated startup work lasted longer
+            # than all three read-back retries; the queued batch was not bad.
+            self._startup_verification[provider] = self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED, _start
+            )
 
     async def _verify_archive(
         self,

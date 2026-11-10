@@ -770,3 +770,9 @@ not evidence of another house. Synthetic real-HA tests exercise both power and
 cumulative collection with and without export across time-zone/capacity variants
 and clock changes. Counter cadence limits attribution precision; conservation
 includes the current open bucket rather than discarding its pending increment.
+
+Startup archive verification waits for HA's started event before its bounded
+5/30/120-second read-backs. A slow unrelated integration can hold startup longer
+than that entire retry period; exhausting retries before the recorder is ready
+would leave healthy queued content marked unverified. Unload or a newer capture
+cancels the old deferred callback/background task, including shared providers.

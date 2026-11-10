@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
@@ -15,6 +16,25 @@ from custom_components.solar_sanity.journal import JOURNAL_KEY
 from tests.integration.test_battery_outlook import BATTERY, _loaded
 
 NOW = datetime(2026, 11, 10, 20, 1, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_startup_verification_waits_for_core_and_unload_cancels_it(
+    hass, enable_custom_integrations, entry_data, cancel
+):
+    """A slow startup used to exhaust read-back retries before the recorder settled."""
+    _, journal = await _journal(hass, entry_data)
+    assert not hass.is_running
+    expected = {"solar_sanity:forecast_synthetic": [(NOW, 1.0)]}
+    with patch.object(journal, "_verify_archive", new=AsyncMock()) as verify:
+        await journal.captured("provider", {NOW: 1.0}, expected)
+        assert not verify.called
+        assert journal.health["provider"]["verification"] == "pending"
+        if cancel:
+            journal.cancel()
+        hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+        await hass.async_block_till_done()
+        assert verify.called is not cancel
 
 
 async def test_evening_checkpoint_freezes_interval_evidence_and_expires_public_limits(

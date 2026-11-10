@@ -4,6 +4,13 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [0.39.0] - 2026-11-10
 
+### Fixed
+
+- Defer startup archive read-back until Home Assistant has started. An unrelated
+  slow startup on the reference house outlasted all bounded retries and left
+  a healthy queued archive marked unverified until the next capture. Pending
+  startup verification is cancelled when an entry unloads or a newer batch wins.
+
 ### Added
 
 - A unified private evaluation command, `scripts/evaluate_installation.py`,
