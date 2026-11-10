@@ -46,6 +46,9 @@ code does not tell you.
 - **Merge yourself.** GitHub auto-merge is not enabled on the repository and `main` has no
   required checks, so nothing merges on its own. Changing either is the maintainer's call.
 - **Product preferences:**
+  - **English-only product.** Cards, editors, setup, sensors, reasons and docs
+    are English only. Do not add translations or a language selector. Arabic
+    is for communication with the maintainer, not the product (2026-11-10).
   - Publish forecast figures only after the roof correction. The provider's own sensors
     already show the figure for an ideal roof (0.33.0).
   - No countdown sensors: the timestamp sensors already count down in the frontend, and

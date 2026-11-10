@@ -29,8 +29,6 @@
 
 import { LitElement, css, html, nothing, svg, type SVGTemplateResult, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-
-import { languageOf, number, t, validateLanguage, type LanguageSetting } from "./i18n";
 import { qualityPanel, qualityStyles } from "./quality";
 
 import { areaPath, hourLabels, linePath, niceTicks, round, scaleLinear } from "./chart";
@@ -84,7 +82,6 @@ const PAD_BOTTOM = 22;
 
 interface ForecastCardConfig extends LovelaceCardConfig {
   provider?: string;
-  language?: LanguageSetting;
 }
 
 interface Panel {
@@ -154,7 +151,6 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
     if (config.provider !== undefined && typeof config.provider !== "string") {
       throw new Error("`provider` must be a statistic id");
     }
-    validateLanguage(config.language);
     this._config = config;
   }
 
@@ -282,12 +278,6 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
     }
   }
 
-  private get _language() { return languageOf(this.hass?.language, this._config?.language); }
-
-  private _t(source: string, values: Record<string, string | number> = {}): string {
-    return t(this._language, source, values);
-  }
-
   protected render(): TemplateResult {
     if (!this.hass) return this._note("Connecting", "Waiting for Home Assistant.");
 
@@ -324,16 +314,22 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
 
     return html`
       <ha-card>
-        <div class="root" lang=${this._language} dir=${this._language === "ar" ? "rtl" : "ltr"}>
+        <div class="root" lang="en" dir="ltr">
           <header>
-            <h2>${this._t(this._heading())}</h2>
+            <h2>${this._heading()}</h2>
             <p class="when">${this._dayLabel()}</p>
           </header>
           ${withData.map((panel) => this._panel(panel))}
-          <p class="footnote">${this._t("Latest forecast, revised through the day. {correction}The day-ahead forecast is kept separately for comparison.", {
-            correction: withData.some((panel) => panel.roof) ? this._t("Corrected for your roof. ") : "",
-          })}</p>
-          ${qualityPanel(this.hass, this._language, undefined, withData.map((panel) => panel.latestId))}
+          <p class="footnote">
+            The provider's latest forecast, which it revises through the day${withData.some(
+              (panel) => panel.roof,
+            )
+              ? ", corrected for what your roof delivers"
+              : ""}.
+            What was forecast a day ahead is kept separately, to compare with
+            what happens.
+          </p>
+          ${qualityPanel(this.hass, undefined, withData.map((panel) => panel.latestId))}
         </div>
       </ha-card>
     `;
@@ -357,7 +353,7 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   }
 
   private _dayLabel(): string {
-    return this._day.toLocaleDateString(this._language, {
+    return this._day.toLocaleDateString("en", {
       weekday: "long",
       day: "numeric",
       month: "long",
@@ -366,14 +362,14 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   }
 
   private _panel(panel: Panel): TemplateResult {
-    const when = this._language === "en" ? this._heading().toLowerCase() : this._t(this._heading());
-    const what = this._t(panel.roof ? "expected from your roof" : "forecast");
-    const label = this._t("{provider}: {energy} kilowatt hours {what} for {day}", {provider: panel.label, energy: number(panel.kwh, this._language, 1), what, day: when});
+    const when = this._heading().toLowerCase();
+    const what = panel.roof ? "expected from your roof" : "forecast";
+    const label = `${panel.label}: ${panel.kwh.toFixed(1)} kilowatt hours ${what} for ${when}`;
     return html`
       <section class="panel">
         <div class="heading">
           <span class="provider">${panel.label}</span>
-          <span class="total"><bdi>${number(panel.kwh, this._language, 1)} kWh</bdi></span>
+          <span class="total"><bdi>${panel.kwh.toFixed(1)} kWh</bdi></span>
         </div>
         ${this._roof(panel)}
         <svg
@@ -389,11 +385,11 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
           <path class="area" d=${panel.area} />
           <path class="line" d=${panel.line} />
           ${panel.ticks.map(
-            (tick) => svg`<text class="tick" x="0" y=${panel.tickY(tick) + 4}>${number(tick, this._language)}</text>`,
+            (tick) => svg`<text class="tick" x="0" y=${panel.tickY(tick) + 4}>${tick}</text>`,
           )}
           ${panel.labels.map((mark) =>
             mark.text
-              ? svg`<text class="tick" x=${mark.x} y=${HEIGHT - 6}>${this._language === "ar" ? mark.text.replace(/\d+/g, (n) => number(Number(n), "ar")) : mark.text}</text>`
+              ? svg`<text class="tick" x=${mark.x} y=${HEIGHT - 6}>${mark.text}</text>`
               : nothing,
           )}
         </svg>
@@ -406,8 +402,8 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
           <tbody>
             ${panel.hours.map(
               (hour) => html`<tr>
-                <th scope="row">${this._hour(hour.start)}</th>
-                <td>${number(hour.kwh, this._language, 2)} kWh</td>
+                <th scope="row">${hourLabel(hour.start, this._timeZone)}:00</th>
+                <td>${hour.kwh.toFixed(2)} kWh</td>
               </tr>`,
             )}
           </tbody>
@@ -424,26 +420,27 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
   private _roof(panel: Panel): TemplateResult {
     const roof = panel.roof;
     if (!roof) {
-      return html`<p class="why">${this._t("As the provider forecasts it, not yet corrected for your roof.")}</p>`;
+      return html`<p class="why">As the provider forecasts it, not yet corrected for your roof.</p>`;
     }
-    const share = number(Math.round(roof.factor * 100), this._language);
-    const over = roof.days ? this._t(" over the last {days} days", {days: number(roof.days, this._language)}) : "";
-    return html`<p class="why">${this._t(roof.byKindOfDay
-      ? "Corrected for your roof: on days forecast like this one, it has delivered about {share}% of the forecast{over}."
-      : "Corrected for your roof: it has delivered about {share}% of this forecast{over}.", {share, over})}</p>`;
-  }
-
-  private _hour(when: Date): string {
-    return new Intl.DateTimeFormat(this._language, {timeZone: this._timeZone,
-      hour: "2-digit", minute: "2-digit", hourCycle: "h23"}).format(when);
+    const share = Math.round(roof.factor * 100);
+    const over = roof.days ? ` over the last ${roof.days} days` : "";
+    return html`
+      <p class="why">
+        ${roof.byKindOfDay
+          ? html`Corrected for your roof: on days forecast like this one, it has delivered
+              about <bdi>${share}%</bdi> of the forecast${over}.`
+          : html`Corrected for your roof: it has delivered about <bdi>${share}%</bdi> of
+              this forecast${over}.`}
+      </p>
+    `;
   }
 
   private _note(headline: string, body: string): TemplateResult {
     return html`
       <ha-card>
-        <div class="root" lang=${this._language} dir=${this._language === "ar" ? "rtl" : "ltr"}>
-          <h2>${this._t(headline)}</h2>
-          <p class="body">${this._t(body)}</p>
+        <div class="root" lang="en" dir="ltr">
+          <h2>${headline}</h2>
+          <p class="body">${body}</p>
         </div>
       </ha-card>
     `;
