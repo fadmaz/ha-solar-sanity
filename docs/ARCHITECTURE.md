@@ -68,6 +68,8 @@ library only, deterministic. `tests/analysis/test_purity.py` enforces it with an
 | `scripts/` | `check.py` (every gate in CI order), `check_size.py` (bundle budget), `backtest_outlook.py` (grade the outlook against a real download), `make_brand_assets.py`. |
 | `diagnostics/` | Git-ignored. Real downloads go here and never into git: they carry a house's entity ids and a month of its consumption. |
 | `.github/workflows/` | `validate.yml` (every push and pull request, and Mondays) and `release.yml`. |
+| `AGENTS.md` | Instructions for any coding agent: commands, conventions, gotchas, the maintainer's standing instructions and the reference installation. `CLAUDE.md` imports it; `.gemini/settings.json` and `.aider.conf.yml` point Gemini CLI and Aider at it. |
+| `docs/OPEN_THREADS.md` | Where the work stands: threads left open, with their evidence. |
 
 ---
 
