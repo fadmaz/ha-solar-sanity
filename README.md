@@ -192,7 +192,17 @@ The card has its own installation picker and appears in generated dashboards.
 `solar_sanity.get_forecast_history` returns the same bounded display data for a
 selected device, with read-permission checks and no private replay inputs.
 
-Both ship inside the integration and register themselves. One install, always
+Its **What if** tab compares one extra load with the same frozen inputs as the
+current outlook. Start with 1,000 W for 60 minutes, or choose a start in Home
+Assistant's time zone and a duration of 1–1440 minutes. Calculate starts a live
+session that updates with the outlook. A scheduled run uses only its remaining
+future portion and stops at its end. Runs beyond the complete horizon are
+rejected. Solid and dashed curves share the same basis; their calculated times
+can differ from the main card's settled times. Inputs stay in the card.
+`solar_sanity.simulate_load` provides the same read-only comparison by device,
+including additional and uncovered energy. It never controls an appliance.
+
+All three ship inside the integration and register themselves. One install, always
 version-matched.
 
 **Solar Sanity: battery** shows the battery outlook on one card:

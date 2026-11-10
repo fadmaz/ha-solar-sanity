@@ -21,6 +21,7 @@ export class SolarSanitySimulation extends LitElement {
   @state() protected _error="";
   @state() protected _result?:SimulationResponse;
   private _timer?:ReturnType<typeof setTimeout>;
+  private _endTimer?:ReturnType<typeof setTimeout>;
   private _generation=0;
   private _running=false;
   private _queued=false;
@@ -30,16 +31,17 @@ export class SolarSanitySimulation extends LitElement {
   public override disconnectedCallback():void {super.disconnectedCallback();document.removeEventListener("visibilitychange",this._visibility);this._schedule();}
   protected updated(changed:PropertyValues):void {
     const zone=safeTimeZone(this.hass?.config.time_zone);
-    if(this._zone && this._zone!==zone && this._mode==="scheduled") {this._local="";this._fold="";this._error="The time zone changed. Choose the start time again.";}
+    const zoneChanged=Boolean(this._zone && this._zone!==zone);
+    if(zoneChanged && this._mode==="scheduled") {this._local="";this._fold="";this._error="The time zone changed. Choose the start time again.";}
     this._zone=zone;
     if(changed.has("deviceId") && changed.get("deviceId")) {this._started=false;this._result=undefined;this._error="";}
-    if(changed.has("projectionId")||changed.has("deviceId")||changed.has("active")) this._schedule();
+    if(zoneChanged||changed.has("projectionId")||changed.has("deviceId")||changed.has("active")) this._schedule();
   }
   private _candidates():string[] {return this._mode==="now"?[]:localInstants(this._local,safeTimeZone(this.hass?.config.time_zone));}
   private _validation():string|null {
     const power=Number(this._power), minutes=Number(this._minutes);
     if(this._power.trim()===""||!Number.isFinite(power)||power<0) return "Enter a finite non-negative power.";
-    if(!Number.isInteger(minutes)||minutes<1||minutes>1440) return "Enter whole minutes from1 to1440.";
+    if(!Number.isInteger(minutes)||minutes<1||minutes>1440) return "Enter whole minutes from 1 to 1440.";
     if(this._mode==="scheduled") {
       if(!this._local) return "Choose a start date and time.";
       const candidates=this._candidates();
@@ -50,8 +52,21 @@ export class SolarSanitySimulation extends LitElement {
   }
   private _schedule():void {
     this._generation++;if(this._timer)clearTimeout(this._timer);this._queued=false;
+    if(this._endTimer)clearTimeout(this._endTimer);
+    this._result=undefined;
     if(!this._started||!this.active||!this.isConnected||document.hidden) {this._loading=false;return;}
     this._timer=setTimeout(()=>void this._calculate(),500);
+    if(this._mode==="scheduled"&&!this._validation()) {
+      const start=this._candidates()[this._fold===""?0:Number(this._fold)];
+      const remaining=Date.parse(start!)+Number(this._minutes)*60000-Date.now();
+      if(remaining<=0){this._finish();return;}
+      // Browsers overflow longer timeouts to an immediate callback. A valid
+      // projection is much shorter; let the server reject distant requests.
+      if(remaining<=2147483647)this._endTimer=setTimeout(()=>this._finish(),remaining);
+    }
+  }
+  private _finish():void {
+    this._started=false;this._schedule();this._error="This scenario has finished. Choose a future interval and calculate again.";
   }
   private async _calculate():Promise<void> {
     if(!this._started||!this.active||!this.isConnected||document.hidden) return;
@@ -87,11 +102,10 @@ export class SolarSanitySimulation extends LitElement {
   private _graph(result:SimulationResponse):TemplateResult {
     const a=Date.parse(result.basis.computed_at),b=Date.parse(result.basis.horizon_end),span=b-a;
     const line=(p:SimulationProjection)=>p.trajectory.map(v=>`${((Date.parse(v.at)-a)/span*600).toFixed(2)},${(160-v.soc*1.5).toFixed(2)}`).join(" ");
-    return html`<figure><svg viewBox="0 0 600 185" role="img" aria-label="Simulated battery charge: baseline solid line, additional load dashed line">
+    return html`<figure><svg viewBox="0 0 600 165" role="img" aria-label="Simulated battery charge: baseline solid line, additional load dashed line">
       <line x1="0" x2="600" y1=${160-result.basis.reserve_pct*1.5} y2=${160-result.basis.reserve_pct*1.5} class="reserve"/>
       ${svg`<polyline points=${line(result.baseline)} class="baseline"/><polyline points=${line(result.scenario)} class="scenario"/>`}
-      <text x="0" y="180">${this._time(result.basis.computed_at)}</text><text x="600" y="180" text-anchor="end">${this._time(result.basis.horizon_end)}</text>
-      </svg><figcaption>Solid: baseline · Dashed: extra load · Horizontal: reserve</figcaption></figure>`;
+      </svg><div class="axis"><span>${this._time(result.basis.computed_at)}</span><span>${this._time(result.basis.horizon_end)}</span></div><figcaption>Solid: baseline · Dashed: extra load · Horizontal: reserve</figcaption></figure>`;
   }
   protected render():TemplateResult {
     const r=this._result,validation=this._validation(),candidates=this._candidates();
@@ -120,7 +134,7 @@ export class SolarSanitySimulation extends LitElement {
     .form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}label{display:grid;gap:6px;font-size:.875rem}
     input,select,button{box-sizing:border-box;width:100%;font:inherit;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:10px;min-width:0}
     button{width:auto;cursor:pointer}button:disabled{opacity:.6;cursor:default}button:hover{background:var(--secondary-background-color)}input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--primary-color);outline-offset:3px}
-    figure{margin:24px 0}svg{width:100%;display:block;overflow:visible}polyline{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.baseline{stroke:var(--primary-text-color)}.scenario{stroke:var(--primary-color);stroke-dasharray:7 4}.reserve{stroke:var(--divider-color);stroke-dasharray:3 3}text{fill:var(--secondary-text-color);font-size:11px}
+    figure{margin:24px 0}svg{width:100%;display:block;overflow:visible}polyline{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.baseline{stroke:var(--primary-text-color)}.scenario{stroke:var(--primary-color);stroke-dasharray:7 4}.reserve{stroke:var(--divider-color);stroke-dasharray:3 3}.axis{display:flex;justify-content:space-between;gap:12px;color:var(--secondary-text-color);font-size:.875rem;font-variant-numeric:tabular-nums}
     table{width:100%;border-collapse:collapse;font-size:.875rem;table-layout:fixed}td,th{text-align:left;padding:10px 4px;border-bottom:1px solid var(--divider-color);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}th{font-weight:500}tbody th{color:var(--secondary-text-color)}
     @media(max-width:420px){.form{grid-template-columns:1fr}}
   `;

@@ -3,30 +3,19 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.40.0, 2026-11-10.
+Last updated at 0.41.0, 2026-11-10.
 
-## Paused for the owner's PC restart, 2026-11-10
+## Resumed development and installation evidence
 
-- Resume branch: `feat/load-simulation`. The 0.41.0 work is a local checkpoint,
-  not a release or an installed version. Finish the remaining approved phases;
-  do not restart the plan or preset alternate schedule days.
-- 0.40.0 shipped through PR132, merge7c19598, release workflow42831993363.
-  CI passed645 Python tests at each HA version and188 card tests. Local369
-  Python tests passed with nine HA modules skipped. Independent visual review
-  scored its paging and empty-state fixes resolved. Reference replay unchanged:
-  29 nights, MAE2.531, reserve27/29. Real dashboard remains unverified.
-- HACS installed0.40.0 and its restart was authorized. At14:24UTC, the entry
-  was loaded, Core STARTING, collection ok, with the new archive read-back
-  still pending. Confirm RUNNING and fresh read-back before another deployment.
-  The new history action worked on the real device and returned starting/empty;
-  no actual checkpoint is due yet, so nonempty persistence remains unverified.
-- The simulation engine, response action, projection identity, time-zone helper,
-  and initial UI are in progress. Pure scenario/purity checks27 passed; latest
-  Ruff and TypeScript passed. Full0.41 checks, UI async tests, service strings,
-  version/docs, visual review and release are not complete. The existing History
-  test's Refresh button selector needs updating after adding tab buttons.
-- The loopback preview server was stopped for this pause. Private restart
-  instructions and evidence locations are in `diagnostics/RESUME-2026-11-10.md`.
+- The owner resumed after their PC restart. 0.40.0 is loaded and Core is
+  RUNNING. At 15:10 UTC the outlook had advanced to 15:08 and collection was
+  ok, with archive content verified at 14:48 UTC after the restart. The real
+  history action worked with an empty journal; the first actual checkpoint
+  is not due yet. Nonempty journal persistence remains unverified.
+- 0.41.0 adds a read-only load comparison and automatic What if updates.
+  Production projection, morning shadow and interval gates stay unchanged.
+  UI/API checks and reference replay are recorded in its PR; authenticated
+  dashboard rendering remains a separate open acceptance check.
 
 ## Tools development sequence
 
@@ -35,7 +24,7 @@ Last updated at 0.40.0, 2026-11-10.
   and read permissions. Synthetic UI checks cover desktop/phone layouts.
   Real authenticated dashboard rendering and nonempty journal restart
   persistence remain open until observed; no checkpoint is fabricated.
-- Next: 0.41.0 single-load simulation, then 0.42.0 input-change explanations.
+- Next: 0.42.0 input-change explanations.
   0.43.0 prepares alternate schedule learning, with an empty day selection by
   default for every installation, including the reference house. Operational
   comparison waits for a documented close of the morning experiment.

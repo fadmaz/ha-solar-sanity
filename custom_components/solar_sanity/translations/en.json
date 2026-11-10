@@ -214,6 +214,28 @@
     "rescore_forecasts": {
       "name": "Rescore forecasts",
       "description": "Compare every configured forecast provider against what your roof actually produced, now rather than at the next six-hourly scoring. Returns what it found, including why it will not put a number to a provider yet."
+    },
+    "simulate_load": {
+      "name": "Simulate additional load",
+      "description": "Compare one extra load against the current frozen battery projection without changing published predictions.",
+      "fields": {
+        "device_id": {
+          "name": "Installation",
+          "description": "The Solar Sanity battery installation to simulate."
+        },
+        "power_w": {
+          "name": "Extra power",
+          "description": "Finite non-negative additional power in watts."
+        },
+        "duration_minutes": {
+          "name": "Duration",
+          "description": "Whole elapsed minutes from 1 to 1440. The complete run must fit inside the forecast horizon."
+        },
+        "start_at": {
+          "name": "Start time",
+          "description": "Optional ISO8601 timestamp with a UTC offset. Omit to start now. Only the future portion of a started run is simulated."
+        }
+      }
     }
   },
   "issues": {
