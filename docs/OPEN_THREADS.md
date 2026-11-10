@@ -3,7 +3,28 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.34.2, 2026-11-10.
+Last updated at 0.35.0, 2026-11-10.
+
+## Development sequence after 0.34.2
+
+- **0.35.0:** issued-prediction journal, shared observation grading, four
+  performance sensors, collection status and per-provider capture/read-back
+  timestamps. The projection remains baseline-0.34.2. Live journal grading
+  needs the first actual checkpoints and their completed observation windows.
+- **Next independent release:** Arabic/English cards, editors and integration
+  strings, performance details and actionable configuration Repairs.
+- **Morning experiment:** a normalized three-part daylight shape, compared
+  silently over 14 new complete mornings. It must not add false fill calls,
+  must reduce missed fill days, and must not worsen the night gate. Until that
+  evidence exists, the current model remains active.
+- **Evening interval:** 80% empirical range for the frozen 20:00 forecast,
+  needing 30 calibration nights and 14 later complete shadow observations
+  with at least 80% coverage. It is not a band around the live projection.
+- **Second installation:** synthetic variants and a common comparison report
+  can be prepared now; no independent house's data is available. Generalization
+  and 1.0 readiness cannot be asserted from the reference house alone.
+- Keep the owner's existing evening/morning scheduled checks active. Diagnostics
+  and journal downloads stay private; test fixtures remain synthetic.
 
 ## Observe 0.34.2 through a real night and morning
 

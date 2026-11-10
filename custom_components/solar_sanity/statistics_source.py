@@ -369,6 +369,8 @@ async def async_record_forecast(
     provider_name: str,
     wh_hours: dict[str, float],
     now: datetime | None = None,
+    *,
+    submitted: dict[str, list[tuple[datetime, float]]] | None = None,
 ) -> bool:
     """Persist one provider's forecast, as two series.
 
@@ -401,9 +403,13 @@ async def async_record_forecast(
             hass, _metadata(latest_id, f"{provider_name} forecast"), _as_rows(points, running)
         )
         _LOGGER.debug("recorded %d forecast points for %s", len(points), latest_id)
+        if submitted is not None:
+            submitted[latest_id] = points
         written = True
 
-    if await _async_record_dayahead(hass, provider_key, provider_name, points, when_now):
+    if await _async_record_dayahead(
+        hass, provider_key, provider_name, points, when_now, submitted=submitted
+    ):
         written = True
     return written
 
@@ -414,6 +420,8 @@ async def _async_record_dayahead(
     provider_name: str,
     points: list[tuple[datetime, float]],
     now: datetime,
+    *,
+    submitted: dict[str, list[tuple[datetime, float]]] | None = None,
 ) -> bool:
     """Write only hours still far enough ahead, and only once each.
 
@@ -448,6 +456,8 @@ async def _async_record_dayahead(
         _as_rows(tail, running),
     )
     _LOGGER.debug("recorded %d day-ahead rows for %s", len(tail), statistic_id)
+    if submitted is not None:
+        submitted[statistic_id] = tail
     return True
 
 
@@ -592,9 +602,9 @@ async def async_forecast_providers(hass: HomeAssistant) -> list[tuple[str, str]]
     return providers
 
 
-async def async_hourly_soc(
+async def async_read_hourly_soc(
     hass: HomeAssistant, entity_id: str, start: datetime, end: datetime
-) -> list[dict[str, Any]]:
+) -> list[dict[str, Any]] | None:
     """Hourly mean, minimum and maximum of a state-of-charge sensor.
 
     For the diagnostics download, so the battery outlook can be replayed against
@@ -605,7 +615,7 @@ async def async_hourly_soc(
     recorder cannot answer.
     """
     if not recorder_available(hass) or not entity_id:
-        return []
+        return None
 
     from homeassistant.components.recorder import get_instance
     from homeassistant.components.recorder.statistics import statistics_during_period
@@ -626,7 +636,7 @@ async def async_hourly_soc(
         )
     except Exception:
         _LOGGER.debug("state-of-charge history failed for %s", entity_id, exc_info=True)
-        return []
+        return None
 
     out: list[dict[str, Any]] = []
     for row in (rows or {}).get(entity_id, []):
@@ -644,3 +654,46 @@ async def async_hourly_soc(
             }
         )
     return out
+
+
+async def async_hourly_soc(
+    hass: HomeAssistant, entity_id: str, start: datetime, end: datetime
+) -> list[dict[str, Any]]:
+    """Backward-compatible diagnostics: strict readers use the result above."""
+    rows = await async_read_hourly_soc(hass, entity_id, start, end)
+    return [] if rows is None else rows
+
+
+async def async_observed_full_at(
+    hass: HomeAssistant, entity_id: str, start: datetime, end: datetime, level: float
+) -> datetime | None:
+    """A recorded crossing, never minutes inferred from an hourly maximum."""
+    if not recorder_available(hass):
+        return None
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.history import get_significant_states
+
+    def read():
+        return get_significant_states(
+            hass,
+            start,
+            end,
+            [entity_id],
+            significant_changes_only=False,
+            minimal_response=False,
+            no_attributes=True,
+        )
+
+    try:
+        rows = await get_instance(hass).async_add_executor_job(read)
+        for state in rows.get(entity_id, []):
+            try:
+                value = float(state.state)
+            except (TypeError, ValueError):
+                continue
+            when = state.last_updated
+            if start <= when <= end and level <= value <= 100:
+                return when
+    except Exception:
+        _LOGGER.debug("precise charge history unavailable", exc_info=True)
+    return None

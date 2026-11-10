@@ -2,6 +2,35 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.35.0] - 2026-11-10
+
+### Added
+
+- **A private record of issued predictions.** The first outlook published in
+  the five minutes after 08:00 and 20:00 in Home Assistant's time zone is kept
+  unchanged, with its inputs and settings. A missed checkpoint is recorded as
+  missed, never reconstructed from a later forecast. The separate journal keeps
+  at most 180 records over 90 days and survives restarts.
+- **Measured prediction performance.** Four sensors report the last 28 days'
+  night-minimum mean absolute error, reserve-call accuracy, morning fill-call
+  accuracy and fill-time mean absolute error, with sample counts, exclusions
+  and a seven-day summary. A missing observation is unknown, not zero. Hourly
+  extremes can grade a fill call but do not claim minute precision.
+- **Collection health and archive evidence.** A collection-status sensor and
+  two timestamps per provider distinguish a valid forecast capture from a
+  read-back of matching archive content. Submission to the recorder alone is
+  not presented as verified persistence. Diagnostics include the private
+  journal and the stages of each provider's most recent capture.
+
+### Notes
+
+- This release keeps the 0.34.2 battery projection unchanged. Performance starts
+  with predictions actually recorded after installation; no historical score
+  is invented at setup. The morning experiment, calibrated evening interval,
+  Arabic cards and independent-installation validation follow separately.
+- The existing measurement-window store and public entities remain compatible.
+  An unreadable journal is left untouched and cannot take down the outlook.
+
 ## [0.34.2] - 2026-11-10
 
 ### Fixed

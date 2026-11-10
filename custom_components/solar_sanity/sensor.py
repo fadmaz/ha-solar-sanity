@@ -25,7 +25,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOfPower
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOfPower, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
@@ -34,6 +34,7 @@ from .battery_outlook import REASONS, OutlookState
 from .const import CONF_FORECAST_ENTRIES
 from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .entity import SolarSanityEntity
+from .journal import COLLECTION_REASONS, MODEL_REVISION
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -61,6 +62,145 @@ SENSORS: tuple[SolarSanitySensorDescription, ...] = (
         attrs_fn=lambda coordinator: coordinator.expected_tomorrow_corrected_attrs,
     ),
 )
+
+
+def _performance_attrs(coordinator: SolarSanityCoordinator, key: str) -> dict[str, Any]:
+    summary = coordinator.journal.summary()
+    count_key = {
+        "night_lowest_mae": "nights",
+        "reserve_call_accuracy": "nights",
+        "morning_fill_accuracy": "mornings",
+        "fill_time_mae": "timed_mornings",
+    }[key]
+    attrs = {
+        "window_days": 28,
+        "sample_count": summary[count_key],
+        "model_revision": MODEL_REVISION,
+        "excluded": summary["excluded"],
+        "pending": summary["pending"],
+        "last_7_days": coordinator.journal.summary(7),
+    }
+    if summary[key] is None:
+        attrs.update(reason_code="no_graded_samples", reason="No complete observations graded yet.")
+    return attrs
+
+
+def _metric(coordinator: SolarSanityCoordinator, key: str) -> StateType:
+    value = coordinator.journal.summary()[key]
+    return round(value, 2) if value is not None else None
+
+
+JOURNAL_SENSORS: tuple[SolarSanitySensorDescription, ...] = (
+    SolarSanitySensorDescription(
+        key="night_lowest_mae",
+        translation_key="night_lowest_mae",
+        native_unit_of_measurement="pp",
+        icon="mdi:chart-bell-curve-cumulative",
+        value_fn=lambda c: _metric(c, "night_lowest_mae"),
+        attrs_fn=lambda c: _performance_attrs(c, "night_lowest_mae"),
+    ),
+    SolarSanitySensorDescription(
+        key="reserve_call_accuracy",
+        translation_key="reserve_call_accuracy",
+        native_unit_of_measurement=PERCENTAGE,
+        icon="mdi:bullseye-arrow",
+        value_fn=lambda c: _metric(c, "reserve_call_accuracy"),
+        attrs_fn=lambda c: _performance_attrs(c, "reserve_call_accuracy"),
+    ),
+    SolarSanitySensorDescription(
+        key="morning_fill_accuracy",
+        translation_key="morning_fill_accuracy",
+        native_unit_of_measurement=PERCENTAGE,
+        icon="mdi:battery-check-outline",
+        value_fn=lambda c: _metric(c, "morning_fill_accuracy"),
+        attrs_fn=lambda c: _performance_attrs(c, "morning_fill_accuracy"),
+    ),
+    SolarSanitySensorDescription(
+        key="fill_time_mae",
+        translation_key="fill_time_mae",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        value_fn=lambda c: _metric(c, "fill_time_mae"),
+        attrs_fn=lambda c: _performance_attrs(c, "fill_time_mae"),
+    ),
+)
+
+
+COLLECTION_SENSOR = SolarSanitySensorDescription(
+    key="collection_status",
+    translation_key="collection_status",
+    device_class=SensorDeviceClass.ENUM,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    options=["starting", "ok", "degraded", "error"],
+    value_fn=lambda c: c.journal.status()[0],
+    attrs_fn=lambda c: {
+        "reason_code": c.journal.status()[1],
+        "reason": COLLECTION_REASONS.get(c.journal.status()[1]),
+    },
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class CaptureDescription(SensorEntityDescription):
+    """The integration's own capture, not a copy of a provider's sensor."""
+
+    health_key: str
+
+
+CAPTURE_SENSORS = (
+    CaptureDescription(
+        key="forecast_last_captured_at",
+        translation_key="forecast_last_captured_at",
+        health_key="captured_at",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    CaptureDescription(
+        key="forecast_archive_verified_at",
+        translation_key="forecast_archive_verified_at",
+        health_key="verified_at",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+)
+
+
+class CaptureSensor(SolarSanityEntity, SensorEntity):
+    """A per-provider timestamp with explicit capture and verification stages."""
+
+    def __init__(self, coordinator, entry, provider_id, description):
+        super().__init__(coordinator, entry, f"{description.key}_{provider_id}")
+        self.provider_id = provider_id
+        self.entity_description = description
+        provider = coordinator.hass.config_entries.async_get_entry(provider_id)
+        self._attr_translation_placeholders = {
+            "provider": provider.title if provider else provider_id
+        }
+
+    @property
+    def native_value(self) -> datetime | None:
+        stamp = self.coordinator.journal.health.get(self.provider_id, {}).get(
+            self.entity_description.health_key
+        )
+        return datetime.fromisoformat(stamp) if stamp else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        health = self.coordinator.journal.health.get(self.provider_id, {})
+        code = health.get("reason_code")
+        if not health.get(self.entity_description.health_key) and not code:
+            code = (
+                "archive_pending"
+                if self.entity_description.health_key == "verified_at"
+                else "waiting_for_capture"
+            )
+        return {
+            "reason_code": code,
+            "reason": COLLECTION_REASONS.get(code),
+            "attempted_at": health.get("attempted_at"),
+            "submitted_at": health.get("submitted_at"),
+            "verification": health.get("verification", "pending"),
+        }
 
 
 def _roof(coordinator: SolarSanityCoordinator, figure: str) -> StateType:
@@ -145,6 +285,12 @@ async def async_setup_entry(
     entities: list[SensorEntity] = [
         SolarSanitySensor(coordinator, entry, description) for description in SENSORS
     ]
+    entities.append(SolarSanitySensor(coordinator, entry, COLLECTION_SENSOR))
+    entities += [
+        CaptureSensor(coordinator, entry, provider_id, description)
+        for provider_id in entry.data.get(CONF_FORECAST_ENTRIES, [])
+        for description in CAPTURE_SENSORS
+    ]
 
     # Created because a provider is configured: without one there is nothing
     # to correct, and an entity that can never hold a value is a small
@@ -159,6 +305,7 @@ async def async_setup_entry(
     # inverter publishes after Home Assistant starts, and an entity gated on
     # live state goes missing on exactly those installations.
     if coordinator.battery.configured:
+        entities += [SolarSanitySensor(coordinator, entry, d) for d in JOURNAL_SENSORS]
         entities += [
             OutlookSensor(coordinator, entry, description) for description in OUTLOOK_SENSORS
         ]
