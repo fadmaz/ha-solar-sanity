@@ -52,6 +52,28 @@ def test_only_the_future_part_of_a_started_scenario_is_applied():
     assert result.applied_start == START
 
 
+def test_splitting_sunny_steps_preserves_original_solar_and_consumption():
+    """A part-hour load must not lose or duplicate the original positive solar energy."""
+    series = tuple(Step(START + timedelta(hours=i), 1, 300, 100, 300) for i in range(12))
+    result = compare_load(
+        50,
+        BATTERY,
+        series,
+        forecast_used=True,
+        power_w=1000,
+        duration_minutes=15,
+        start_at=START + timedelta(minutes=17),
+        now=START,
+    )
+    # 3.6 kWh solar minus 1.2 kWh original load; no clamp or conversion loss.
+    assert result.baseline.trajectory[-1][1] == pytest.approx(74)
+    assert result.scenario.trajectory[-1][1] == pytest.approx(71.5)
+    assert result.additional_wh == pytest.approx(250)
+    assert result.baseline_uncovered_wh == result.scenario_uncovered_wh == 0
+    assert sum(s.pv_wh for s in series) == 3600
+    assert sum(s.load_wh for s in series) == 1200
+
+
 def test_uncovered_energy_is_reported_when_the_reserve_clamps_charge():
     """A load cannot be hidden by the reserve floor."""
     result = run(power=10_000, minutes=60)
