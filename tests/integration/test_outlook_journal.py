@@ -35,7 +35,7 @@ def _projection(now=NOW):
 
 
 async def _journal(hass, entry_data):
-    hass.config.async_set_time_zone("UTC")
+    await hass.config.async_set_time_zone("UTC")
     entry = await _loaded(hass, MockConfigEntry(domain=DOMAIN, data=entry_data, options=BATTERY))
     journal = entry.runtime_data.coordinator.journal
     journal.records.clear()
@@ -96,7 +96,7 @@ async def test_checkpoints_follow_calendar_days_across_dst(
 ):
     """The 08:00 and 20:00 slots survive both 23- and 25-hour days."""
     _, journal = await _journal(hass, entry_data)
-    hass.config.async_set_time_zone("America/New_York")
+    await hass.config.async_set_time_zone("America/New_York")
     now = day.replace(tzinfo=ZoneInfo("America/New_York")).astimezone(UTC)
     journal.created_at = now - timedelta(hours=2)
     journal.last_checked_at = journal.created_at
