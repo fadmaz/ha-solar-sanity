@@ -692,6 +692,24 @@ original local checkpoint date; missed slots have a scheduled time and no issue
 time. Pure history shaping never grades, captures or changes the stored record.
 The existing journal envelope and projection math are unchanged.
 
+### Single-load simulation (0.41.0)
+
+`services.py` resolves the same device and read-permission guard for
+`simulate_load`, a native response-only action. It copies the current state's
+frozen steps and battery settings, rejecting stale or unavailable bases. No
+provider query, archive write or journal mutation occurs. `analysis/scenarios.py`
+splits steps at exact UTC load boundaries, preserving their original energy,
+and runs the production projection twice without published-time hysteresis.
+Elapsed scheduled portions are excluded; an end outside the full horizon fails.
+Uncovered energy is summed over the whole horizon, separate from night reserve.
+
+The lowest-charge sensor publishes a context-and-time `projection_id`, excluded
+from Recorder attributes. The tools tab uses it to debounce refreshes by 500 ms,
+allows one in-flight request and discards obsolete replies. Hidden, disconnected
+and background tabs stop requests. Scheduled times resolve against the HA zone;
+DST gaps are rejected and folds require an explicit occurrence. A finished run
+stops even without a new projection. Scenario fields remain temporary UI state.
+
 1. `analysis/outlook.py`: the whole projection, about 470 lines.
 2. `analysis/profile.py`: everything learned from the house.
 3. `battery_outlook.py`: how the projection meets Home Assistant.

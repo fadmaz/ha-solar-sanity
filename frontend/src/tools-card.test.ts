@@ -28,7 +28,7 @@ describe("issued history tools",()=>{
   it("separates empty history from read failure and allows retry",async()=>{
     const call=vi.fn().mockResolvedValue({response:response()}), c=await make(hass(call));
     expect(c.shadowRoot!.textContent).toContain("No issued predictions yet");
-    call.mockRejectedValue(new Error("offline"));c.shadowRoot!.querySelector("button")!.click();await settle(c);
+    call.mockRejectedValue(new Error("offline"));c.shadowRoot!.querySelector<HTMLButtonElement>(".toolbar button")!.click();await settle(c);
     expect(c.shadowRoot!.textContent).toContain("History could not be read");expect(c.shadowRoot!.textContent).not.toContain("No issued predictions yet");
   });
   it("never invents a minute timestamp from hourly fill evidence",async()=>{

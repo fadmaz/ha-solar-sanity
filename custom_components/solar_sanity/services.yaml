@@ -16,3 +16,30 @@ get_forecast_history:
           min: 1
           max: 90
           mode: box
+simulate_load:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
+    power_w:
+      required: true
+      default: 1000
+      selector:
+        number:
+          min: 0
+          mode: box
+          unit_of_measurement: W
+    duration_minutes:
+      required: true
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 1440
+          mode: box
+          unit_of_measurement: min
+    start_at:
+      selector:
+        text:

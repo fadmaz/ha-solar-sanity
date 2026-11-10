@@ -2,6 +2,26 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.41.0] - 2026-11-10
+
+### Added
+
+- What if in the tools card: compare one additional load with a baseline from
+  the same current projection. It shows both curves, raw full/reserve times,
+  night minimum, extra energy and uncovered energy. Calculate starts automatic
+  updates; hidden tabs pause and obsolete responses are ignored.
+- The read-only `simulate_load` response action with installation permissions,
+  finite power and 1–1440 minute validation. Scheduled starts use Home Assistant
+  time, require an explicit DST occurrence when needed, and apply only the
+  future part of a started run. A complete run must fit inside the horizon.
+- `projection_id` on the existing minimum-charge sensor for coordinated tools
+  updates, excluded from Recorder attributes.
+
+### Notes
+
+- Scenario inputs stay in the card. No appliance control, forecast journal
+  writes, new entities or changes to the active projection model are included.
+
 ## [0.40.0] - 2026-11-10
 
 ### Added

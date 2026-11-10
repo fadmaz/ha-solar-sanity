@@ -3,7 +3,19 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.40.0, 2026-11-10.
+Last updated at 0.41.0, 2026-11-10.
+
+## Resumed development and installation evidence
+
+- The owner resumed after their PC restart. 0.40.0 is loaded and Core is
+  RUNNING. At 15:10 UTC the outlook had advanced to 15:08 and collection was
+  ok, with archive content verified at 14:48 UTC after the restart. The real
+  history action worked with an empty journal; the first actual checkpoint
+  is not due yet. Nonempty journal persistence remains unverified.
+- 0.41.0 adds a read-only load comparison and automatic What if updates.
+  Production projection, morning shadow and interval gates stay unchanged.
+  UI/API checks and reference replay are recorded in its PR; authenticated
+  dashboard rendering remains a separate open acceptance check.
 
 ## Tools development sequence
 
@@ -12,7 +24,7 @@ Last updated at 0.40.0, 2026-11-10.
   and read permissions. Synthetic UI checks cover desktop/phone layouts.
   Real authenticated dashboard rendering and nonempty journal restart
   persistence remain open until observed; no checkpoint is fabricated.
-- Next: 0.41.0 single-load simulation, then 0.42.0 input-change explanations.
+- Next: 0.42.0 input-change explanations.
   0.43.0 prepares alternate schedule learning, with an empty day selection by
   default for every installation, including the reference house. Operational
   comparison waits for a documented close of the morning experiment.
