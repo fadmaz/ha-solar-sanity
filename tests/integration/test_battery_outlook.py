@@ -55,6 +55,42 @@ async def _loaded(hass: HomeAssistant, entry: MockConfigEntry) -> MockConfigEntr
     return entry
 
 
+@pytest.mark.parametrize("fail", [False, True])
+async def test_the_silent_candidate_runs_through_the_real_projection_without_disabling_baseline(
+    hass, enable_custom_integrations, entry_data, fail
+):
+    """A missing required build_steps argument silently disabled the first candidate."""
+    entry = await _loaded(
+        hass,
+        MockConfigEntry(
+            domain=DOMAIN, data={**entry_data, CONF_FORECAST_ENTRIES: ["provider"]}, options=BATTERY
+        ),
+    )
+    _week_of_history(entry)
+    hass.states.async_set(SOC, "64", {"unit_of_measurement": "%", "device_class": "battery"})
+    coordinator = entry.runtime_data.coordinator
+    battery = coordinator.battery
+    now = dt_util.utcnow()
+    hour = now.replace(minute=0, second=0, microsecond=0)
+    coordinator.forecast_points = {"provider": {hour + timedelta(hours=i): 2.0 for i in range(48)}}
+    coordinator.forecast_captured_at = now
+    candidate = battery.corrected_hours("provider", now)
+    with patch.object(
+        battery,
+        "shape_hours",
+        side_effect=RuntimeError("synthetic") if fail else None,
+        return_value=(candidate, "shadow_only"),
+    ):
+        battery.refresh(force=True, now=now)
+    assert battery.state.outlook is not None and battery.state.reason is None
+    if fail:
+        assert battery.state.shape_reason == "shape_computation_failed"
+    else:
+        assert battery.state.shadow is not None
+        assert battery.state.shadow.lowest_pct == battery.state.outlook.lowest_pct
+        assert battery.state.shape_reason == "shadow_only"
+
+
 def _entity_id(hass: HomeAssistant, entry: MockConfigEntry, key: str) -> str | None:
     return er.async_get(hass).async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{key}")
 

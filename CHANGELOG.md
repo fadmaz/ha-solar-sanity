@@ -4,6 +4,13 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [0.38.0] - 2026-11-10
 
+### Fixed
+
+- Supply the explicit production-history fallback argument when running the
+  silent daylight candidate. Its missing argument prevented shadow calculation
+  while the isolated baseline continued normally. No prospective checkpoint
+  had yet been recorded on the reference installation.
+
 ### Added
 
 - Two experimental sensors expose the lower and upper bounds of the issued

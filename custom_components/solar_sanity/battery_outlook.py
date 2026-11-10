@@ -572,6 +572,7 @@ class BatteryOutlook:
                         load=load.wh,
                         local_hour=local_hour,
                         pv_forecast=candidate,
+                        pv_profile=None,
                         anchor=self._anchor(now),
                     )
                     base.shadow = project(soc, settings, candidate_steps, forecast_used=True)
