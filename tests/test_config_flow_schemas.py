@@ -102,13 +102,14 @@ class TestConfigFlowSchemas:
             OPT_BATTERY_RESERVE_PCT,
             OPT_BATTERY_SOC,
             OPT_BATTERY_TARGET_PCT,
+            OPT_LOAD_PROFILE_ALTERNATE_DAYS,
         )
 
         stub = SimpleNamespace(config_entry=SimpleNamespace(options={}, runtime_data=None))
         schema = vol.Schema(SolarSanityOptionsFlow._fields(stub))
 
         # 0.34.0 added the battery power sensor and its sign, for the card's
-        # live line.
+        # live line. 0.43.0 adds a universally empty alternate-day selection.
         assert _schema_keys(schema) == {
             OPT_BATTERY_SOC,
             OPT_BATTERY_CAPACITY_KWH,
@@ -116,7 +117,9 @@ class TestConfigFlowSchemas:
             OPT_BATTERY_TARGET_PCT,
             OPT_BATTERY_POWER,
             OPT_BATTERY_POWER_CHARGING_POSITIVE,
+            OPT_LOAD_PROFILE_ALTERNATE_DAYS,
         }
+        assert schema({})[OPT_LOAD_PROFILE_ALTERNATE_DAYS] == []
 
 
 class TestIntegrationImports:

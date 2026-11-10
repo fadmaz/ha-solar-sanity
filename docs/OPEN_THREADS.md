@@ -25,9 +25,11 @@ Last updated at 0.43.0, 2026-11-10.
 - 0.42.0 adds bounded in-memory input comparisons over the common future only.
   Its UI does not attribute causality or compare estimates from different setups.
 - 0.42.0 shipped through PR134 after 686 Python tests at each supported HA
-  version and 203 card tests passed. HACS installed it and restart was sent;
-  at 15:46 UTC it was loaded with its first projection and comparison waiting
-  for a second valid issue. Post-start read-back/resource checks are pending.
+  version and 203 card tests passed. HACS install/restart and Core RUNNING are
+  verified. Archive read-back succeeded at 15:51 UTC, the resource uses
+  `?v=0.42.0` and the real sensor compared its 15:44/15:49 UTC issues over their
+  common future. Collection is ok, no warnings/errors appeared, dayahead and
+  30/35/100 settings survived. No actual journal checkpoint is due yet.
 
 ## Tools development sequence
 
