@@ -13,9 +13,18 @@ Last updated at 0.34.2, 2026-11-10.
 - **Delivery:** one stable release, followed by installation through HACS and
   verification on the reference Home Assistant. Its history and settings must
   survive, forecast capture must continue, and live read-outs must keep moving.
-- **Pending:** record the installed version and the first post-update night and
-  morning against actual charge readings. Do not describe that observation as
-  complete based on the historical replay alone.
+- **Installed on 2026-11-10:** HACS installed v0.34.2 and a Core restart loaded
+  0.34.2, confirmed by runtime diagnostics. All five input channels are readable,
+  the six corrected forecast sensors have values, and the outlook recomputes.
+  The 766 stored buckets and both 386-row forecast series survive unchanged;
+  capacity, reserve and target remain 30 kWh, 35% and 100%. Startup forecast
+  capture succeeds and there are no Solar Sanity warnings or errors.
+- **Visual checks:** synthetic desktop/phone cards passed in light/dark and
+  LTR/RTL. Rendering the actual dashboard remains unverified: the MCP screenshot
+  feature is disabled and the Chrome connection was unavailable.
+- **Pending:** verify the periodic forecast capture and the first post-update
+  night and morning against actual charge readings. Do not describe that
+  observation as complete based on the historical replay alone.
 
 ## Grade the factor by the kind of day on the next download
 
