@@ -425,6 +425,9 @@ always ignored unknown keys; 0.30.0 stopped writing four of them this way.
 - a fixture at the old pair in `tests/integration/test_storage_round_trip.py`;
 - for a major bump, a `Store` subclass with `_async_migrate_func`.
 
+This contract concerns the measurement-window Store. Optional journal additions
+use the independent envelope described in 5.8 and do not change window 1.1.
+
 ### 5.6 Teardown
 
 - **Unload:** platforms only; the file stays.
@@ -453,6 +456,15 @@ It contains immutable issued records, settled outcomes, provider capture health,
 the journal's creation instant and last checked instant. At most 180 records
 and 90 days are retained. Unknown versions and malformed records disable journal
 writes while leaving the file and the battery outlook alone.
+
+At 0.43.0 its optional `load_trial` control stores a versioned experiment epoch,
+generation and setup identity. Old envelopes without it restore normally. A day
+selection, clearing, setup/zone change or reviewed morning decision starts a new
+epoch, including when the owner selects an older list again. Unknown control
+versions disable journal writes and preserve the whole envelope. Production
+context excludes day-group options, so existing metrics/calibration are retained.
+Optional `load_shadow` siblings are validated independently and never nest with
+the existing daylight `shadow`. The root limit stays 180 issues/90 days.
 
 The live and five-minute ticks schedule one journal task at a time. Only a real
 projection computed during the five-minute 08:00/20:00 checkpoint window can be
@@ -722,6 +734,33 @@ not numerical zero changes. A comparison failure cannot suppress a projection.
 The minimum-charge sensor exposes the bounded `outlook_changes` display object,
 excluded from Recorder. The tools Changes tab reads it through registry discovery;
 it makes no service call or causal calculation. No persistence schema changes.
+
+### Optional alternate-schedule experiment (0.43.0)
+
+`OPT_LOAD_PROFILE_ALTERNATE_DAYS` lives only in per-entry options. The native
+multi-select defaults empty; one to six English weekday keys are supported.
+`load_trial.py` tracks its independent epoch and gates collection on a documented
+decision in `experiment_policy.py`. `MORNING_DECISION` is currently `None`; no
+selection, including on the reference house, can bypass the open morning gate.
+Changing production revision requires a matching reviewed decision and new epoch.
+
+`analysis/load_schedule.py` averages usable whole-hour load over the previous 28
+local dates, excluding the current date. Each date weighs once per local hour;
+repeated DST hours are averaged within their date and missing hours stay absent.
+Every used candidate hour needs three distinct dates, or the candidate falls back
+entirely. Future steps may cross groups; the measured open-hour anchor, solar,
+efficiencies, charger ceiling and standby remain the baseline's frozen inputs.
+
+When unlocked, a separately settled load candidate is frozen as `load_shadow`
+with its own revision/context/steps and issue-date group. Shared grading excludes
+context changes independently from the baseline/daylight siblings. The paired
+gate needs 14 new complete nights and mornings, three per group in each, reduced
+night MAE <=5, reserve accuracy >=85% without increased wrong calls, and no
+increase in false or missed fills. Neither historical replay nor the existing
+morning shadow counts. Future outcomes are excluded. Readiness never activates
+production; promotion needs a separate feature release and fresh metrics/ranges.
+The unified private evaluation report includes collected load-trial diagnostics,
+and explicitly marks old downloads as not collected instead of reconstructing.
 
 1. `analysis/outlook.py`: the whole projection, about 470 lines.
 2. `analysis/profile.py`: everything learned from the house.

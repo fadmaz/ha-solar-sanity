@@ -98,7 +98,8 @@
           "battery_reserve_pct": "Reserve (%)",
           "battery_target_pct": "Charging target (%)",
           "battery_power_entity": "Battery power (optional)",
-          "battery_power_charging_positive": "Battery power is positive while charging"
+          "battery_power_charging_positive": "Battery power is positive while charging",
+          "load_profile_alternate_days": "Alternate schedule days"
         },
         "data_description": {
           "battery_soc_entity": "Optional. Your battery's state of charge, as a percentage. With the capacity below, it is what the battery outlook projects from.",
@@ -106,12 +107,14 @@
           "battery_reserve_pct": "The level the battery is not taken below, usually your inverter's cut-off. \"Reaches reserve\" in the outlook means reaching this, not zero.",
           "battery_target_pct": "The level the battery is charged to, usually 100. Lower it if your inverter stops charging early; sunshine beyond it counts as spare.",
           "battery_power_entity": "Optional, for the battery card only: a sensor of the power going into or out of the battery right now, in W or kW. Pick it when the battery channels you mapped are energy totals, which cannot show what the battery is doing this second.",
-          "battery_power_charging_positive": "Untick if that sensor reads positive while the battery discharges."
+          "battery_power_charging_positive": "Untick if that sensor reads positive while the battery discharges.",
+          "load_profile_alternate_days": "Optional experiment. Selected days form one consumption group; all remaining days form the other, in Home Assistant time. Leave empty to use one weekly schedule. No days are selected automatically. Comparison waits for the morning experiment decision and does not change production predictions."
         }
       }
     },
     "error": {
-      "target_below_reserve": "The charging target must be above the reserve, or the battery has no range to use."
+      "target_below_reserve": "The charging target must be above the reserve, or the battery has no range to use.",
+      "all_schedule_days": "Choose at most six days. Leave the list empty to use one schedule for the whole week."
     }
   },
   "entity": {

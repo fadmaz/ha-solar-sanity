@@ -21,6 +21,7 @@ from .analysis.calibration import interval_view, issue_interval
 from .analysis.daylight_shape import SHAPE_REVISION
 from .analysis.experiment import shape_gate
 from .analysis.grading import grade, summarize
+from .analysis.load_schedule import LOAD_REVISION, WEEKDAYS
 from .analysis.observations import soc_from_diagnostics
 from .const import (
     CONF_CHANNELS,
@@ -33,6 +34,7 @@ from .const import (
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
 )
+from .load_trial import LoadTrial, valid_control
 from .statistics_source import async_forecast_series, async_observed_full_at, async_read_hourly_soc
 
 if TYPE_CHECKING:
@@ -82,6 +84,7 @@ class OutlookJournal:
             self.hass, JOURNAL_VERSION, f"{JOURNAL_KEY}.{coordinator.entry.entry_id}"
         )
         self.version = "unknown"
+        self.load_trial = LoadTrial(self)
 
     def context(self) -> str:
         entry = self.coordinator.entry
@@ -130,8 +133,14 @@ class OutlookJournal:
                 checked = datetime.fromisoformat(saved["last_checked_at"])
                 if created.tzinfo is None or checked.tzinfo is None:
                     raise ValueError("journal timestamps need a time zone")
+                control = saved.get("load_trial")
+                if control is not None and not valid_control(control):
+                    raise ValueError("unknown or invalid load experiment metadata")
+                self.load_trial.control = control or {}
                 self.records, self.health = records, health
                 self.created_at, self.last_checked_at = created, checked
+            if self.load_trial.sync(dt_util.utcnow()):
+                await self.async_save()
         except Exception:
             # Preserve an unknown envelope or a damaged file for recovery.
             self.writable = False
@@ -150,6 +159,8 @@ class OutlookJournal:
                 "created_at": self.created_at.isoformat(),
                 "last_checked_at": self.last_checked_at.isoformat(),
             }
+            if self.load_trial.control:
+                payload["load_trial"] = self.load_trial.control
             await self._store.async_save(json.loads(json.dumps(payload)))
             if self.error == "journal_write_failed":
                 self.error = None
@@ -264,7 +275,8 @@ class OutlookJournal:
         if not self.coordinator.battery.configured or not self.writable:
             return
         try:
-            changed = self.capture(now)
+            changed = self.load_trial.sync(now)
+            changed = self.capture(now) or changed
             self.last_checked_at = now
             if self._next_grade is None or now >= self._next_grade:
                 self._next_grade = now + timedelta(minutes=5)
@@ -402,21 +414,62 @@ class OutlookJournal:
             record["shadow"] = candidate
         record["shape_reason"] = state.shape_reason
         record["shape_days"] = list(state.shape_days)
+        record["load_reason"] = state.load_reason
+        if (
+            state.load_shadow is not None
+            and state.load_shadow_context == self.load_trial.context()
+            and self.load_trial.blocked(now) is None
+        ):
+            candidate = json.loads(
+                json.dumps(
+                    {
+                        k: v
+                        for k, v in record.items()
+                        if k not in ("shadow", "load_shadow", "interval")
+                    }
+                )
+            )
+            candidate.update(
+                model_revision=LOAD_REVISION,
+                baseline_revision=MODEL_REVISION,
+                context=state.load_shadow_context,
+                load_group=int(WEEKDAYS[local.weekday()] in self.load_trial.days),
+            )
+            candidate["projection"] = _jsonable(asdict(state.load_shadow))
+            candidate["published"] = {
+                "lowest_pct": round(state.load_shadow.lowest_pct, 1)
+                if state.load_shadow.lowest_pct is not None
+                else None,
+                "reserve_at": _iso(state.load_shadow_reserve_at),
+                "full_at": _iso(state.load_shadow_full_at),
+            }
+            candidate["inputs"]["steps"] = candidate["inputs"].pop("load_shadow_steps")
+            if kind == "evening":
+                candidate["until"] = _iso(state.load_shadow.takeover_at)
+                if state.load_shadow.takeover_at is None:
+                    candidate["result"] = {"status": "excluded", "reason_code": "no_night"}
+            record["load_shadow"] = candidate
         if kind == "evening":
             record["interval"] = issue_interval(self.records, record)
         return record
 
     async def _grade_pending(self, now: datetime) -> bool:
         changed = False
-        for record in (
-            item for base in self.records for item in (base, base.get("shadow")) if item
+        for record, is_load in (
+            (item, label == "load_shadow")
+            for base in self.records
+            for label in (None, "shadow", "load_shadow")
+            if (item := base if label is None else base.get(label))
         ):
             if record["result"]["status"] != "pending":
                 continue
             end = datetime.fromisoformat(record["until"])
             if now < end + timedelta(minutes=15):
                 continue
-            if record["context"] != self.context():
+            context = self.load_trial.context() if is_load else self.context()
+            if record["context"] != context or (
+                is_load and self.load_trial.blocked(now) is not None
+            ):
                 record["result"] = {"status": "excluded", "reason_code": "context_changed"}
             else:
                 start = datetime.fromisoformat(record["issued_at"])
@@ -512,10 +565,13 @@ def _valid_record(record: Any) -> bool:
     if not isinstance(record, dict):
         return False
     try:
-        if "shadow" in record and (
-            "shadow" in record["shadow"] or not _valid_record(record["shadow"])
-        ):
-            return False
+        for key in ("shadow", "load_shadow"):
+            if key in record and (
+                not isinstance(record[key], dict)
+                or any(k in record[key] for k in ("shadow", "load_shadow"))
+                or not _valid_record(record[key])
+            ):
+                return False
         stamp = datetime.fromisoformat(record["issued_at"])
         valid = (
             stamp.tzinfo is not None

@@ -34,6 +34,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from ._identity import Overlap, find_overlap
+from .analysis.load_schedule import WEEKDAYS
 from .analysis.model import Role
 from .const import (
     CONF_CHANNELS,
@@ -50,6 +51,7 @@ from .const import (
     OPT_BATTERY_RESERVE_PCT,
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
+    OPT_LOAD_PROFILE_ALTERNATE_DAYS,
 )
 from .discovery import Discovery, async_discover
 from .statistics_source import async_forecast_providers
@@ -503,6 +505,11 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         fields = self._fields()
         errors = _battery_errors(user_input, asked=True)
+        if (
+            user_input is not None
+            and len(set(user_input.get(OPT_LOAD_PROFILE_ALTERNATE_DAYS, []))) == 7
+        ):
+            errors[OPT_LOAD_PROFILE_ALTERNATE_DAYS] = "all_schedule_days"
 
         if user_input is not None and not errors:
             # Merge, then drop what was offered and left blank. `vol.Optional`
@@ -562,6 +569,28 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
         )
         fields[vol.Optional(OPT_BATTERY_POWER_CHARGING_POSITIVE, default=True)] = (
             selector.BooleanSelector()
+        )
+        fields[vol.Optional(OPT_LOAD_PROFILE_ALTERNATE_DAYS, default=[])] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(value=day, label=label)
+                    for day, label in zip(
+                        WEEKDAYS,
+                        (
+                            "Monday",
+                            "Tuesday",
+                            "Wednesday",
+                            "Thursday",
+                            "Friday",
+                            "Saturday",
+                            "Sunday",
+                        ),
+                        strict=True,
+                    )
+                ],
+                multiple=True,
+                mode=selector.SelectSelectorMode.LIST,
+            )
         )
 
         return fields

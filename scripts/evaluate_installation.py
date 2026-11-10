@@ -318,6 +318,12 @@ def evaluate(
             "candidate": summarize(paired_candidate, context, since),
         },
         "issued_journal_groups": issued,
+        # Only the running integration can supply the prospective experiment;
+        # old downloads must not grow reconstructed candidate issues here.
+        "prospective_load_experiment": data.get(
+            "load_profile_experiment",
+            {"active": False, "ready_for_review": False, "reason_code": "not_collected"},
+        ),
         "night_accuracy_gates": gates,
         "night_accuracy_gate_passed": all(gates.values()),
         "interval_revision": INTERVAL_REVISION,
