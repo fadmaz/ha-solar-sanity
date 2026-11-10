@@ -727,6 +727,9 @@ points and reserve accuracy >=85%. Historical development replay cannot count.
 The exact active corrected series is exposed to the forecast card as hourly
 energy. Calculations retain the unrounded learned factor; the descriptive factor
 stays rounded, with `applied_factor` available for reproducing the arithmetic.
+The raw tomorrow total also retains precision until the corrected result is
+rounded for publication; rounding it first once moved the sensor by 0.01 kWh
+from its own hourly curve (0.39.1).
 The curve attribute is excluded from recorder history. The active battery math
 continues to be baseline-0.34.2 while prospective evidence accumulates.
 
