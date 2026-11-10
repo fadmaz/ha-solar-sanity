@@ -437,6 +437,9 @@ pushes two entries onto `window.customCards`: `solar-sanity-battery-card` and
 `solar-sanity-forecast-card`.
 
 **`solar-sanity-battery-card`** (`battery-card.ts`, logic in `battery-model.ts`):
+- **Height.** Both cards return `rows: "auto"` from `getGridOptions`, so a sections
+  dashboard gives them the height of their content. A fixed five rows let 0.34.0's
+  second row of figures push the chart under the next card.
 - **Live flow.** One line of solar, house, battery and grid power, read from the entities
   named in `power_sources`, in their own W or kW; a source not reporting is left out, and
   a battery under 20 W is idle.
