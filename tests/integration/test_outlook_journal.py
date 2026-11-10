@@ -17,6 +17,28 @@ from tests.integration.test_battery_outlook import BATTERY, _loaded
 NOW = datetime(2026, 11, 10, 20, 1, tzinfo=UTC)
 
 
+async def test_shadow_is_frozen_separately_without_changing_the_published_baseline(
+    hass, enable_custom_integrations, entry_data
+):
+    """Prospective comparison must retain both issue-time predictions unchanged."""
+    from custom_components.solar_sanity.analysis.daylight_shape import SHAPE_REVISION
+
+    _, journal = await _journal(hass, entry_data)
+    state = journal.coordinator.battery.state
+    state.shadow = _projection().outlook
+    state.shape_reason = "shadow_only"
+    state.shape_days = (3, 3, 3)
+    assert journal.capture(NOW)
+    saved = journal.records[0]
+    assert saved["model_revision"] == "baseline-0.34.2"
+    assert saved["shadow"]["model_revision"] == SHAPE_REVISION
+    assert saved["shadow"]["context"] == saved["context"]
+    assert saved["shadow"]["issued_at"] == saved["issued_at"]
+    state.inputs["marker"].append(2)
+    assert saved["inputs"]["marker"] == [1]
+    assert saved["shadow"]["inputs"]["marker"] == [1]
+
+
 def _projection(now=NOW):
     steps = [
         Step(now + timedelta(hours=i), 1, 0 if i < 10 else 2000, 300, 0 if i < 10 else 2000)

@@ -407,7 +407,7 @@ class TestTheCorrectionForTomorrow:
         found = correction((0.5213, 15), -40, 30)
 
         assert found is not None
-        assert (found.factor, found.basis, found.days) == (0.52, "learned", 15)
+        assert (found.factor, found.basis, found.days) == (0.5213, "learned", 15)
 
     def test_a_stated_bias_is_used_when_nothing_was_learned(self) -> None:
         """A house without a battery has no scale, and this is its only route."""
@@ -422,14 +422,13 @@ class TestTheCorrectionForTomorrow:
     def test_nothing_learned_and_nothing_stated_is_no_correction(self) -> None:
         assert correction(None, None, 0) is None
 
-    def test_the_figure_is_computed_from_the_factor_as_stated(self) -> None:
-        """Anyone can redo the multiplication from the attributes: the owner's
-        34.61 kWh at a learned 0.5213 is shown as 0.52, and gives 18.0."""
+    def test_the_figure_keeps_the_same_unrounded_factor_as_the_projection(self) -> None:
+        """Rounding before applying the factor made the card and projection differ."""
         found = correction((0.5213, 15), None, 0)
 
         assert found is not None
-        assert found.apply(34.61) == pytest.approx(round(34.61 * 0.52, 2))
-        assert found.apply(34.61) == pytest.approx(18.0, abs=0.01)
+        assert found.apply(34.61) == pytest.approx(round(34.61 * 0.5213, 2))
+        assert found.apply(34.61) == pytest.approx(18.04, abs=0.01)
 
 
 #: A day the provider lists from 06:00 to 13:00 UTC, 20 kWh, and the same the

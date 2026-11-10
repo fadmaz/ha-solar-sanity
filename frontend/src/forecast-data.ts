@@ -246,6 +246,7 @@ export async function loadCurrentForecast(
 
 /** What this roof has delivered against one provider's forecast. */
 export interface RoofFactor {
+  hours?: Hour[];
   /** Multiplies the forecast; 0.52 means about half of it arrives. */
   factor: number;
   /** How many days that rests on. */
@@ -283,6 +284,13 @@ export function roofFactor(
     const days = state.attributes.days;
     found.push({
       factor,
+      hours: Array.isArray(state.attributes.corrected_hours) ? state.attributes.corrected_hours.flatMap((row: unknown) => {
+        if (typeof row !== "object" || row === null) return [];
+        const value = row as Record<string, unknown>;
+        const start = typeof value.start === "string" ? new Date(value.start) : null;
+        return start && Number.isFinite(start.getTime()) && typeof value.kwh === "number"
+          && Number.isFinite(value.kwh) && value.kwh >= 0 ? [{start, kwh: value.kwh}] : [];
+      }) : undefined,
       days: typeof days === "number" ? days : undefined,
       byKindOfDay: state.attributes.basis === "learned",
     });

@@ -53,7 +53,14 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Any) ->
         "window": data.coordinator.window_snapshot() if data else None,
         # The battery outlook as it stands, with everything it was computed from.
         "outlook": _outlook(data.coordinator.battery.state) if data else None,
+        "daylight_windows": {
+            day.isoformat(): [a.isoformat(), b.isoformat()]
+            for day, (a, b) in data.coordinator.battery._daylight_windows.items()
+        }
+        if data
+        else {},
         "outlook_journal": data.coordinator.journal.records if data else [],
+        "morning_experiment": data.coordinator.journal.experiment() if data else None,
         "collection": (
             {
                 "status": data.coordinator.journal.status()[0],

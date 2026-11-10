@@ -101,8 +101,10 @@ interface Panel {
 
 /** Everything the card needs to draw one provider's day, corrected when it can be. */
 export function buildPanel(day: ProviderDay, roof?: RoofFactor, timeZone?: string): Panel {
+  const exact = new Map(roof?.hours?.map((hour) => [hour.start.getTime(), hour.kwh]));
+  const complete = exact.size > 0 && day.hours.every((hour) => hour.kwh === 0 || exact.has(hour.start.getTime()));
   const hours = roof
-    ? day.hours.map((hour) => ({ ...hour, kwh: hour.kwh * roof.factor }))
+    ? day.hours.map((hour) => ({ ...hour, kwh: complete ? (exact.get(hour.start.getTime()) ?? 0) : hour.kwh * roof.factor }))
     : day.hours;
   const top = niceTicks(peak(hours)).at(-1) ?? 1;
 

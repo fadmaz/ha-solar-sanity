@@ -20,11 +20,15 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, Final
 
+from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
 from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
 from ._forecast_plan import forecast_is_fresh
+from .analysis.daylight_shape import DaylightShape, learn_shape
+from .analysis.forecast import corrected_hours
 from .analysis.model import Role
 from .analysis.outlook import (
     BatterySettings,
@@ -136,6 +140,11 @@ class OutlookState:
     #: Exact steps used at issue time; the journal must never reconstruct them
     #: from a later forecast or a later consumption profile.
     inputs: dict[str, Any] = field(default_factory=dict)
+    shadow: Outlook | None = None
+    shadow_full_at: datetime | None = None
+    shadow_reserve_at: datetime | None = None
+    shape_reason: str = "insufficient_shape_days"
+    shape_days: tuple[int, ...] = ()
 
     @property
     def soc_readable(self) -> bool:
@@ -184,6 +193,61 @@ class BatteryOutlook:
         #: hours that have already passed.
         self._dayahead: dict[str, dict[datetime, float]] = {}
         self._learned_hour: datetime | None = None
+        self._shapes: dict[str, DaylightShape | None] = {}
+        self._forecast_provider_id: str | None = None
+        self._daylight_windows: dict[date, tuple[datetime, datetime]] = {}
+        self._shape_zone: str | None = None
+
+    def corrected_hours(self, provider: str, now: datetime) -> dict[datetime, float]:
+        """One active corrected series in Wh, shared by projection and sensor data."""
+        scale = self._scales.get(provider)
+        overall = 1.0 if scale is None else scale.factor
+        factors = self.day_factors(provider, now)
+        day_of = _local_date(self.coordinator.time_zone)
+        return corrected_hours(
+            {
+                when: kwh * 1000
+                for when, kwh in self.coordinator.forecast_points.get(provider, {}).items()
+            },
+            day_of=day_of,
+            factor_for=lambda day: factors.get(day, overall),
+        )
+
+    def shape_hours(self, provider: str, now: datetime) -> tuple[dict[datetime, float] | None, str]:
+        """The candidate only; incomplete horizons or training keep the baseline."""
+        if self._shape_zone != self.hass.config.time_zone:
+            return None, "shape_context_changed"
+        shape = self._shapes.get(provider)
+        if shape is None:
+            return None, "insufficient_shape_days"
+        day_of = _local_date(self.coordinator.time_zone)
+        current = self.coordinator.forecast_points.get(provider, {})
+        archived = self._dayahead.get(provider, {})
+        hour = now.replace(minute=0, second=0, microsecond=0)
+        merged = {when: value for when, value in archived.items() if when < hour}
+        merged.update({when: kwh * 1000 for when, kwh in current.items() if when >= hour})
+        factors = self.day_factors(provider, now)
+        scale = self._scales.get(provider)
+        overall = 1.0 if scale is None else scale.factor
+        grouped: dict[date, dict[datetime, float]] = {}
+        for when, value in merged.items():
+            grouped.setdefault(day_of(when), {})[when] = value
+        output = self.corrected_hours(provider, now)
+        changed = False
+        for day, raw in grouped.items():
+            if day < day_of(now):
+                continue
+            factor = factors.get(day, overall)
+            shaped = shape.distribute(
+                {t: v * factor for t, v in raw.items()},
+                sum(raw.values()),
+                self._daylight_windows.get(day),
+            )
+            if shaped is None:
+                continue
+            changed = True
+            output.update({t: v for t, v in shaped.items() if t in current})
+        return (output, "shadow_only") if changed else (None, "shape_horizon_incomplete")
 
     @property
     def settings(self) -> BatterySettings | None:
@@ -348,6 +412,25 @@ class BatteryOutlook:
                 until=hour,
                 day_of=day_of,
             )
+            try:
+                for day in {day_of(t) for t in dayahead[entry_id]}:
+                    sunrise = get_astral_event_date(self.hass, SUN_EVENT_SUNRISE, day)
+                    sunset = get_astral_event_date(self.hass, SUN_EVENT_SUNSET, day)
+                    if sunrise is not None and sunset is not None:
+                        self._daylight_windows[day] = (sunrise, sunset)
+                self._shapes[entry_id] = learn_shape(
+                    self.coordinator.buckets,
+                    dayahead[entry_id],
+                    soc_max=soc_max,
+                    full_pct=settings.target_pct,
+                    until=hour,
+                    day_of=day_of,
+                    daylight=self._daylight_windows,
+                )
+            except Exception:
+                self._shapes[entry_id] = None
+                _LOGGER.debug("Could not learn daylight-shape shadow", exc_info=True)
+        self._shape_zone = self.hass.config.time_zone
         self._scales = scales
         self._dayahead = dayahead
         self._learned_hour = hour
@@ -458,6 +541,10 @@ class BatteryOutlook:
                 else None
             ),
             "day_factors": {day.isoformat(): value for day, value in factors.items()},
+            "daylight_windows": {
+                day.isoformat(): [a.isoformat(), b.isoformat()]
+                for day, (a, b) in self._daylight_windows.items()
+            },
             "steps": [
                 {
                     "start": step.start.isoformat(),
@@ -471,6 +558,35 @@ class BatteryOutlook:
             "battery": {name: getattr(settings, name) for name in settings.__dataclass_fields__},
         }
         base.outlook = outlook
+        # Run the candidate alongside the active baseline. Nothing published or
+        # learned from these outcomes is promoted before the prospective gate.
+        try:
+            entry_id = self._forecast_provider_id
+            if entry_id is not None and forecast is not None:
+                candidate, base.shape_reason = self.shape_hours(entry_id, now)
+                shape = self._shapes.get(entry_id)
+                base.shape_days = shape.counts if shape is not None else ()
+                if candidate is not None:
+                    candidate_steps = build_steps(
+                        now,
+                        load=load.wh,
+                        local_hour=local_hour,
+                        pv_forecast=candidate,
+                        anchor=self._anchor(now),
+                    )
+                    base.shadow = project(soc, settings, candidate_steps, forecast_used=True)
+                    base.shadow_full_at = settle_full(
+                        self.state.shadow_full_at, base.shadow, settings, now
+                    )
+                    base.shadow_reserve_at = settle_reserve(
+                        self.state.shadow_reserve_at, base.shadow, settings, now
+                    )
+                    base.inputs["shadow_forecast_wh"] = {
+                        t.isoformat(): v for t, v in candidate.items()
+                    }
+        except Exception:
+            base.shape_reason = "shape_computation_failed"
+            _LOGGER.debug("Daylight-shape shadow failed", exc_info=True)
         base.reason = None
         base.provider = provider
         base.full_at = settle_full(self.state.full_at, outlook, settings, now)
@@ -543,6 +659,7 @@ class BatteryOutlook:
         for the kind of day forecast (``day_factors``); a later day, the overall
         one. Unscaled until there is enough to learn from.
         """
+        self._forecast_provider_id = None
         captured = self.coordinator.forecast_captured_at
         if not forecast_is_fresh(captured, now, FORECAST_MAX_AGE):
             return None, None, None, {}
@@ -554,15 +671,11 @@ class BatteryOutlook:
                 continue
             provider = self.hass.config_entries.async_get_entry(entry_id)
             scale = self._scales.get(entry_id)
-            overall = 1.0 if scale is None else scale.factor
             factors = self.day_factors(entry_id, now)
-            day_of = _local_date(self.coordinator.time_zone)
+            self._forecast_provider_id = entry_id
             return (
                 provider.title if provider is not None else entry_id,
-                {
-                    when: kwh * 1000.0 * factors.get(day_of(when), overall)
-                    for when, kwh in series.items()
-                },
+                self.corrected_hours(entry_id, now),
                 scale,
                 factors,
             )

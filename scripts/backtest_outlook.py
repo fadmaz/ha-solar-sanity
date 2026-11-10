@@ -40,6 +40,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "custom_components" / "solar_sanity")]
 
+from analysis.daylight_shape import learn_shape  # noqa: E402
 from analysis.model import Bucket  # noqa: E402
 from analysis.observations import SocSeries, grid_charged, soc_from_diagnostics  # noqa: E402
 from analysis.outlook import BatterySettings, build_steps, project  # noqa: E402
@@ -185,6 +186,10 @@ RAW = False
 #: Set from the command line: one factor for every day, as before 0.32.0.
 ONE_FACTOR = False
 
+# Development replay only. Prospective gates use immutable journal pairs.
+SHAPE_SHADOW = False
+DAYLIGHT_WINDOWS: dict[date, tuple[datetime, datetime]] = {}
+
 
 def learned(buckets: Sequence[Bucket], battery: BatterySettings, now: datetime) -> BatterySettings:
     """The battery as the integration would have seen it at ``now``."""
@@ -251,7 +256,26 @@ def scaled(
     for when, wh in forecast.items():
         totals[day_of(when)] = totals.get(day_of(when), 0.0) + wh
     factors = {day: scale.for_day(total) for day, total in totals.items()}
-    return {when: wh * factors[day_of(when)] for when, wh in forecast.items()}
+    corrected = {when: wh * factors[day_of(when)] for when, wh in forecast.items()}
+    if SHAPE_SHADOW:
+        shape = learn_shape(
+            buckets,
+            forecast,
+            soc_max=soc.maxima,
+            full_pct=battery.target_pct,
+            until=hour,
+            day_of=day_of,
+            daylight=DAYLIGHT_WINDOWS,
+        )
+        if shape is not None:
+            for day, total in totals.items():
+                if day < day_of(now):
+                    continue
+                points = {t: v for t, v in corrected.items() if day_of(t) == day}
+                candidate = shape.distribute(points, total, DAYLIGHT_WINDOWS.get(day))
+                if candidate is not None:
+                    corrected.update(candidate)
+    return corrected
 
 
 def local_hour_of(zone: ZoneInfo) -> Callable[[datetime], int]:
@@ -434,13 +458,25 @@ def main() -> int:
         action="store_true",
         help="scale every day by one factor, as before 0.32.0",
     )
+    parser.add_argument(
+        "--shape-shadow",
+        action="store_true",
+        help="development replay of daylight thirds; does not count toward prospective gates",
+    )
     args = parser.parse_args()
-    global RAW, ONE_FACTOR  # noqa: PLW0603
+    global RAW, ONE_FACTOR, SHAPE_SHADOW, DAYLIGHT_WINDOWS  # noqa: PLW0603
     RAW = args.raw
     ONE_FACTOR = args.one_factor
+    SHAPE_SHADOW = args.shape_shadow
+    if SHAPE_SHADOW:
+        print("development daylight-shape replay; prospective validation remains separate")
 
     data = diagnostics.load(args.diagnostics)
     data = data.get("data", data)
+    DAYLIGHT_WINDOWS = {
+        date.fromisoformat(day): tuple(datetime.fromisoformat(t) for t in bounds)
+        for day, bounds in (data.get("daylight_windows") or {}).items()
+    }
     buckets = diagnostics.buckets_from(data["window"])
     options = (data.get("entry") or {}).get("options") or {}
 

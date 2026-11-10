@@ -409,7 +409,8 @@ async def test_today_is_judged_by_the_archive_for_the_hours_gone(
     attrs = coordinator.expected_tomorrow_corrected_attrs
     assert attrs["factor"] == round(MIXED.for_day(16_000.0), 2) == 0.35
     assert attrs["basis"] == "learned"
-    assert coordinator.expected_tomorrow_corrected_kwh == 5.6
+    assert coordinator.expected_tomorrow_corrected_kwh == round(16 * MIXED.for_day(16_000), 2)
+    assert attrs["applied_factor"] == MIXED.for_day(16_000)
 
 
 async def test_the_providers_figures_are_published_corrected(
