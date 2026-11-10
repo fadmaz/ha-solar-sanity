@@ -74,6 +74,8 @@
       if (params.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
       if (params.get("dir") === "rtl") document.documentElement.dir = "rtl";
 
+      const language = params.get("language") === "ar" ? "ar" : "en";
+      document.documentElement.lang = language;
       const DAYAHEAD = "solar_sanity:dayahead_harness";
       // The card finds providers by the day-ahead archive and draws the latest one.
       const LATEST = "solar_sanity:forecast_harness";
@@ -136,6 +138,16 @@
           { provider: "Home", forecast_statistic_id: LATEST, factor: 0.52, basis: "learned", days: 15 },
         ],
       };
+      Object.assign(outlook, {
+        "sensor.status": ["collection_status", "ok", {}],
+        "sensor.mae": ["night_lowest_mae", "2.47", {sample_count: 16, excluded: {missing_soc: 2}, pending: 1,
+          last_7_days: {nights: 7, mornings: 6, night_lowest_mae: 2.8, reserve_call_accuracy: 90, morning_fill_accuracy: 85, fill_time_mae: 12}}],
+        "sensor.reserve_accuracy": ["reserve_call_accuracy", "91.8", {sample_count: 16}],
+        "sensor.fill_accuracy": ["morning_fill_accuracy", "85", {sample_count: 15}],
+        "sensor.fill_mae": ["fill_time_mae", "12", {sample_count: 5}],
+        "sensor.captured": ["forecast_last_captured_at", iso(now), {forecast_statistic_id: LATEST, provider: "Synthetic provider"}],
+        "sensor.verified": ["forecast_archive_verified_at", iso(now - 5000), {forecast_statistic_id: LATEST}],
+      });
       const states = {};
       const entities = {};
       for (const [id, [key, state, attributes]] of Object.entries(outlook)) {
@@ -157,7 +169,7 @@
         entities,
         config: { state: "RUNNING" },
         themes: { darkMode: params.get("theme") === "dark" },
-        language: "en",
+        language,
         translationMetadata: { translations: {} },
         localize: (key) => key,
         callService: async () => undefined,
@@ -179,6 +191,9 @@
         card.setConfig({ type: `custom:${type}` });
         card.hass = hass;
         cards.append(heading, card);
+        card.updateComplete.then(() => setTimeout(() => {
+          if (params.get("quality") === "open") card.shadowRoot?.querySelectorAll("details").forEach((d) => {d.open = true;});
+        }, 200));
       }
     </script>
   </body>

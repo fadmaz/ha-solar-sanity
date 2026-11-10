@@ -195,5 +195,11 @@
       "name": "Rescore forecasts",
       "description": "Compare every configured forecast provider against what your roof actually produced, now rather than at the next six-hourly scoring. Returns what it found, including why it will not put a number to a provider yet."
     }
+  },
+  "issues": {
+    "non_cumulative_energy": {
+      "title": "Energy channel is not a cumulative total",
+      "description": "{entity_id} reports energy without state_class total or total_increasing. Its readings are excluded. Select a cumulative energy counter or a power sensor in Solar Sanity Reconfigure, or correct the source integration classification."
+    }
   }
 }

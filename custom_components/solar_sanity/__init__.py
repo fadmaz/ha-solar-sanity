@@ -39,6 +39,7 @@ from .const import (
 )
 from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .journal import JOURNAL_KEY, JOURNAL_VERSION
+from .repairs import RETIRED_CODES, remove_energy_issues, sync_energy_issues
 from .statistics_source import (
     async_classify_statistics,
     async_hourly_series,
@@ -97,7 +98,7 @@ async def _async_retire_the_check(hass: HomeAssistant) -> None:
     """
     registry = ir.async_get(hass)
     for domain, issue_id in list(registry.issues):
-        if domain == DOMAIN:
+        if domain == DOMAIN and any(issue_id.startswith(code + "_") for code in RETIRED_CODES):
             ir.async_delete_issue(hass, DOMAIN, issue_id)
 
     try:
@@ -124,6 +125,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
 
     await _async_backfill(hass, coordinator)
     await coordinator.async_config_entry_first_refresh()
+    coordinator.accumulate()
+    sync_energy_issues(hass, entry, coordinator)
 
     entry.runtime_data = SolarSanityData(coordinator=coordinator, store=coordinator._store)
 
@@ -154,6 +157,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     @callback
     def _sample(_now: Any) -> None:
         coordinator.accumulate()
+        sync_energy_issues(hass, entry, coordinator)
         coordinator.battery.refresh(force=True)
         # The sensors describe now and must not wait for the coordinator's
         # six-hourly refresh before they are rewritten.
@@ -200,6 +204,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     One per entry, so leaving it behind would accumulate dead kilobytes that
     Home Assistant preloads at every boot.
     """
+    remove_energy_issues(hass, entry)
     store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY_STATE}.{entry.entry_id}")
     try:
         await store.async_remove()

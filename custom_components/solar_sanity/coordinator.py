@@ -284,6 +284,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 continue
 
             if kind == KIND_POWER:
+                self._unsupported_energy.discard(spec.key)
                 # Not integrated here. Sampling a power sensor every five
                 # minutes and assuming it held that value throughout is where
                 # the noise came from: on an event-reporting load channel it
