@@ -5,31 +5,44 @@ design: when you close a thread, delete it; when you leave one open, add it with
 
 Last updated at 0.43.0, 2026-11-10.
 
-## Resumed development and installation evidence
+## Latest delivery and operational acceptance
 
-- The owner resumed after their PC restart. 0.40.0 is loaded and Core is
-  RUNNING. At 15:10 UTC the outlook had advanced to 15:08 and collection was
-  ok, with archive content verified at 14:48 UTC after the restart. The real
-  history action worked with an empty journal; the first actual checkpoint
-  is not due yet. Nonempty journal persistence remains unverified.
-- 0.41.0 adds a read-only load comparison and automatic What if updates.
-  Production projection, morning shadow and interval gates stay unchanged.
-  UI/API checks and reference replay are recorded in its PR; authenticated
-  dashboard rendering remains a separate open acceptance check.
-- 0.41.0 shipped through PR133 after 675 Python tests at each supported HA
-  version and 201 card tests passed. HACS install/restart and Core RUNNING are
-  verified. Archive read-back succeeded at 15:35 UTC, sensors advanced and the
-  resource uses `?v=0.41.0`. Real simulation returned identical zero-load curves
-  and exactly 1 kWh for a 1000 W/60 minute scenario. No warnings/errors appeared;
-  the archive and 30/35/100 settings survived. Reference replay was unchanged.
-- 0.42.0 adds bounded in-memory input comparisons over the common future only.
-  Its UI does not attribute causality or compare estimates from different setups.
-- 0.42.0 shipped through PR134 after 686 Python tests at each supported HA
-  version and 203 card tests passed. HACS install/restart and Core RUNNING are
-  verified. Archive read-back succeeded at 15:51 UTC, the resource uses
-  `?v=0.42.0` and the real sensor compared its 15:44/15:49 UTC issues over their
-  common future. Collection is ok, no warnings/errors appeared, dayahead and
-  30/35/100 settings survived. No actual journal checkpoint is due yet.
+- The four approved stages shipped independently: History/tools in 0.40.0
+  (PR132), What if in 0.41.0 (PR133), Changes in 0.42.0 (PR134), and optional
+  alternate schedules in 0.43.0 (PR135). Each was merged with a merge commit,
+  its branch deleted and a stable release published after CI passed both
+  HA 2025.11.0 and 2026.2.3. The final code passes 717 Python tests at each
+  version and 203 card tests. Local full gates pass 419 Python tests with nine
+  HA modules skipped, TypeScript, build, cards and the size budget.
+- **Current installed version: 0.43.0.** HACS install/restart and Core RUNNING
+  are verified. Archive read-back succeeded at 16:07:35 UTC, the resource uses
+  `?v=0.43.0` and the outlook advanced to 16:10:51 UTC. Collection is ok and the
+  live system log contains no Solar Sanity warnings/errors. All 772 prior rows,
+  dayahead contents and 30/35/100 settings survived the restart. The day list is
+  empty, with zero pairs and the load experiment inactive/not collecting.
+- The current version's native simulation again returned identical zero-load
+  curves and exactly 1 kWh for 1000 W/60 minutes. Some heavy MCP diagnostics/log
+  requests failed to connect after startup; bounded entity reads and the native
+  system-log command supplied fresh operational evidence without changing any
+  connection, authentication or browser protections. This connector limitation
+  must not be confused with a Solar Sanity fault.
+- Earlier live acceptance is verified: 0.41.0 produced identical zero-load
+  curves and exactly 1 kWh for a 1000 W/60 minute scenario. 0.42.0 compared two
+  real issues at 15:44/15:49 UTC over their common future. Both returned to Core
+  RUNNING with fresh archive read-back, advancing sensors and matching resources.
+  No Solar Sanity warnings/errors appeared. All 772 prior measured rows and
+  dayahead contents survived unchanged; settings remained 30 kWh / 35% / 100%.
+- Synthetic visual and independent reviewer checks passed for desktop/phone,
+  both themes and parent directions. The actual authenticated dashboard/form
+  remains **unverified**: Chrome CDP timed out, and Windows browser control
+  stopped because it could not determine the current URL confidently enough
+  to enforce its policy. No browser protections were changed or bypassed.
+- No actual journal checkpoint is due before 20:00 local today. Nonempty issue
+  persistence across a real restart and completed-window grading remain open.
+  No synthetic issue is inserted on the real installation to satisfy this gate.
+- The existing evening/morning observations remain ACTIVE and read-only;
+  their prompts check the actually loaded stable version. No job-completion
+  automation or new background writer was added.
 
 ## Tools development sequence
 
@@ -41,8 +54,8 @@ Last updated at 0.43.0, 2026-11-10.
 - 0.43.0 prepares alternate schedule learning, with an empty day selection by
   default for every installation, including the reference house. Operational
   comparison waits for a documented close of the morning experiment.
-- The day-group learner, separate sister records and acceptance gate are ready
-  for synthetic verification. The release-reviewed morning decision remains
+- The day-group learner, separate sister records and acceptance gate passed
+  synthetic verification. The release-reviewed morning decision remains
   explicitly unset. Selecting days does not activate production or begin live
   comparison while that prerequisite is open. No days are applied to the house.
 - The current baseline, morning and interval gates and existing read-only
