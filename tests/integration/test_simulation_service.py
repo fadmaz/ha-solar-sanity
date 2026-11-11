@@ -37,10 +37,10 @@ async def setup(hass, entry_data):
     return entry, journal, state
 
 
-async def invoke(hass, entry, **extra):
+async def invoke(hass, entry, *, action="simulate_load", **extra):
     return await hass.services.async_call(
         DOMAIN,
-        "simulate_load",
+        action,
         {
             "device_id": device(hass, entry),
             "power_w": 1000,
@@ -69,6 +69,32 @@ async def test_native_simulation_does_not_change_state_or_the_journal(
     assert journal.coordinator.battery.state is state
 
 
+async def test_native_planner_matches_simulation_at_the_recommended_time(
+    hass, enable_custom_integrations, entry_data
+):
+    """Find the schedule and compare the same complete run through both native actions."""
+    entry, journal, state = await setup(hass, entry_data)
+    saved = deepcopy(state.inputs)
+    with patch("custom_components.solar_sanity.services.dt_util.utcnow", return_value=NOW):
+        result = await invoke(
+            hass, entry, action="find_best_time", finish_by=(NOW + timedelta(hours=2)).isoformat()
+        )
+        chosen = result["recommendation"]
+        comparison = await invoke(hass, entry, start_at=chosen["start_at"])
+    assert result["reason_code"] is None
+    assert chosen == result["run_now"]
+    assert result["basis"] == comparison["basis"]
+    assert chosen["end_at"] == comparison["applied_end"]
+    assert chosen["minimum_soc_pct"] == min(p["soc"] for p in comparison["scenario"]["trajectory"])
+    assert chosen["additional_grid_kwh"] == pytest.approx(
+        comparison["scenario"]["uncovered_energy_kwh"]
+        - comparison["baseline"]["uncovered_energy_kwh"]
+    )
+    assert journal.records == []
+    assert state.inputs == saved
+    assert journal.coordinator.battery.state is state
+
+
 @pytest.mark.parametrize(
     "extra",
     [
@@ -87,21 +113,25 @@ async def test_bad_action_input_cannot_be_coerced_into_a_different_load(
         await invoke(hass, entry, **extra)
 
 
+@pytest.mark.parametrize("action", ["simulate_load", "find_best_time"])
 async def test_a_stale_source_or_old_projection_is_not_simulated(
-    hass, enable_custom_integrations, entry_data
+    hass, enable_custom_integrations, entry_data, action
 ):
     """The action shares the live forecast expiry and rejects missed recomputations."""
     entry, journal, state = await setup(hass, entry_data)
+    arguments = (
+        {"finish_by": (NOW + timedelta(hours=2)).isoformat()} if action == "find_best_time" else {}
+    )
     journal.coordinator.forecast_captured_at = NOW - timedelta(hours=4)
     with (
         patch("custom_components.solar_sanity.services.dt_util.utcnow", return_value=NOW),
         pytest.raises(ServiceValidationError, match="three hours"),
     ):
-        await invoke(hass, entry)
+        await invoke(hass, entry, action=action, **arguments)
     journal.coordinator.forecast_captured_at = NOW
     state.computed_at = NOW - timedelta(minutes=11)
     with (
         patch("custom_components.solar_sanity.services.dt_util.utcnow", return_value=NOW),
         pytest.raises(ServiceValidationError, match="current valid"),
     ):
-        await invoke(hass, entry)
+        await invoke(hass, entry, action=action, **arguments)

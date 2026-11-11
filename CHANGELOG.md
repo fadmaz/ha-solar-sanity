@@ -2,6 +2,15 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.49.0] - 2026-11-11
+
+### Added
+
+- Find best time in What if recommends when to run one extra load before a
+  deadline while the battery stays above reserve in the current outlook.
+  Compare the recommendation with running now and see the estimated battery
+  and grid impact. The same calculation is available as a read-only action.
+
 ## [0.48.0] - 2026-11-11
 
 ### Added

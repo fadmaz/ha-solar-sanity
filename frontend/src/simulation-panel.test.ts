@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {SolarSanitySimulation} from "./simulation-panel";
-import type {SimulationResponse} from "./simulation";
+import type {LoadPlanResponse, SimulationResponse} from "./simulation";
 import type {HomeAssistant} from "./types/hass";
 
 function response(id="one",energy=1):{response:SimulationResponse} {
@@ -8,6 +8,18 @@ function response(id="one",energy=1):{response:SimulationResponse} {
     trajectory:[{at:"2026-11-10T10:00:00Z",soc:80},{at:"2026-11-11T10:00:00Z",soc:40}]};
   return {response:{basis:{projection_id:id,computed_at:"2026-11-10T10:00:00Z",horizon_end:"2026-11-11T10:00:00Z",time_zone:"UTC",model_revision:"synthetic",forecast_used:true,reserve_pct:20,target_pct:100},
     applied_start:"2026-11-10T10:00:00Z",applied_end:"2026-11-10T11:00:00Z",additional_energy_kwh:energy,baseline:projection,scenario:projection}};
+}
+
+function planResponse(): {response: LoadPlanResponse} {
+  const recommendation = {
+    start_at: "2026-11-10T11:00:00Z", end_at: "2026-11-10T12:00:00Z",
+    minimum_soc_pct: 45, additional_grid_kwh: 0, reserve_at: null,
+  };
+  return {response: {
+    basis: response().response.basis, recommendation, reason_code: null,
+    run_now: {...recommendation, start_at: "2026-11-10T10:00:00Z",
+      end_at: "2026-11-10T11:00:00Z", minimum_soc_pct: 36},
+  }};
 }
 async function settle(c:SolarSanitySimulation){await c.updateComplete;await Promise.resolve();await c.updateComplete;}
 async function make(call=vi.fn().mockResolvedValue(response())){
@@ -82,5 +94,62 @@ describe("live load exploration",()=>{
     await vi.advanceTimersByTimeAsync(2000);await settle(c);
     expect(call).toHaveBeenCalledTimes(1);expect(c.shadowRoot!.textContent).toContain("fit inside");
     expect(c.shadowRoot!.textContent).not.toContain("scenario has finished");
+  });
+});
+
+describe("finding the best time", () => {
+  it("makes one manual request, compares the options and marks an outdated plan", async () => {
+    const {c, call} = await make(vi.fn().mockResolvedValue(planResponse()));
+    await input(c, "select", "best_time", "change");
+    expect(c.shadowRoot!.querySelector("button")!.disabled).toBe(true);
+    await input(c, "input[name=finish_by]", "2026-11-10T13:00");
+    expect(call).not.toHaveBeenCalled();
+    await start(c);
+    expect(call).toHaveBeenCalledWith(expect.objectContaining({
+      service: "find_best_time", return_response: true,
+      service_data: {device_id: "house", power_w: 1000, duration_minutes: 60,
+        finish_by: "2026-11-10T13:00:00.000Z"},
+    }));
+    expect(c.shadowRoot!.querySelector("table")!.textContent).toContain("Run now");
+    expect(c.shadowRoot!.textContent).toContain("45.0%");
+    expect(c.shadowRoot!.textContent).toContain("36.0%");
+    c.projectionId = "two";
+    await settle(c);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(c.shadowRoot!.textContent).toContain("Outlook changed");
+  });
+
+  it("ignores a pending result for a different installation", async () => {
+    let resolve!: (v: unknown) => void;
+    const call = vi.fn().mockImplementation(() => new Promise(r => {resolve = r;}));
+    const {c} = await make(call);
+    await input(c, "select", "best_time", "change");
+    await input(c, "input[name=finish_by]", "2026-11-10T13:00");
+    await start(c);
+    c.deviceId = "another";
+    await settle(c);
+    resolve(planResponse());
+    await settle(c);
+    expect(c.shadowRoot!.querySelector("table")).toBeNull();
+  });
+
+  it("requires an occurrence for a repeated local deadline and explains no recommendation", async () => {
+    vi.setSystemTime(new Date("2026-11-01T04:00:00Z"));
+    const unavailable = planResponse();
+    unavailable.response.recommendation = null;
+    unavailable.response.run_now = null;
+    unavailable.response.reason_code = "all_times_reach_reserve";
+    const {c, call} = await make(vi.fn().mockResolvedValue(unavailable));
+    c.hass = {...c.hass!, config: {...c.hass!.config, time_zone: "America/New_York"}};
+    await settle(c);
+    await input(c, "select", "best_time", "change");
+    await input(c, "input[name=finish_by]", "2026-11-01T01:30");
+    expect(c.shadowRoot!.querySelector("button")!.disabled).toBe(true);
+    await input(c, "select[name=deadline_occurrence]", "1", "change");
+    await start(c);
+    expect(call.mock.lastCall![0].service_data.finish_by).toBe("2026-11-01T06:30:00.000Z");
+    expect(c.shadowRoot!.textContent).toContain("at every tested time");
+    expect(c.shadowRoot!.querySelector("table")).toBeNull();
   });
 });

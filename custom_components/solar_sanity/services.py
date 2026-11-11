@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from .analysis.history import history_rows
 from .analysis.outlook import BatterySettings, Outlook, Step, project
-from .analysis.scenarios import compare_load
+from .analysis.scenarios import LoadTiming, compare_load, find_best_time
 from .battery_controls import control_view, power_override
 from .battery_outlook import OutlookState
 from .const import (
@@ -31,7 +31,7 @@ from .setup_check import setup_check
 def _power(value):
     try:
         number = float(value)
-    except (ValueError, TypeError) as err:
+    except (ValueError, TypeError, OverflowError) as err:
         raise vol.Invalid("Power must be a number.") from err
     if isinstance(value, bool) or not math.isfinite(number) or number < 0:
         raise vol.Invalid("Power must be finite and non-negative.")
@@ -48,7 +48,7 @@ def _duration(value):
 def _start_time(value):
     parsed = dt_util.parse_datetime(value) if isinstance(value, str) else None
     if parsed is None or parsed.tzinfo is None:
-        raise vol.Invalid("Use an ISO8601 start time with a UTC offset.")
+        raise vol.Invalid("Use an ISO8601 time with a UTC offset.")
     return parsed
 
 
@@ -66,6 +66,31 @@ def _current_projection(coordinator, now: datetime) -> OutlookState:
     if problem := coordinator.battery.projection_problem(now):
         raise ServiceValidationError(problem)
     return coordinator.battery.state
+
+
+def _projection_basis(state: OutlookState, settings: BatterySettings, time_zone: str) -> dict:
+    return {
+        "projection_id": state.projection_id,
+        "computed_at": state.computed_at.isoformat(),
+        "horizon_end": state.outlook.horizon_end.isoformat(),
+        "time_zone": time_zone,
+        "model_revision": MODEL_REVISION,
+        "forecast_used": state.outlook.forecast_used,
+        "reserve_pct": settings.reserve_pct,
+        "target_pct": settings.target_pct,
+    }
+
+
+def _timing_view(timing: LoadTiming | None) -> dict | None:
+    if timing is None:
+        return None
+    return {
+        "start_at": timing.start.isoformat(),
+        "end_at": timing.end.isoformat(),
+        "minimum_soc_pct": timing.minimum_soc_pct,
+        "additional_grid_kwh": timing.additional_grid_wh / 1000,
+        "reserve_at": timing.reserve_at.isoformat() if timing.reserve_at else None,
+    }
 
 
 def _frozen_inputs(state: OutlookState) -> tuple[BatterySettings, tuple[Step, ...]]:
@@ -251,16 +276,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         except (ValueError, KeyError, TypeError) as err:
             raise ServiceValidationError(str(err)) from err
         return {
-            "basis": {
-                "projection_id": state.projection_id,
-                "computed_at": state.computed_at.isoformat(),
-                "horizon_end": state.outlook.horizon_end.isoformat(),
-                "time_zone": hass.config.time_zone,
-                "model_revision": MODEL_REVISION,
-                "forecast_used": state.outlook.forecast_used,
-                "reserve_pct": settings.reserve_pct,
-                "target_pct": settings.target_pct,
-            },
+            "basis": _projection_basis(state, settings, hass.config.time_zone),
             "applied_start": comparison.applied_start.isoformat(),
             "applied_end": comparison.applied_end.isoformat(),
             "additional_energy_kwh": comparison.additional_wh / 1000,
@@ -278,6 +294,47 @@ def async_setup_tools(hass: HomeAssistant) -> None:
                 vol.Required("power_w"): _power,
                 vol.Required("duration_minutes"): _duration,
                 vol.Optional("start_at"): _start_time,
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def plan_load(call: ServiceCall):
+        coordinator = await coordinator_for(hass, call)
+        now = dt_util.utcnow()
+        state = _current_projection(coordinator, now)
+        try:
+            settings, steps = _frozen_inputs(state)
+            result = find_best_time(
+                state.soc_pct,
+                settings,
+                steps,
+                power_w=call.data["power_w"],
+                duration_minutes=call.data["duration_minutes"],
+                earliest_start=call.data.get("earliest_start", now),
+                finish_by=call.data["finish_by"],
+                now=now,
+            )
+        except (ValueError, KeyError, TypeError, OverflowError) as err:
+            raise ServiceValidationError(str(err)) from err
+        return {
+            "basis": _projection_basis(state, settings, hass.config.time_zone),
+            "recommendation": _timing_view(result.recommendation),
+            "run_now": _timing_view(result.run_now),
+            "reason_code": result.reason_code,
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        "find_best_time",
+        plan_load,
+        schema=vol.Schema(
+            {
+                vol.Required("device_id"): cv.string,
+                vol.Required("power_w"): _power,
+                vol.Required("duration_minutes"): _duration,
+                vol.Optional("earliest_start"): _start_time,
+                vol.Required("finish_by"): _start_time,
             }
         ),
         supports_response=SupportsResponse.ONLY,

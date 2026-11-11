@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from analysis.outlook import BatterySettings, Step, project
-from analysis.scenarios import compare_load
+from analysis.scenarios import compare_load, find_best_time
 
 START = datetime(2026, 11, 10, 20, tzinfo=UTC)
 BATTERY = BatterySettings(10_000, 20, 100, charge_efficiency=1, discharge_efficiency=1)
@@ -116,3 +116,108 @@ def test_clock_changes_do_not_change_elapsed_appliance_energy(day):
     result = run(at=local, now=now, series=steps(now))
     assert result.additional_wh == 1000
     assert result.applied_end - result.applied_start == timedelta(hours=1)
+
+
+def test_planner_prefers_now_when_complete_runs_are_equivalent():
+    """Stable tie-breaking includes the exact first start, even between quarter hours."""
+    now = START + timedelta(minutes=2)
+    plan = find_best_time(
+        80,
+        BATTERY,
+        steps(),
+        power_w=1000,
+        duration_minutes=15,
+        earliest_start=START,
+        finish_by=START + timedelta(hours=2),
+        now=now,
+    )
+    assert plan.recommendation == plan.run_now
+    assert plan.recommendation.start == now
+    assert plan.recommendation.additional_grid_wh == 0
+
+
+def test_planner_waits_for_solar_and_checks_the_exact_last_start():
+    """The 20:45 grid point reaches reserve; the 20:46 boundary stays above it."""
+    series = (
+        Step(START, 1, 0, 0, 0),
+        Step(START + timedelta(hours=1), 1, 3000, 0, 3000),
+    )
+    deadline = START + timedelta(minutes=91)
+    plan = find_best_time(
+        25,
+        BATTERY,
+        series,
+        power_w=2000,
+        duration_minutes=45,
+        earliest_start=START,
+        finish_by=deadline,
+        now=START,
+    )
+    assert plan.recommendation.start == START + timedelta(minutes=46)
+    assert plan.recommendation.end == deadline
+    assert plan.recommendation.minimum_soc_pct > BATTERY.reserve_pct
+    assert plan.recommendation.additional_grid_wh == 0
+    assert plan.run_now.reserve_at is not None
+    assert plan.run_now.additional_grid_wh == pytest.approx(1000)
+
+
+@pytest.mark.parametrize(
+    ("soc", "reason"), [(30, "all_times_reach_reserve"), (25, "baseline_reaches_reserve")]
+)
+def test_planner_rejects_reserve_after_the_appliance_has_finished(soc, reason):
+    """The common horizon includes the house load after the deadline."""
+    series = (
+        Step(START, 1, 0, 0, 0),
+        Step(START + timedelta(hours=1), 1, 0, 700, 0),
+    )
+    plan = find_best_time(
+        soc,
+        BATTERY,
+        series,
+        power_w=400,
+        duration_minutes=60,
+        earliest_start=START,
+        finish_by=START + timedelta(hours=1),
+        now=START,
+    )
+    assert plan.recommendation is None
+    assert plan.reason_code == reason
+    assert plan.run_now.reserve_at > plan.run_now.end
+    assert plan.run_now.additional_grid_wh == pytest.approx(100 if soc == 30 else 400)
+
+
+@pytest.mark.parametrize(("hours", "reason"), [(0.5, "window_too_short"), (13, "beyond_horizon")])
+def test_planner_explains_why_the_window_cannot_be_evaluated(hours, reason):
+    plan = find_best_time(
+        80,
+        BATTERY,
+        steps(),
+        power_w=1000,
+        duration_minutes=60,
+        earliest_start=START,
+        finish_by=START + timedelta(hours=hours),
+        now=START,
+    )
+    assert plan.recommendation is plan.run_now is None
+    assert plan.reason_code == reason
+
+
+def test_planner_accepts_a_complete_run_across_the_repeated_hour():
+    """01:30 first occurrence to 01:30 second occurrence is one elapsed hour."""
+    zone = ZoneInfo("America/New_York")
+    first = datetime(2026, 11, 1, 1, 30, tzinfo=zone)
+    last = first.replace(fold=1)
+    now = first.astimezone(UTC) - timedelta(minutes=30)
+    plan = find_best_time(
+        80,
+        BATTERY,
+        steps(now),
+        power_w=1000,
+        duration_minutes=60,
+        earliest_start=first,
+        finish_by=last,
+        now=now,
+    )
+    assert plan.recommendation.start == first.astimezone(UTC)
+    assert plan.recommendation.end == last.astimezone(UTC)
+    assert plan.run_now is None

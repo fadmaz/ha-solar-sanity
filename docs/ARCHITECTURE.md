@@ -798,6 +798,17 @@ and background tabs stop requests. Scheduled times resolve against the HA zone;
 DST gaps are rejected and folds require an explicit occurrence. A finished run
 stops even without a new projection. Scenario fields remain temporary UI state.
 
+### Find best time (0.49.0)
+
+`find_best_time` uses the same frozen inputs, device permissions and load
+splitting as `simulate_load`. The action samples UTC quarter hours plus the
+first and last eligible starts. Each candidate is a complete run, compared
+through the same outlook end. A candidate reaching reserve at any point in
+that horizon is ineligible. The response returns the recommendation, a
+run-now comparison if it fits, the projection basis and a reason when no
+recommendation is available. The card calculates on request and marks a
+displayed plan outdated when its projection changes.
+
 ### Input changes (0.42.0)
 
 `analysis/changes.py` retains only two valid input snapshots in memory. Their

@@ -3,11 +3,31 @@ export interface SimulationProjection {
   lowest_pct: number | null; full_at: string | null; reserve_at: string | null;
   uncovered_energy_kwh: number; trajectory: {at: string; soc: number}[];
 }
+interface ProjectionBasis {
+  projection_id: string; computed_at: string; horizon_end: string; time_zone: string;
+  model_revision: string; forecast_used: boolean; reserve_pct: number; target_pct: number;
+}
+
 export interface SimulationResponse {
-  basis: {projection_id: string; computed_at: string; horizon_end: string; time_zone: string;
-    model_revision: string; forecast_used: boolean; reserve_pct: number; target_pct: number};
+  basis: ProjectionBasis;
   applied_start: string; applied_end: string; additional_energy_kwh: number;
   baseline: SimulationProjection; scenario: SimulationProjection;
+}
+
+export interface LoadTiming {
+  start_at: string;
+  end_at: string;
+  minimum_soc_pct: number;
+  additional_grid_kwh: number;
+  reserve_at: string | null;
+}
+
+export interface LoadPlanResponse {
+  basis: ProjectionBasis;
+  recommendation: LoadTiming | null;
+  run_now: LoadTiming | null;
+  reason_code: "window_too_short" | "beyond_horizon" | "baseline_reaches_reserve" |
+    "all_times_reach_reserve" | null;
 }
 
 /** All instants matching a local minute: zero in a gap, two in a repeated hour. */
