@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.45.0, 2026-11-11.
+Last updated at 0.46.0, 2026-11-11.
 
 ## Latest delivery and operational acceptance
 
@@ -24,6 +24,9 @@ Last updated at 0.45.0, 2026-11-11.
   for solar-only installations. A second independent installation remains
   needed to verify onboarding and confirm that the readiness signals match
   different equipment and measurement configurations.
+- 0.46.0 adds optional manual charge power and inverter draw settings with a
+  read-only comparison in What if. Auto retains the baseline projection and
+  its journal context. The reference deployment checks Auto and previews.
 - The four approved stages shipped independently: History/tools in 0.40.0
   (PR132), What if in 0.41.0 (PR133), Changes in 0.42.0 (PR134), and optional
   alternate schedules in 0.43.0 (PR135). Each was merged with a merge commit,

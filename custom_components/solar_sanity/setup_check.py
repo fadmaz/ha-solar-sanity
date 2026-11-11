@@ -10,6 +10,7 @@ from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
 from ._forecast_plan import forecast_is_fresh
 from .analysis.history import OBSERVATION_REASONS
 from .analysis.model import ChannelSpec, Role
+from .battery_controls import control_view
 from .battery_outlook import REASONS
 from .const import CONF_FORECAST_ENTRIES, FORECAST_MAX_AGE, OPT_BATTERY_SOC
 from .coordinator import (
@@ -226,6 +227,7 @@ def _battery(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
             "target_pct": settings.target_pct,
         },
         "charge_level": charge_level,
+        "controls": control_view(state.controls or battery.power_controls()),
     }
 
 

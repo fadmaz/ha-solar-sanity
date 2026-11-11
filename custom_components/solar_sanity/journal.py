@@ -24,6 +24,7 @@ from .analysis.grading import grade, summarize
 from .analysis.load_schedule import LOAD_REVISION, WEEKDAYS
 from .analysis.observations import observation_hours
 from .analysis.solar_coverage import coverage_day, observe_coverage
+from .battery_controls import manual_controls
 from .const import (
     CONF_CHANNELS,
     CONF_ENTITY_ID,
@@ -101,13 +102,16 @@ class OutlookJournal:
             "zone": self.hass.config.time_zone,
             "revision": MODEL_REVISION,
             "settings": {
-                k: entry.options.get(k)
-                for k in (
-                    OPT_BATTERY_SOC,
-                    OPT_BATTERY_CAPACITY_KWH,
-                    OPT_BATTERY_RESERVE_PCT,
-                    OPT_BATTERY_TARGET_PCT,
-                )
+                **{
+                    key: entry.options.get(key)
+                    for key in (
+                        OPT_BATTERY_SOC,
+                        OPT_BATTERY_CAPACITY_KWH,
+                        OPT_BATTERY_RESERVE_PCT,
+                        OPT_BATTERY_TARGET_PCT,
+                    )
+                },
+                **manual_controls(entry.options),
             },
         }
         return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()

@@ -99,6 +99,8 @@
           "battery_target_pct": "Charging target (%)",
           "battery_power_entity": "Battery power (optional)",
           "battery_power_charging_positive": "Battery power is positive while charging",
+          "battery_charge_power_limit_w": "Battery charge power limit",
+          "inverter_standby_w": "Inverter standby draw",
           "load_profile_alternate_days": "Alternate schedule days"
         },
         "data_description": {
@@ -108,13 +110,17 @@
           "battery_target_pct": "The level the battery is charged to, usually 100. Lower it if your inverter stops charging early; sunshine beyond it counts as spare.",
           "battery_power_entity": "Optional, for the battery card only: a sensor of the power going into or out of the battery right now, in W or kW. Pick it when the battery channels you mapped are energy totals, which cannot show what the battery is doing this second.",
           "battery_power_charging_positive": "Untick if that sensor reads positive while the battery discharges.",
+          "battery_charge_power_limit_w": "Maximum power reaching the battery, in watts. Leave blank for Auto.",
+          "inverter_standby_w": "Power the inverter draws beyond measured house load, in watts. Use zero when the house meter already includes it. Leave blank for Auto.",
           "load_profile_alternate_days": "Optional experiment. Selected days form one consumption group; all remaining days form the other, in Home Assistant time. Leave empty to use one weekly schedule. No days are selected automatically. Comparison waits for the morning experiment decision and does not change production predictions."
         }
       }
     },
     "error": {
       "target_below_reserve": "The charging target must be above the reserve, or the battery has no range to use.",
-      "all_schedule_days": "Choose at most six days. Leave the list empty to use one schedule for the whole week."
+      "all_schedule_days": "Choose at most six days. Leave the list empty to use one schedule for the whole week.",
+      "invalid_charge_limit": "Enter a finite charge power limit above zero.",
+      "invalid_standby": "Enter a finite standby draw of zero or more."
     }
   },
   "entity": {
@@ -200,6 +206,28 @@
     }
   },
   "services": {
+    "preview_battery_settings": {
+      "name": "Preview battery settings",
+      "description": "Compare current and proposed battery settings from the same published projection.",
+      "fields": {
+        "device_id": {
+          "name": "Installation",
+          "description": "The Solar Sanity device whose projection to preview."
+        },
+        "projection_id": {
+          "name": "Projection ID",
+          "description": "The projection ID from the current lowest battery sensor."
+        },
+        "battery_charge_power_limit_w": {
+          "name": "Battery charge power limit",
+          "description": "Proposed charge power limit in watts. Leave blank for Auto."
+        },
+        "inverter_standby_w": {
+          "name": "Inverter standby draw",
+          "description": "Proposed additional inverter draw in watts. Leave blank for Auto."
+        }
+      }
+    },
     "get_setup_check": {
       "name": "Get setup check",
       "description": "Read the measurement, forecast, battery outlook and history readiness of one installation.",

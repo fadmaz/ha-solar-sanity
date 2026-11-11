@@ -36,6 +36,8 @@ from homeassistant.helpers import selector
 from ._identity import Overlap, find_overlap
 from .analysis.load_schedule import WEEKDAYS
 from .analysis.model import Role
+from .battery_controls import CONTROL_KEYS, power_override
+from .battery_outlook import battery_settings
 from .const import (
     CONF_CHANNELS,
     CONF_ENTITY_ID,
@@ -46,6 +48,7 @@ from .const import (
     DEFAULT_TARGET_PCT,
     DOMAIN,
     OPT_BATTERY_CAPACITY_KWH,
+    OPT_BATTERY_CHARGE_POWER_LIMIT_W,
     OPT_BATTERY_POWER,
     OPT_BATTERY_POWER_CHARGING_POSITIVE,
     OPT_BATTERY_RESERVE_PCT,
@@ -149,6 +152,15 @@ def _percent_selector(low: int, high: int) -> selector.NumberSelector:
             unit_of_measurement="%",
         )
     )
+
+
+class _ManualPowerSelector(selector.NumberSelector):
+    """Keep a boolean from being coerced to a watt value by the number selector."""
+
+    def __call__(self, data: Any) -> float:
+        if isinstance(data, bool):
+            raise vol.Invalid("Enter a number in watts.")
+        return super().__call__(data)
 
 
 def _battery_fields(current: dict[str, Any]) -> dict[Any, Any]:
@@ -505,6 +517,18 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         fields = self._fields()
         errors = _battery_errors(user_input, asked=True)
+        manual = {}
+        if user_input is not None:
+            for marker in fields:
+                key = marker.schema
+                raw = user_input.get(key)
+                if key not in CONTROL_KEYS or raw in (None, ""):
+                    continue
+                charge_limit = key == OPT_BATTERY_CHARGE_POWER_LIMIT_W
+                try:
+                    manual[key] = power_override(raw, positive=charge_limit)
+                except ValueError:
+                    errors[key] = "invalid_charge_limit" if charge_limit else "invalid_standby"
         if (
             user_input is not None
             and len(set(user_input.get(OPT_LOAD_PROFILE_ALTERNATE_DAYS, []))) == 7
@@ -528,7 +552,7 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
                 if user_input.get(name) in (None, "", []):
                     options.pop(name, None)
                 else:
-                    options[name] = user_input[name]
+                    options[name] = manual.get(name, user_input[name])
             return self.async_create_entry(data=options)
 
         return self.async_show_form(
@@ -557,6 +581,15 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
         fields[vol.Optional(OPT_BATTERY_CAPACITY_KWH)] = _capacity_selector()
         fields[vol.Optional(OPT_BATTERY_RESERVE_PCT)] = _percent_selector(0, 95)
         fields[vol.Optional(OPT_BATTERY_TARGET_PCT)] = _percent_selector(10, 100)
+        if battery_settings(dict(self.config_entry.options)) is not None:
+            for key in CONTROL_KEYS:
+                fields[vol.Optional(key)] = _ManualPowerSelector(
+                    selector.NumberSelectorConfig(
+                        step="any",
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="W",
+                    )
+                )
 
         # For the battery card's live flow only. The battery's mapped channels
         # are often lifetime energy counters, as on the reference installation,

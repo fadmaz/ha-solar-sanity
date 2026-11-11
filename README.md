@@ -235,6 +235,11 @@ can differ from the main card's settled times. Inputs stay in the card.
 `solar_sanity.simulate_load` provides the same read-only comparison by device,
 including additional and uncovered energy. It never controls an appliance.
 
+Expand **Preview battery settings** in What if to compare the current power
+settings with proposed ones. Both columns use the same starting charge, solar
+forecast and consumption. The times are calculated from the issue shown above
+the comparison. Use **Configure** to save the proposed values for that installation.
+
 **Changes** compares the inputs of the last two valid outlooks: battery charge,
 corrected solar, expected consumption, correction factors and learned charging
 ceiling/standby. Energy is compared only over their common future interval.
@@ -337,6 +342,14 @@ say what the battery is doing this second, and untick "positive while
 charging" if your inverter signs it the other way.
 Adding a second entry for the same house is caught rather than allowed to
 quietly corrupt a shared forecast archive.
+
+For an installation with a battery outlook, **Configure** also offers two
+optional power settings in watts. **Battery charge power limit** is the maximum
+power reaching the battery. **Inverter standby draw** is the draw in addition
+to measured house load. Enter zero if the house meter already includes it.
+Clear either field for Auto. Setup shows the value used and whether it comes
+from a manual setting, measurements or the default. History keeps each issued
+prediction and its original settings context.
 
 ## Entities
 

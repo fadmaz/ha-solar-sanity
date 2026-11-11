@@ -2,6 +2,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { safeTimeZone } from "./forecast-data";
+import { powerControlLabel, type BatteryControls } from "./battery-controls";
 import type { HomeAssistant } from "./types/hass";
 
 type Status = "ready" | "waiting_for_data" | "needs_attention" | "not_configured";
@@ -21,6 +22,7 @@ export interface SetupCheckResponse {
   battery: Check & {
     settings: {capacity_kwh: number; reserve_pct: number; target_pct: number} | null;
     charge_level: Check | null;
+    controls?: BatteryControls;
   };
   history: Check & {
     days: number;
@@ -179,11 +181,15 @@ export class SolarSanitySetupCheck extends LitElement {
   }
 
   private _battery(data: SetupCheckResponse["battery"]): TemplateResult {
-    const settings = data.settings, chargeLevel = data.charge_level;
+    const settings = data.settings, chargeLevel = data.charge_level, controls = data.controls;
     return this._group("Battery outlook", data, settings ? html`
       <dl><div><dt>Usable capacity</dt><dd>${numbers.format(settings.capacity_kwh)} kWh</dd></div>
         <div><dt>Reserve</dt><dd>${numbers.format(settings.reserve_pct)}%</dd></div>
-        <div><dt>Charge target</dt><dd>${numbers.format(settings.target_pct)}%</dd></div></dl>
+        <div><dt>Charge target</dt><dd>${numbers.format(settings.target_pct)}%</dd></div>
+        ${controls ? html`
+          <div><dt>Battery charge power limit</dt><dd>${powerControlLabel(controls.battery_charge_power_limit_w)}</dd></div>
+          <div><dt>Inverter standby draw</dt><dd>${powerControlLabel(controls.inverter_standby_w)}</dd></div>` : nothing}
+      </dl>
       ${chargeLevel ? html`<ul><li><header><h4>Charge level</h4>${this._status(chargeLevel.status)}</header>
         ${this._details(chargeLevel)}</li></ul>` : nothing}` : nothing);
   }

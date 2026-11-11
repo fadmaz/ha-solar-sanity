@@ -30,6 +30,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
+from .battery_controls import control_view
 from .battery_outlook import REASONS, OutlookState
 from .const import CONF_FORECAST_ENTRIES
 from .coordinator import SolarSanityCoordinator, SolarSanityData
@@ -579,6 +580,7 @@ def _lowest_attrs(state: OutlookState) -> dict[str, Any]:
         "soc_pct": round(state.soc_pct, 1) if state.soc_pct is not None else None,
         "computed_at": _iso(state.computed_at),
         "projection_id": state.projection_id,
+        "projection_controls": control_view(state.controls) if state.controls is not None else None,
         "outlook_changes": state.outlook_changes,
         "reserve_pct": state.settings.get("reserve_pct"),
         "target_pct": state.settings.get("target_pct"),
@@ -828,7 +830,15 @@ class OutlookSensor(SolarSanityEntity, SensorEntity):
     #: starting charge and the time of the refresh change on every refresh too,
     #: and the charge-level sensor already records the first of them.
     _unrecorded_attributes = frozenset(
-        {"trajectory", "soc_pct", "computed_at", "projection_id", "outlook_changes", "potential_w"}
+        {
+            "trajectory",
+            "soc_pct",
+            "computed_at",
+            "projection_id",
+            "projection_controls",
+            "outlook_changes",
+            "potential_w",
+        }
     )
 
     def __init__(

@@ -711,6 +711,21 @@ The version lives in `manifest.json` and nowhere else that matters. Its heading 
 
 ## 9. Where to start reading
 
+### Battery projection controls (0.46.0)
+
+The battery outlook resolves manual and learned power values once per issue.
+Its frozen battery settings carry the effective values through projection,
+spare power, simulation and journal grading. The published projection also
+keeps its learned estimates in memory so a preview can compare with Auto on
+the same basis even when the current setup uses manual settings.
+`preview_battery_settings` shares the existing native action's read guard,
+freshness rules and frozen input reader. Both preview runs use raw model times.
+
+The journal context includes explicit overrides, including zero standby. It
+retains the original hash for an installation with both settings on Auto.
+Resolved grades and issued predictions retain their original context and
+inputs. Setup reports the effective values and their provenance.
+
 ### Installation setup check (0.45.0)
 
 `setup_check.py` builds four groups from live channel states, the retained
