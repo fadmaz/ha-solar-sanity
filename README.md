@@ -334,6 +334,13 @@ privately rather than attaching it to a public issue.
    - **charging target:** usually 100%.
 3. **Pick any solar forecast integrations** you want recorded.
 
+Under **Configure**, **Preferred forecast provider** lets each installation
+try one of its connected providers first. When that provider fails to supply a
+valid capture for the period, the next usable provider supplies the result.
+The preferred provider is used again after a successful capture covering that
+period. Auto uses the original provider order. **Setup** identifies the source
+of the battery outlook and the corrected forecasts for today and tomorrow.
+
 Everything chosen at setup can be changed afterwards through **Reconfigure**,
 without losing any history. Battery settings are also under **Configure**,
 with one more: an optional **battery power** sensor, for the battery card's

@@ -18,6 +18,7 @@ CONF_ENTITY_ID: Final = "entity_id"
 CONF_ORIGIN: Final = "origin"
 
 CONF_FORECAST_ENTRIES: Final = "forecast_entries"
+OPT_PREFERRED_FORECAST_PROVIDER: Final = "preferred_forecast_provider"
 
 #: Entity id of a battery state-of-charge sensor. Optional, and not a channel:
 #: it is a level in percent rather than a flow in watt-hours. With the capacity

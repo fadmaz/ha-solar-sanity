@@ -492,7 +492,7 @@ def normalise_wh_hours(wh_hours: dict[str, float]) -> list[tuple[datetime, float
 
 
 async def async_get_solar_forecasts(
-    hass: HomeAssistant, entry_ids: list[str]
+    hass: HomeAssistant, entry_ids: list[str], *, captured_at: dict[str, datetime] | None = None
 ) -> dict[str, dict[str, Any]]:
     """Fetch each selected forecast provider's day-ahead estimate.
 
@@ -536,6 +536,8 @@ async def async_get_solar_forecasts(
         if isinstance(wh_hours, dict) and stamps_period_end(entry.domain):
             forecast = {**forecast, "wh_hours": by_period_start(wh_hours)}
         out[entry_id] = forecast
+        if captured_at is not None:
+            captured_at[entry_id] = dt_util.utcnow()
     return out
 
 

@@ -85,7 +85,7 @@ class LoadTrial:
         from .journal import MODEL_REVISION
 
         view = load_gate(
-            self.journal.records,
+            self.journal.active_forecast_records(),
             self.context(),
             self.journal.context(),
             MODEL_REVISION,

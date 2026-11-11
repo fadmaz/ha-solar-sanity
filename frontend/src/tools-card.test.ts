@@ -139,6 +139,31 @@ describe("issued history tools",()=>{
 });
 
 describe("setup check tools", () => {
+  it("shows the actual sources for different horizons and refreshes after a source switch", async () => {
+    const result = setupData();
+    const source = {provider:"Preferred roof",status:"preferred" as const,
+      captured_at:"2026-11-11T06:30:00Z",reason:null};
+    result.forecast.preferred_provider = "Preferred roof";
+    result.forecast.sources = {battery:source, today:source,
+      tomorrow:{...source,provider:"Backup roof",status:"fallback",
+        reason:"The preferred forecast does not cover tomorrow."}};
+    const call = vi.fn().mockResolvedValue({response:result}), data = hass(call);
+    const c = new SolarSanityToolsCard();
+    c.setConfig({type:"custom:solar-sanity-tools-card",default_tab:"setup"});
+    c.hass = data;
+    document.body.append(c);
+    const panel = await setup(c);
+    const forecast = panel.querySelector('section[aria-label="Solar forecast"]')!;
+    expect(forecast.textContent).toContain("Tomorrow's corrected forecast");
+    expect(forecast.textContent).toContain("Using fallback");
+    expect(forecast.textContent).toContain("Backup roof");
+    expect(forecast.textContent).toContain("does not cover tomorrow");
+    const registry = data.entities!.renamed!;
+    c.hass = {...data, states:{[registry.entity_id]: {entity_id:registry.entity_id,
+      state:"40", last_updated:"", attributes:{forecast_statistic_id:"switched"}}}};
+    await setup(c);
+    expect(call).toHaveBeenCalledTimes(2);
+  });
   it("opens Setup directly for a solar-only installation and shows actionable checks in local time", async () => {
     const call = vi.fn().mockResolvedValue({response:setupData()}), data = hass(call);
     data.config.time_zone = "America/Los_Angeles";

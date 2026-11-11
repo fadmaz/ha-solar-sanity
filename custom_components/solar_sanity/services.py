@@ -14,7 +14,6 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
-from ._forecast_plan import forecast_is_fresh
 from .analysis.history import history_rows
 from .analysis.outlook import BatterySettings, Outlook, Step, project
 from .analysis.scenarios import compare_load
@@ -22,7 +21,6 @@ from .battery_controls import control_view, power_override
 from .battery_outlook import OutlookState
 from .const import (
     DOMAIN,
-    FORECAST_MAX_AGE,
     OPT_BATTERY_CHARGE_POWER_LIMIT_W,
     OPT_INVERTER_STANDBY_W,
 )
@@ -77,9 +75,7 @@ def _current_projection(coordinator, now: datetime) -> OutlookState:
         or now - state.computed_at > timedelta(minutes=10)
     ):
         raise ServiceValidationError("No current valid battery projection is available.")
-    if state.outlook.forecast_used and not forecast_is_fresh(
-        coordinator.forecast_captured_at, now, FORECAST_MAX_AGE
-    ):
+    if state.outlook.forecast_used and not coordinator.battery.forecast_fresh(state, now):
         raise ServiceValidationError(
             "The solar forecast has not been refreshed within three hours."
         )

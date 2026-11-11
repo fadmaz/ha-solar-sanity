@@ -10,15 +10,28 @@ type Action = "configure" | "reconfigure";
 interface Check {status: Status; reason: string | null; action: Action | null}
 interface Channel extends Check {key: string; kind: "power" | "energy" | null; unit: string | null; hours: number}
 interface Provider extends Check {
+  name?: string;
   integration: string | null;
   captured_at: string | null;
   verified_at: string | null;
   verification: "pending" | "verified" | "unverified" | null;
 }
+interface ForecastSource {
+  provider: string | null;
+  status: "auto" | "preferred" | "fallback" | "history" | "unavailable";
+  captured_at: string | null;
+  reason: string | null;
+}
 export interface SetupCheckResponse {
   time_zone: string;
   measurements: Check & {channels: Channel[]};
-  forecast: Check & {providers: Provider[]; corrected: boolean; correction_reason: string | null};
+  forecast: Check & {
+    providers: Provider[];
+    corrected: boolean;
+    correction_reason: string | null;
+    preferred_provider?: string | null;
+    sources?: Partial<Record<"battery" | "today" | "tomorrow", ForecastSource>>;
+  };
   battery: Check & {
     settings: {capacity_kwh: number; reserve_pct: number; target_pct: number} | null;
     charge_level: Check | null;
@@ -47,6 +60,8 @@ const CHANNEL_LABELS: Record<string, string> = {
 };
 const ACTION_LABELS = {configure: "Configure", reconfigure: "Reconfigure"};
 const REFRESH_KEYS = new Set(["collection_status", "forecast_last_captured_at", "forecast_archive_verified_at"]);
+const SOURCE_KEYS = new Set(["battery_lowest_before_sunrise", "solar_energy_today_corrected", "expected_tomorrow_corrected"]);
+const SOURCE_LABELS = {battery:"Battery outlook",today:"Today's corrected forecast",tomorrow:"Tomorrow's corrected forecast"};
 const numbers = new Intl.NumberFormat("en", {maximumFractionDigits: 2});
 
 @customElement("solar-sanity-setup-check")
@@ -85,9 +100,14 @@ export class SolarSanitySetupCheck extends LitElement {
       return;
     }
     const health = Object.values(hass.entities ?? {})
-      .filter(e => e.platform === "solar_sanity" && e.device_id === device && REFRESH_KEYS.has(e.translation_key ?? ""))
+      .filter(e => e.platform === "solar_sanity" && e.device_id === device
+        && (REFRESH_KEYS.has(e.translation_key ?? "") || SOURCE_KEYS.has(e.translation_key ?? "")))
       .map(e => {
         const state = hass.states[e.entity_id];
+        if (SOURCE_KEYS.has(e.translation_key ?? "")) {
+          return [e.entity_id, state?.attributes.forecast_statistic_id, state?.attributes.production_from,
+            state?.attributes.reason, !state || ["unknown", "unavailable"].includes(state.state)];
+        }
         return [e.entity_id, state?.state, state?.attributes.reason_code, state?.attributes.verification];
       });
     const key = JSON.stringify([device, hass.config.time_zone, health]);
@@ -160,15 +180,27 @@ export class SolarSanitySetupCheck extends LitElement {
   }
 
   private _forecast(data: SetupCheckResponse["forecast"]): TemplateResult {
-    return this._group("Solar forecast", data, data.providers.length ? html`
+    return this._group("Solar forecast", data, html`
+      ${data.sources && data.providers.length ? html`<p>Preferred forecast provider <strong>${data.preferred_provider ?? "Auto"}</strong></p>` : nothing}
       <ul>
-        <li><header><h4>Corrected forecast</h4>${this._status(data.corrected ? "ready" : "waiting_for_data")}</header>
-          ${data.correction_reason ? html`<p>${data.correction_reason}</p>` : nothing}</li>
+        ${data.sources ? (Object.keys(SOURCE_LABELS) as (keyof typeof SOURCE_LABELS)[]).map(key => {
+          const source = data.sources?.[key];
+          if (!source) return nothing;
+          const label = source.status === "history" ? "Production history"
+            : source.status === "fallback" ? "Using fallback"
+              : source.status === "unavailable" ? "Unavailable" : null;
+          return html`<li><header><h4>${SOURCE_LABELS[key]}</h4>
+            ${label ? html`<span class="status">${label}</span>` : nothing}</header>
+            ${source.provider ? html`<p>${source.provider}${source.captured_at ? ` · Captured ${this._time(source.captured_at)}` : ""}</p>` : nothing}
+            ${source.reason ? html`<p>${source.reason}</p>` : nothing}</li>`;
+        }) : data.providers.length ? html`
+          <li><header><h4>Corrected forecast</h4>${this._status(data.corrected ? "ready" : "waiting_for_data")}</header>
+            ${data.correction_reason ? html`<p>${data.correction_reason}</p>` : nothing}</li>` : nothing}
         ${data.providers.map((provider, index) => {
           const name = provider.integration === "forecast_solar" ? "Forecast.Solar"
             : provider.integration?.replaceAll("_", " ");
-          const label = data.providers.length === 1 && name ? name
-            : `Provider ${index + 1}${name ? ` · ${name}` : ""}`;
+          const label = provider.name ?? (data.providers.length === 1 && name ? name
+            : `Provider ${index + 1}${name ? ` · ${name}` : ""}`);
           const verification = provider.verification === "pending" ? "Verification pending"
             : provider.verification === "unverified" ? "Latest batch unverified" : null;
           return html`<li><header><h4>${label}</h4>${this._status(provider.status)}</header>
@@ -177,7 +209,7 @@ export class SolarSanitySetupCheck extends LitElement {
             ${verification ? html`<p>${verification}</p>` : nothing}
             ${this._details(provider)}</li>`;
         })}
-      </ul>` : nothing);
+      </ul>`);
   }
 
   private _battery(data: SetupCheckResponse["battery"]): TemplateResult {

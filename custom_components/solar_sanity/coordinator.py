@@ -38,7 +38,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
 
-from ._forecast_plan import forecast_is_fresh
+from ._forecast_plan import (
+    FORECAST_SOURCE_REASONS,
+    ForecastHorizon,
+    ForecastSelection,
+    forecast_is_fresh,
+)
 from ._local_time import local_day
 from .analysis.forecast import Correction, RoofForecast, corrected_hours, correction, roof_forecast
 from .analysis.model import Bucket, BucketSource, ChannelSpec, Quality, Role
@@ -54,6 +59,7 @@ from .const import (
     FORECAST_MAX_AGE,
     OPT_BATTERY_POWER,
     OPT_BATTERY_POWER_CHARGING_POSITIVE,
+    OPT_PREFERRED_FORECAST_PROVIDER,
     POWER_GAP_TOLERANCE_SECONDS,
     SCORING_INTERVAL,
     STORAGE_KEY_STATE,
@@ -186,6 +192,8 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         #: When ``forecast_points`` was last refreshed, so a provider that has
         #: stopped is not projected from forever.
         self.forecast_captured_at: datetime | None = None
+        self._forecast_captures: dict[str, datetime] = {}
+        self._latest_forecast_batch: frozenset[str] | None = None
         #: Entity ids the recorder holds no statistics for. Their sensors
         #: carry no state_class, so no history exists to backfill from.
         self.unrecorded_entities: tuple[str, ...] = ()
@@ -707,7 +715,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             self.journal.health.setdefault(entry_id, {}).update(
                 attempted_at=attempted, reason_code="capture_unavailable"
             )
-        forecasts = await async_get_solar_forecasts(self.hass, entry_ids)
+        captured: dict[str, datetime] = {}
+        forecasts = await async_get_solar_forecasts(self.hass, entry_ids, captured_at=captured)
+        captured_at = dt_util.utcnow()
         written = 0
         tomorrow_kwh: float | None = None
         tomorrow_provider: str | None = None
@@ -721,22 +731,33 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 continue
             # The same hour-aligned figures the archive is written from, so the
             # outlook and the archive cannot disagree about what was forecast.
-            points[entry_id] = dict(normalise_wh_hours(wh_hours))
+            try:
+                points[entry_id] = dict(normalise_wh_hours(wh_hours))
+            except (TypeError, ValueError, OverflowError):
+                continue
             if not points[entry_id] or not all(
                 math.isfinite(value) and value >= 0 for value in points[entry_id].values()
             ):
                 del points[entry_id]
                 continue
             submitted: dict[str, list[tuple[datetime, float]]] = {}
-            if self._owns_archive(entry_id) and await async_record_forecast(
-                self.hass,
+            try:
+                if self._owns_archive(entry_id) and await async_record_forecast(
+                    self.hass,
+                    entry_id,
+                    await self._provider_name(provider),
+                    wh_hours,
+                    submitted=submitted,
+                ):
+                    written += 1
+            except Exception:
+                _LOGGER.warning("Could not submit forecast archive data", exc_info=True)
+            await self.journal.captured(
                 entry_id,
-                await self._provider_name(provider),
-                wh_hours,
-                submitted=submitted,
-            ):
-                written += 1
-            await self.journal.captured(entry_id, points[entry_id], submitted)
+                points[entry_id],
+                submitted,
+                captured_at=captured.get(entry_id, captured_at),
+            )
 
             # Surface the first provider's figure. Once accuracy scoring exists
             # this should prefer whichever provider has been most accurate here.
@@ -747,11 +768,99 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
 
         self._expected_tomorrow_kwh = tomorrow_kwh
         self._expected_tomorrow_provider = tomorrow_provider
+        self._latest_forecast_batch = frozenset(points)
         if points:
             self.forecast_points = points
-            self.forecast_captured_at = dt_util.utcnow()
+            self.forecast_captured_at = captured_at
+            self._forecast_captures = {
+                provider: captured.get(provider, captured_at) for provider in points
+            }
         await self.journal.async_save()
         return written
+
+    @property
+    def preferred_forecast_provider(self) -> str | None:
+        preferred = self.entry.options.get(OPT_PREFERRED_FORECAST_PROVIDER)
+        return (
+            preferred if preferred in (self.entry.data.get(CONF_FORECAST_ENTRIES) or ()) else None
+        )
+
+    def forecast_capture_time(self, provider: str) -> datetime | None:
+        if self._latest_forecast_batch is None:
+            return self.forecast_captured_at
+        return self._forecast_captures.get(provider)
+
+    def _explicit_forecast_failure(
+        self, provider: str, horizon: ForecastHorizon, now: datetime
+    ) -> str | None:
+        entry = self.hass.config_entries.async_get_entry(provider)
+        if (
+            entry is None
+            or entry.disabled_by is not None
+            or entry.state is not ConfigEntryState.LOADED
+        ):
+            return "provider_unavailable"
+        if self._latest_forecast_batch is None:
+            return "waiting_for_capture"
+        if provider not in self._latest_forecast_batch:
+            return "capture_unavailable"
+        if not forecast_is_fresh(self.forecast_capture_time(provider), now, FORECAST_MAX_AGE):
+            return "forecast_stale"
+        points = self.forecast_points[provider]
+        if horizon == "battery":
+            covered = max(points) >= now.replace(minute=0, second=0, microsecond=0)
+        else:
+            zone = self._time_zone()
+            day = (now.astimezone(zone) if zone else now).date() + timedelta(
+                days=int(horizon == "tomorrow")
+            )
+            covered = any(
+                (when.astimezone(zone) if zone else when).date() == day for when in points
+            )
+        return None if covered else "forecast_horizon_missing"
+
+    def select_forecast(self, horizon: ForecastHorizon, now: datetime) -> ForecastSelection:
+        """Select the source for one output from the latest completed capture."""
+        providers = self.entry.data.get(CONF_FORECAST_ENTRIES) or ()
+        preferred = self.preferred_forecast_provider
+        if preferred is not None:
+            reason = self._explicit_forecast_failure(preferred, horizon, now)
+            if reason is None:
+                return ForecastSelection(preferred, self.forecast_capture_time(preferred))
+            for provider in providers:
+                if (
+                    provider != preferred
+                    and self._explicit_forecast_failure(provider, horizon, now) is None
+                ):
+                    return ForecastSelection(provider, self.forecast_capture_time(provider), reason)
+            return ForecastSelection(reason_code=reason)
+
+        # Auto follows the existing battery order, and keeps the capture's
+        # tomorrow source first for today's corrected figures.
+        tomorrow = self._expected_tomorrow_provider
+        if horizon == "tomorrow":
+            candidates = (tomorrow,) if tomorrow is not None else ()
+        elif horizon == "today" and tomorrow is not None:
+            candidates = (tomorrow, *providers)
+        else:
+            candidates = providers
+        reason = "waiting_for_capture" if providers else "no_provider"
+        for provider in candidates:
+            points = self.forecast_points.get(provider)
+            if horizon != "tomorrow" and not points:
+                continue
+            captured = self.forecast_capture_time(provider)
+            if not forecast_is_fresh(captured, now, FORECAST_MAX_AGE):
+                if captured is not None:
+                    reason = "forecast_stale"
+                continue
+            if horizon == "battery" and max(points) < now.replace(
+                minute=0, second=0, microsecond=0
+            ):
+                reason = "forecast_horizon_missing"
+                continue
+            return ForecastSelection(provider, captured)
+        return ForecastSelection(reason_code=reason)
 
     async def _provider_name(self, provider: ConfigEntry) -> str:
         """The name to store on the archive's metadata.
@@ -1001,7 +1110,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
 
     # -- reporting ----------------------------------------------------------
 
-    def _tomorrow_correction(self) -> Correction | None:
+    def _tomorrow_correction(self, provider: str, now: datetime) -> Correction | None:
         """The correction for the provider tomorrow's figure came from.
 
         That provider and no other. This once took the first provider with a
@@ -1015,15 +1124,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         and multiplying tomorrow by it would launder that distinction into a
         number people plan around.
         """
-        provider = self._expected_tomorrow_provider
-        if provider is None:
-            return None
         # Tomorrow's factor, not the overall one: learned mostly from the days
         # whose forecast looked like tomorrow's, the same factor the outlook
         # projects tomorrow with.
-        return self._correction_for(
-            provider, self.battery.tomorrow_factor(provider, dt_util.utcnow())
-        )
+        return self._correction_for(provider, self.battery.tomorrow_factor(provider, now))
 
     def _correction_for(self, provider: str, factor: float | None) -> Correction | None:
         """The correction for one provider on one day, given that day's learned factor."""
@@ -1047,20 +1151,6 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             return scored.reason
         return "This provider has not been compared with the roof yet."
 
-    def _roof_provider(self) -> str | None:
-        """The provider whose figures for today are corrected.
-
-        The one tomorrow's figure came from when it has a forecast in hand, so
-        the corrected sensors describe one provider; else the first that has.
-        """
-        provider = self._expected_tomorrow_provider
-        if provider is not None and self.forecast_points.get(provider):
-            return provider
-        for entry_id in self.entry.data.get(CONF_FORECAST_ENTRIES) or []:
-            if self.forecast_points.get(entry_id):
-                return entry_id
-        return None
-
     def roof_forecast(self) -> RoofForecast | None:
         """The provider's figures for now and today, corrected for this roof.
 
@@ -1070,12 +1160,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         beside them. ``None`` until there is a correction, because without one
         the figure is the provider's own sensor.
         """
-        if not forecast_is_fresh(self.forecast_captured_at, dt_util.utcnow(), FORECAST_MAX_AGE):
-            return None
-        provider = self._roof_provider()
+        now = dt_util.utcnow()
+        provider = self.select_forecast("today", now).provider_id
         if provider is None:
             return None
-        now = dt_util.utcnow()
         tz = self._time_zone()
 
         def day_of(when: datetime) -> date:
@@ -1108,17 +1196,16 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
     @property
     def roof_forecast_attrs(self) -> dict[str, Any]:
         """Which provider today's corrected figures come from, and by what."""
-        provider = self._roof_provider()
-        if provider is None:
-            return {"reason": "No forecast has been captured yet."}
-        entry = self.hass.config_entries.async_get_entry(provider)
-        attrs: dict[str, Any] = {"provider": entry.title if entry is not None else provider}
-        if not forecast_is_fresh(self.forecast_captured_at, dt_util.utcnow(), FORECAST_MAX_AGE):
-            return {
-                **attrs,
-                "reason": "The solar forecast has not been refreshed within three hours.",
-            }
         now = dt_util.utcnow()
+        selected = self.select_forecast("today", now)
+        provider = selected.provider_id
+        if provider is None:
+            return {"reason": FORECAST_SOURCE_REASONS.get(selected.reason_code)}
+        entry = self.hass.config_entries.async_get_entry(provider)
+        attrs: dict[str, Any] = {
+            "provider": entry.title if entry is not None else provider,
+            "forecast_statistic_id": forecast_statistic_id(provider),
+        }
         tz = self._time_zone()
         today = now.astimezone(tz).date() if tz is not None else now.date()
         found = self._correction_for(provider, self.battery.day_factors(provider, now).get(today))
@@ -1143,10 +1230,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         day, so the scored bias was never stated, while the battery outlook had
         learned 0.52 from the same archive within three days.
         """
-        if not forecast_is_fresh(self.forecast_captured_at, dt_util.utcnow(), FORECAST_MAX_AGE):
+        now = dt_util.utcnow()
+        provider = self.select_forecast("tomorrow", now).provider_id
+        if provider is None:
             return None
-        base = self.expected_tomorrow_kwh
-        found = self._tomorrow_correction()
+        base = self._tomorrow_total(provider, now)
+        found = self._tomorrow_correction(provider, now)
         if base is None or found is None:
             return None
         return found.apply(base)
@@ -1159,20 +1248,17 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         figure corrects: the forecast card matches its own panels on it, so it
         can show the correction under the right provider.
         """
-        provider = self._expected_tomorrow_provider
+        now = dt_util.utcnow()
+        selected = self.select_forecast("tomorrow", now)
+        provider = selected.provider_id
         if provider is None:
-            return {"reason": "No forecast for tomorrow has been captured yet."}
+            return {"reason": FORECAST_SOURCE_REASONS.get(selected.reason_code)}
         entry = self.hass.config_entries.async_get_entry(provider)
         attrs: dict[str, Any] = {
             "provider": entry.title if entry is not None else provider,
             "forecast_statistic_id": forecast_statistic_id(provider),
         }
-        if not forecast_is_fresh(self.forecast_captured_at, dt_util.utcnow(), FORECAST_MAX_AGE):
-            return {
-                **attrs,
-                "reason": "The solar forecast has not been refreshed within three hours.",
-            }
-        found = self._tomorrow_correction()
+        found = self._tomorrow_correction(provider, now)
         if found is not None:
             attrs.update(
                 factor=round(found.factor, 2),
@@ -1182,9 +1268,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             )
             zone = self._time_zone()
             tomorrow = (
-                dt_util.utcnow().astimezone(zone).date() + timedelta(days=1)
+                now.astimezone(zone).date() + timedelta(days=1)
                 if zone
-                else dt_util.utcnow().date() + timedelta(days=1)
+                else now.date() + timedelta(days=1)
             )
             hours = corrected_hours(
                 self.forecast_points.get(provider, {}),
@@ -1201,7 +1287,23 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
     @property
     def expected_tomorrow_kwh(self) -> float | None:
         """Tomorrow's forecast total, or ``None`` when no provider is configured."""
-        return self._expected_tomorrow_kwh
+        if self.preferred_forecast_provider is None:
+            return self._expected_tomorrow_kwh
+        now = dt_util.utcnow()
+        provider = self.select_forecast("tomorrow", now).provider_id
+        return self._tomorrow_total(provider, now) if provider is not None else None
+
+    def _tomorrow_total(self, provider: str, now: datetime) -> float | None:
+        if self.preferred_forecast_provider is None:
+            return self._expected_tomorrow_kwh
+        zone = self._time_zone()
+        tomorrow = (now.astimezone(zone) if zone else now).date() + timedelta(days=1)
+        # Eligibility requires a point for this local day.
+        return sum(
+            value
+            for when, value in self.forecast_points[provider].items()
+            if (when.astimezone(zone) if zone else when).date() == tomorrow
+        )
 
     def window_snapshot(self) -> dict[str, Any]:
         """Every hour in the window, as numbers, so the outlook can be replayed.

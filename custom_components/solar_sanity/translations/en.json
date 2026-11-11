@@ -101,7 +101,8 @@
           "battery_power_charging_positive": "Battery power is positive while charging",
           "battery_charge_power_limit_w": "Battery charge power limit",
           "inverter_standby_w": "Inverter standby draw",
-          "load_profile_alternate_days": "Alternate schedule days"
+          "load_profile_alternate_days": "Alternate schedule days",
+          "preferred_forecast_provider": "Preferred forecast provider"
         },
         "data_description": {
           "battery_soc_entity": "Optional. Your battery's state of charge, as a percentage. With the capacity below, it is what the battery outlook projects from.",
@@ -112,7 +113,8 @@
           "battery_power_charging_positive": "Untick if that sensor reads positive while the battery discharges.",
           "battery_charge_power_limit_w": "Maximum power reaching the battery, in watts. Leave blank for Auto.",
           "inverter_standby_w": "Power the inverter draws beyond measured house load, in watts. Use zero when the house meter already includes it. Leave blank for Auto.",
-          "load_profile_alternate_days": "Optional experiment. Selected days form one consumption group; all remaining days form the other, in Home Assistant time. Leave empty to use one weekly schedule. No days are selected automatically. Comparison waits for the morning experiment decision and does not change production predictions."
+          "load_profile_alternate_days": "Optional experiment. Selected days form one consumption group; all remaining days form the other, in Home Assistant time. Leave empty to use one weekly schedule. No days are selected automatically. Comparison waits for the morning experiment decision and does not change production predictions.",
+          "preferred_forecast_provider": "Choose which provider to try first. Solar Sanity uses the next eligible provider when the preferred forecast cannot serve a result."
         }
       }
     },

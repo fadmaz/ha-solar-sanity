@@ -55,6 +55,7 @@ from .const import (
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
     OPT_LOAD_PROFILE_ALTERNATE_DAYS,
+    OPT_PREFERRED_FORECAST_PROVIDER,
 )
 from .discovery import Discovery, async_discover
 from .statistics_source import async_forecast_providers
@@ -490,13 +491,16 @@ class SolarSanityConfigFlow(ConfigFlow, domain=DOMAIN):
                     options.pop(key, None)
                 options.update(_battery_values(user_input))
 
+            topology = _topology_values(user_input)
+            if options.get(OPT_PREFERRED_FORECAST_PROVIDER) not in topology[CONF_FORECAST_ENTRIES]:
+                options.pop(OPT_PREFERRED_FORECAST_PROVIDER, None)
             return self.async_update_reload_and_abort(
                 entry,
                 data_updates={
                     CONF_CHANNELS: _channel_records(
                         self._channels, entry.data.get(CONF_CHANNELS, [])
                     ),
-                    **_topology_values(user_input),
+                    **topology,
                 },
                 options=options,
             )
@@ -549,7 +553,9 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
             options = dict(self.config_entry.options)
             for marker in fields:
                 name = marker.schema
-                if user_input.get(name) in (None, "", []):
+                if user_input.get(name) in (None, "", []) or (
+                    name == OPT_PREFERRED_FORECAST_PROVIDER and user_input[name] == "auto"
+                ):
                     options.pop(name, None)
                 else:
                     options[name] = manual.get(name, user_input[name])
@@ -566,6 +572,18 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
     def _fields(self) -> dict[Any, Any]:
         """The rows this form offers, which is also the set it may clear."""
         fields: dict[Any, Any] = {}
+        providers = self.config_entry.data.get(CONF_FORECAST_ENTRIES) or []
+        if providers:
+            choices = [selector.SelectOptionDict(value="auto", label="Auto")]
+            for index, provider in enumerate(providers, start=1):
+                entry = self.hass.config_entries.async_get_entry(provider)
+                title = entry.title if entry is not None else "Unavailable provider"
+                choices.append(selector.SelectOptionDict(value=provider, label=f"{index}. {title}"))
+            preferred = self.config_entry.options.get(OPT_PREFERRED_FORECAST_PROVIDER)
+            default = preferred if preferred in providers else "auto"
+            fields[vol.Optional(OPT_PREFERRED_FORECAST_PROVIDER, default=default)] = (
+                selector.SelectSelector(selector.SelectSelectorConfig(options=choices))
+            )
 
         # Optional, and the start of the battery outlook: everything it projects
         # begins from this reading. Filtered to battery-percentage sensors,

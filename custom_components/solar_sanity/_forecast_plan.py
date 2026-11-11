@@ -14,12 +14,30 @@ without a recorder — the same reason ``_match`` exists.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
-from typing import Any
+from typing import Any, Literal
 
 #: An hourly point: when it starts (UTC, on the hour) and its energy in kWh.
 type Point = tuple[datetime, float]
+type ForecastHorizon = Literal["battery", "today", "tomorrow"]
+
+FORECAST_SOURCE_REASONS = {
+    "provider_unavailable": "The forecast provider is unavailable.",
+    "capture_unavailable": "The latest forecast capture did not return usable data.",
+    "forecast_stale": "The solar forecast has not been refreshed within three hours.",
+    "forecast_horizon_missing": "The forecast does not cover this period.",
+    "waiting_for_capture": "Waiting for a valid forecast capture.",
+    "no_provider": "No solar forecast provider is selected.",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastSelection:
+    provider_id: str | None = None
+    captured_at: datetime | None = None
+    reason_code: str | None = None
 
 
 def forecast_is_fresh(captured: datetime | None, now: datetime, max_age: timedelta) -> bool:

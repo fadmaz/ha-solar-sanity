@@ -114,6 +114,9 @@ class OutlookJournal:
                 **manual_controls(entry.options),
             },
         }
+        preferred = self.coordinator.preferred_forecast_provider
+        if preferred is not None:
+            identity["preferred_forecast_provider"] = preferred
         return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
     async def async_restore(self) -> None:
@@ -193,10 +196,12 @@ class OutlookJournal:
         provider: str,
         points: dict[datetime, float],
         submitted: dict[str, list[tuple[datetime, float]]],
+        *,
+        captured_at: datetime | None = None,
     ) -> None:
         now = dt_util.utcnow().isoformat()
         health = self.health.setdefault(provider, {})
-        health.update(captured_at=now, reason_code=None)
+        health.update(captured_at=_iso(captured_at) or now, reason_code=None)
         previous = self._verification.get(provider)
         if previous is not None:
             previous.cancel()
@@ -372,6 +377,7 @@ class OutlookJournal:
         reason = "no_night" if end is None else None
         if kind == "morning" and not outlook.forecast_used:
             reason = "no_forecast"
+        source = state.forecast_source
         record = {
             "id": key,
             "checkpoint": kind,
@@ -386,7 +392,8 @@ class OutlookJournal:
             "soc_pct": state.soc_pct,
             "settings": dict(state.settings),
             "provider": state.provider,
-            "forecast_captured_at": _iso(self.coordinator.forecast_captured_at),
+            "forecast_provider_id": source.provider_id if source is not None else None,
+            "forecast_captured_at": _iso(source.captured_at) if source is not None else None,
             "published": {
                 "lowest_pct": round(outlook.lowest_pct, 1)
                 if outlook.lowest_pct is not None
@@ -456,7 +463,9 @@ class OutlookJournal:
                     candidate["result"] = {"status": "excluded", "reason_code": "no_night"}
             record["load_shadow"] = candidate
         if kind == "evening":
-            record["interval"] = issue_interval(self.records, record)
+            group = self._forecast_group(record, record["context"])
+            candidates = self._records_for_forecast(group, record["context"]) if group else []
+            record["interval"] = issue_interval(candidates, record)
         return record
 
     async def _grade_pending(self, now: datetime) -> bool:
@@ -612,12 +621,66 @@ class OutlookJournal:
             if now >= day_end + timedelta(days=1):
                 result["late_soc_status"] = "unavailable"
 
+    def _forecast_group(self, record: dict, context: str) -> str | None:
+        forecast_used = (record.get("projection") or {}).get("forecast_used")
+        if forecast_used is False:
+            return "history"
+        provider = record.get("forecast_provider_id")
+        if isinstance(provider, str) and provider:
+            return f"provider:{provider}"
+        # The original context included the ordered provider list. Only the
+        # single-provider case proves which provider made a legacy issue.
+        providers = self.coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or ()
+        if forecast_used is True and record.get("context") == context and len(providers) == 1:
+            return f"provider:{providers[0]}"
+        return None
+
+    def _records_for_forecast(
+        self, group: str | None, context: str, *, include_missed: bool = False
+    ) -> list[dict]:
+        return [
+            row
+            for row in self.records
+            if row.get("context") == context
+            and (
+                (include_missed and row["result"]["status"] == "missed")
+                or self._forecast_group(row, context) == group
+            )
+        ]
+
+    def active_forecast_records(self, *, include_missed: bool = False) -> list[dict]:
+        """Use the published source's samples, or the latest issue during startup."""
+        context = self.context()
+        state = self.coordinator.battery.state
+        if state.outlook is not None:
+            group = self._forecast_group(
+                {
+                    "context": context,
+                    "projection": {"forecast_used": state.outlook.forecast_used},
+                    "forecast_provider_id": state.forecast_source.provider_id
+                    if state.forecast_source is not None
+                    else None,
+                },
+                context,
+            )
+        else:
+            latest = next(
+                (
+                    row
+                    for row in reversed(self.records)
+                    if row.get("context") == context and row.get("projection")
+                ),
+                {},
+            )
+            group = self._forecast_group(latest, context)
+        return self._records_for_forecast(group, context, include_missed=include_missed)
+
     def summary(self, days: int = 28, now: datetime | None = None) -> dict[str, Any]:
         now = now or dt_util.utcnow()
         zone = self.coordinator.time_zone or UTC
         today = now.astimezone(zone).date()
         since = datetime.combine(today - timedelta(days=days - 1), time(), tzinfo=zone)
-        return summarize(self.records, self.context(), since)
+        return summarize(self.active_forecast_records(include_missed=True), self.context(), since)
 
     def interval(self, now: datetime | None = None) -> dict[str, Any]:
         selected = [
@@ -631,7 +694,7 @@ class OutlookJournal:
         return interval_view(latest, now or dt_util.utcnow())
 
     def experiment(self) -> dict[str, Any]:
-        return shape_gate(self.records, self.context())
+        return shape_gate(self.active_forecast_records(), self.context())
 
     def status(self) -> tuple[str, str | None]:
         if self.error:
