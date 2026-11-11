@@ -192,6 +192,7 @@ async def test_reserve_uses_unsettled_crossing_and_valid_projection(
     assert coordinator.automation.reserve(now).is_on is False
     state.outlook.forecast_used = True
     assert coordinator.automation.reserve(now).is_on is None
+    state.outlook = None
     state.soc_pct = 20
     coordinator.async_update_listeners()
     risk = hass.states.get(_binary(hass, entry, "reserve_risk"))

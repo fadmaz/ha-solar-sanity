@@ -53,7 +53,7 @@ actions:
         sequence:
           - action: notify.send_message
             target:
-              entity_id: !input notify_entity
+              entity_id: "{{ destination }}"
             data:
               message: "{{ message }}"
       - conditions: "{{ mobile_action is match('^notify[.]mobile_app_[a-z0-9_]+$') }}"
