@@ -24,10 +24,19 @@ export interface LoadTiming {
 
 export interface LoadPlanResponse {
   basis: ProjectionBasis;
+  solar_corrected?: boolean;
   recommendation: LoadTiming | null;
   run_now: LoadTiming | null;
   reason_code: "window_too_short" | "beyond_horizon" | "baseline_reaches_reserve" |
     "all_times_reach_reserve" | null;
+}
+
+export interface LoadPlanRequest {
+  device_id: string;
+  power_w: number;
+  duration_minutes: number;
+  finish_by: string;
+  earliest_start?: string;
 }
 
 /** All instants matching a local minute: zero in a gap, two in a repeated hour. */

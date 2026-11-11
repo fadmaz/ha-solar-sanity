@@ -809,6 +809,27 @@ run-now comparison if it fits, the projection basis and a reason when no
 recommendation is available. The card calculates on request and marks a
 displayed plan outdated when its projection changes.
 
+### Load reminders (0.50.0)
+
+`reminders.py` owns one active manual-run notification per battery entry. The
+response-only schedule, read and cancel actions require an active administrator
+and the usual installation read access. The card sends the planner's projection
+ID and scenario and polls only while What if is visible. Destinations are
+`notify` entities or Companion App notification actions.
+
+The reminder reuses the planner's frozen inputs and UTC elapsed duration.
+Projection publication and a one-shot UTC timer wake the reminder. The
+scheduled-time check requires a valid corrected provider outlook and a complete
+run above reserve over the full projection. A missing forecast or unsuitable
+run can wait for a new outlook until the finish deadline minus the run duration.
+Expiry has no notification.
+
+A separate versioned private Store per entry retains the most recent reminder
+and its status. The runner serializes changes and verifies its attempt marker
+on disk before sending. It checks the current outlook, deadline, user and
+destination again after the write. An interrupted attempt restores as
+`delivery_unconfirmed`. The runner never retries a notification call.
+
 ### Input changes (0.42.0)
 
 `analysis/changes.py` retains only two valid input snapshots in memory. Their

@@ -68,6 +68,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .journal import OutlookJournal
+from .reminders import LoadReminders
 from .statistics_source import (
     async_forecast_series,
     async_get_solar_forecasts,
@@ -217,6 +218,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         self.battery = BatteryOutlook(hass, self)
         self.automation = AutomationSignals(self)
         self.journal = OutlookJournal(self)
+        self.reminders = LoadReminders(self)
 
     # -- configuration ------------------------------------------------------
 
@@ -559,6 +561,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         """
         self.automation.async_refresh(dt_util.utcnow())
         self.async_update_listeners()
+        self.reminders.async_wake()
 
     def _counter_went_quiet(self, key: str, closing: datetime) -> bool:
         """Whether a cumulative counter had stopped reporting by the hour's end.

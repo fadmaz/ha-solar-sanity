@@ -30,6 +30,8 @@ export interface HomeAssistant {
   states: Record<string, HassEntity>;
   /** Optional here only so fixtures that predate it stay valid. */
   entities?: Record<string, HassEntityRegistryEntry>;
+  user?: { is_admin: boolean };
+  services?: Record<string, Record<string, unknown>>;
   config: { state: string; time_zone?: string };
   themes: { darkMode: boolean };
   language: string;

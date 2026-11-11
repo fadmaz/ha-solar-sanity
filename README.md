@@ -249,6 +249,23 @@ then an earlier start. Use the suggested time to run the appliance manually.
 Calculate again when the outlook changes. The same read-only calculation is
 available as `solar_sanity.find_best_time`.
 
+Home Assistant administrators can choose **Remind me** under a current
+recommendation based on corrected solar. Select a notification destination for
+this run. Solar Sanity saves one active reminder per installation, follows new
+outlooks, and shows the scheduled start or why it is waiting in **What if**.
+**Cancel reminder** is available while the reminder is active.
+
+At the scheduled time, Solar Sanity simulates starting now using the latest
+valid corrected solar forecast. It sends a prompt to run the load manually if
+the complete run fits by the deadline and the battery stays above reserve
+through the end of the outlook. If no suitable start remains before the latest
+start, **Expired** appears in the card. An interrupted notification attempt
+appears as **Delivery unconfirmed** and is never retried.
+
+Use a Home Assistant `notify` entity or a Companion App `notify.mobile_app_*`
+action. The administrator actions are `solar_sanity.schedule_load_reminder`,
+`solar_sanity.get_load_reminder` and `solar_sanity.cancel_load_reminder`.
+
 Expand **Preview battery settings** in What if to compare the current power
 settings with proposed ones. Both columns use the same starting charge, solar
 forecast and consumption. The times are calculated from the issue shown above
