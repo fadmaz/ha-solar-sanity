@@ -1,6 +1,7 @@
 """Read-only tools over the loaded installation's private in-memory data."""
 
 import math
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import voluptuous as vol
@@ -15,9 +16,16 @@ from homeassistant.util import dt as dt_util
 
 from ._forecast_plan import forecast_is_fresh
 from .analysis.history import history_rows
-from .analysis.outlook import BatterySettings, Step
+from .analysis.outlook import BatterySettings, Outlook, Step, project
 from .analysis.scenarios import compare_load
-from .const import DOMAIN, FORECAST_MAX_AGE
+from .battery_controls import control_view, power_override
+from .battery_outlook import OutlookState
+from .const import (
+    DOMAIN,
+    FORECAST_MAX_AGE,
+    OPT_BATTERY_CHARGE_POWER_LIMIT_W,
+    OPT_INVERTER_STANDBY_W,
+)
 from .journal import MODEL_REVISION
 from .setup_check import setup_check
 
@@ -53,6 +61,60 @@ def _projection_view(outlook, uncovered_wh):
         "reserve_at": outlook.reserve_at.isoformat() if outlook.reserve_at else None,
         "uncovered_energy_kwh": uncovered_wh / 1000,
         "trajectory": [{"at": t.isoformat(), "soc": value} for t, value in outlook.trajectory],
+    }
+
+
+def _current_projection(coordinator, now: datetime) -> OutlookState:
+    state = coordinator.battery.state
+    # Two missed five-minute recomputations cannot be called a current basis.
+    if (
+        state.outlook is None
+        or state.reason
+        or state.computed_at is None
+        or not state.projection_id
+        or state.soc_pct is None
+        or state.computed_at > now
+        or now - state.computed_at > timedelta(minutes=10)
+    ):
+        raise ServiceValidationError("No current valid battery projection is available.")
+    if state.outlook.forecast_used and not forecast_is_fresh(
+        coordinator.forecast_captured_at, now, FORECAST_MAX_AGE
+    ):
+        raise ServiceValidationError(
+            "The solar forecast has not been refreshed within three hours."
+        )
+    return state
+
+
+def _frozen_inputs(state: OutlookState) -> tuple[BatterySettings, tuple[Step, ...]]:
+    steps = tuple(
+        Step(
+            datetime.fromisoformat(row["start"]),
+            row["hours"],
+            row["pv_wh"],
+            row["load_wh"],
+            row["daylight_wh"],
+        )
+        for row in state.inputs["steps"]
+    )
+    return BatterySettings(**state.inputs["battery"]), steps
+
+
+def _preview_power(value: object, *, positive: bool) -> float | None:
+    if value is None:
+        return None
+    try:
+        return power_override(value, positive=positive)
+    except ValueError as error:
+        raise vol.Invalid(str(error)) from error
+
+
+def _preview_result(outlook: Outlook) -> dict:
+    return {
+        "lowest_pct": outlook.lowest_pct,
+        "reserve_at": outlook.reserve_at.isoformat() if outlook.reserve_at else None,
+        "full_at": outlook.full_at.isoformat() if outlook.full_at else None,
+        "takeover_at": outlook.takeover_at.isoformat() if outlook.takeover_at else None,
     }
 
 
@@ -103,6 +165,62 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
+    async def preview_battery_settings(call: ServiceCall):
+        coordinator = await coordinator_for(hass, call)
+        state = _current_projection(coordinator, dt_util.utcnow())
+        if call.data["projection_id"] != state.projection_id:
+            raise ServiceValidationError("The projection has changed. Preview the latest outlook.")
+        if state.controls is None:
+            raise ServiceValidationError("Battery settings are unavailable for this projection.")
+        requested = call.data
+        proposed = replace(
+            state.controls,
+            manual_limit_w=requested[OPT_BATTERY_CHARGE_POWER_LIMIT_W],
+            manual_standby_w=requested[OPT_INVERTER_STANDBY_W],
+        )
+        try:
+            settings, steps = _frozen_inputs(state)
+            current = project(
+                state.soc_pct, settings, steps, forecast_used=state.outlook.forecast_used
+            )
+            preview = project(
+                state.soc_pct,
+                proposed.apply(settings),
+                steps,
+                forecast_used=state.outlook.forecast_used,
+            )
+        except (ValueError, KeyError, TypeError, OverflowError) as error:
+            raise ServiceValidationError("Could not preview these battery settings.") from error
+        return {
+            "basis": {
+                "projection_id": state.projection_id,
+                "computed_at": state.computed_at.isoformat(),
+                "time_zone": hass.config.time_zone,
+                "forecast_used": state.outlook.forecast_used,
+            },
+            "current": {**_preview_result(current), "controls": control_view(state.controls)},
+            "proposed": {**_preview_result(preview), "controls": control_view(proposed)},
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        "preview_battery_settings",
+        preview_battery_settings,
+        schema=vol.Schema(
+            {
+                vol.Required("device_id"): cv.string,
+                vol.Required("projection_id"): cv.string,
+                vol.Optional(OPT_BATTERY_CHARGE_POWER_LIMIT_W, default=None): (
+                    lambda value: _preview_power(value, positive=True)
+                ),
+                vol.Optional(OPT_INVERTER_STANDBY_W, default=None): (
+                    lambda value: _preview_power(value, positive=False)
+                ),
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+
     async def get_history(call: ServiceCall):
         coordinator = await coordinator_for(hass, call)
         journal = coordinator.journal
@@ -134,37 +252,10 @@ def async_setup_tools(hass: HomeAssistant) -> None:
 
     async def simulate_load(call: ServiceCall):
         coordinator = await coordinator_for(hass, call)
-        state = coordinator.battery.state
         now = dt_util.utcnow()
-        # Two missed five-minute recomputations cannot be called a current basis.
-        if (
-            state.outlook is None
-            or state.reason
-            or state.computed_at is None
-            or not state.projection_id
-            or state.soc_pct is None
-            or state.computed_at > now
-            or now - state.computed_at > timedelta(minutes=10)
-        ):
-            raise ServiceValidationError("No current valid battery projection is available.")
-        if state.outlook.forecast_used and not forecast_is_fresh(
-            coordinator.forecast_captured_at, now, FORECAST_MAX_AGE
-        ):
-            raise ServiceValidationError(
-                "The solar forecast has not been refreshed within three hours."
-            )
+        state = _current_projection(coordinator, now)
         try:
-            steps = tuple(
-                Step(
-                    datetime.fromisoformat(row["start"]),
-                    row["hours"],
-                    row["pv_wh"],
-                    row["load_wh"],
-                    row["daylight_wh"],
-                )
-                for row in state.inputs["steps"]
-            )
-            settings = BatterySettings(**state.inputs["battery"])
+            settings, steps = _frozen_inputs(state)
             comparison = compare_load(
                 state.soc_pct,
                 settings,

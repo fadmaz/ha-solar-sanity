@@ -34,6 +34,9 @@ OPT_BATTERY_RESERVE_PCT: Final = "battery_reserve_pct"
 #: inverter is set to stop early. Charging stops here in the projection and
 #: anything beyond it counts as spare.
 OPT_BATTERY_TARGET_PCT: Final = "battery_target_pct"
+# Optional projection inputs in W. Absence selects the learned value.
+OPT_BATTERY_CHARGE_POWER_LIMIT_W: Final = "battery_charge_power_limit_w"
+OPT_INVERTER_STANDBY_W: Final = "inverter_standby_w"
 #: The battery's own power sensor, in W or kW, signed. Optional and shown only:
 #: the battery card draws the flow from it. Nothing is computed from it, because
 #: the projection already has the battery's energy from the mapped channels. It

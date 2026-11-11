@@ -4,6 +4,8 @@ import { customElement, property, state } from "lit/decorators.js";
 import { findInstallations, hasBatterySetup } from "./battery-model";
 import { safeTimeZone } from "./forecast-data";
 import { changesPanel } from "./changes";
+import type { BatteryControls } from "./battery-controls";
+import "./battery-settings-preview";
 import "./setup-check";
 import "./simulation-panel";
 import type { GridOptions, HomeAssistant, LovelaceCardConfig } from "./types/hass";
@@ -213,7 +215,12 @@ export class SolarSanityToolsCard extends LitElement {
           @click=${() => {this._tab = value;}} @keydown=${(e: KeyboardEvent) => this._onTabKey(e, tabs.map(tab => tab.value), selected)}>${label}</button>`)}</div>
         ${withOutlook ? html`
           <div role="tabpanel" id="panel-history" aria-labelledby="tab-history" ?hidden=${selected !== "history"}>${this._historyPanel()}</div>
-          <div role="tabpanel" id="panel-what_if" aria-labelledby="tab-what_if" ?hidden=${selected !== "what_if"}><solar-sanity-simulation .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""} .projectionId=${projectionId} .active=${selected === "what_if"}></solar-sanity-simulation></div>
+          <div role="tabpanel" id="panel-what_if" aria-labelledby="tab-what_if" ?hidden=${selected !== "what_if"}>
+            <solar-sanity-simulation .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""} .projectionId=${projectionId} .active=${selected === "what_if"}></solar-sanity-simulation>
+            <solar-sanity-battery-settings-preview .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""}
+              .projectionId=${projectionId} .controls=${attrs?.projection_controls as BatteryControls | undefined}
+              .active=${selected === "what_if"}></solar-sanity-battery-settings-preview>
+          </div>
           <div role="tabpanel" id="panel-changes" tabindex="0" aria-labelledby="tab-changes" ?hidden=${selected !== "changes"}>${changesPanel(attrs?.outlook_changes, this.hass?.config.time_zone)}</div>` : nothing}
         <div role="tabpanel" id="panel-setup" aria-labelledby="tab-setup" ?hidden=${selected !== "setup"}>
           <solar-sanity-setup-check .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""} .active=${selected === "setup"}></solar-sanity-setup-check>

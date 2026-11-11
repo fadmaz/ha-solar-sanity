@@ -2,6 +2,17 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.46.0] - 2026-11-11
+
+### Added
+
+- Set a battery-side charge power limit or inverter standby draw in Configure.
+  Leave either field blank to learn it from measurements. Setup shows each
+  applied value and its source.
+- Preview battery settings in What if. The comparison uses one published
+  projection to show the effect on charge, reserve, fill and solar takeover
+  before saving.
+
 ## [0.45.0] - 2026-11-11
 
 ### Added

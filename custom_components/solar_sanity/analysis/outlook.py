@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 #: How far ahead to project when the forecast allows it. Far enough to reach
@@ -117,6 +117,30 @@ class BatterySettings:
     #: The inverter's own draw in W, on top of the house load at every hour.
     #: Learned (see ``profile.standby_w``); zero until it is.
     standby_w: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class BatteryControls:
+    """Learned and manual values from one projection, on the battery's power basis."""
+
+    learned_limit_w: float | None = None
+    learned_standby_w: float | None = None
+    manual_limit_w: float | None = None
+    manual_standby_w: float | None = None
+
+    @property
+    def limit_w(self) -> float | None:
+        return self.learned_limit_w if self.manual_limit_w is None else self.manual_limit_w
+
+    @property
+    def standby_w(self) -> float | None:
+        return self.learned_standby_w if self.manual_standby_w is None else self.manual_standby_w
+
+    def apply(self, battery: BatterySettings) -> BatterySettings:
+        standby = self.standby_w
+        return replace(
+            battery, max_charge_w=self.limit_w, standby_w=0.0 if standby is None else standby
+        )
 
 
 @dataclass(frozen=True, slots=True)

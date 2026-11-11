@@ -34,6 +34,7 @@ from .analysis.forecast import corrected_hours
 from .analysis.load_schedule import group_steps, learn_groups
 from .analysis.model import Role
 from .analysis.outlook import (
+    BatteryControls,
     BatterySettings,
     Outlook,
     Step,
@@ -53,15 +54,18 @@ from .analysis.profile import (
     max_charge_w,
     standby_w,
 )
+from .battery_controls import manual_controls
 from .const import (
     CONF_FORECAST_ENTRIES,
     DEFAULT_RESERVE_PCT,
     DEFAULT_TARGET_PCT,
     FORECAST_MAX_AGE,
     OPT_BATTERY_CAPACITY_KWH,
+    OPT_BATTERY_CHARGE_POWER_LIMIT_W,
     OPT_BATTERY_RESERVE_PCT,
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
+    OPT_INVERTER_STANDBY_W,
 )
 from .statistics_source import async_forecast_series, async_hourly_soc, dayahead_statistic_id
 
@@ -128,6 +132,7 @@ class OutlookState:
     grid_charged_hours: int | None = None
     max_charge_w: float | None = None
     standby_w: float | None = None
+    controls: BatteryControls | None = None
     scale: ForecastScale | None = None
     #: The factor the forecast was multiplied by today and tomorrow, each
     #: learned mostly from days forecast like it (``ForecastScale.for_day``).
@@ -269,6 +274,17 @@ class BatteryOutlook:
     @property
     def configured(self) -> bool:
         return self.settings is not None
+
+    def power_controls(
+        self, learned_limit_w: float | None = None, learned_standby_w: float | None = None
+    ) -> BatteryControls:
+        manual = manual_controls(self.coordinator.entry.options)
+        return BatteryControls(
+            learned_limit_w=learned_limit_w,
+            learned_standby_w=learned_standby_w,
+            manual_limit_w=manual.get(OPT_BATTERY_CHARGE_POWER_LIMIT_W),
+            manual_standby_w=manual.get(OPT_INVERTER_STANDBY_W),
+        )
 
     def scale_for(self, provider_entry_id: str) -> ForecastScale | None:
         """The learned scale for one provider, or ``None`` before there is one.
@@ -517,13 +533,8 @@ class BatteryOutlook:
             discharge_efficiency=settings.discharge_efficiency,
             until=now,
         )
-        settings = BatterySettings(
-            capacity_wh=settings.capacity_wh,
-            reserve_pct=settings.reserve_pct,
-            target_pct=settings.target_pct,
-            max_charge_w=ceiling,
-            standby_w=0.0 if standby is None else standby,
-        )
+        controls = self.power_controls(ceiling, standby)
+        settings = controls.apply(settings)
         base = OutlookState(
             projection_id=hashlib.sha256(
                 f"{coordinator.journal.context()}:{now.isoformat()}".encode()
@@ -537,8 +548,9 @@ class BatteryOutlook:
                 charge=Role.BATTERY_CHARGE.key,
                 until=now,
             ),
-            max_charge_w=ceiling,
-            standby_w=standby,
+            max_charge_w=controls.limit_w,
+            standby_w=controls.standby_w,
+            controls=controls,
             load_profile=load.wh,
             pv_profile=pv.wh,
             settings={

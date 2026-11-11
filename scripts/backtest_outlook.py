@@ -43,7 +43,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "custom_components" / "solar_sanity")]
 from analysis.daylight_shape import learn_shape  # noqa: E402
 from analysis.model import Bucket  # noqa: E402
 from analysis.observations import SocSeries, grid_charged, soc_from_diagnostics  # noqa: E402
-from analysis.outlook import BatterySettings, build_steps, project  # noqa: E402
+from analysis.outlook import BatteryControls, BatterySettings, build_steps, project  # noqa: E402
 from analysis.profile import (  # noqa: E402
     PROFILE_DAYS,
     forecast_scale,
@@ -205,13 +205,10 @@ def learned(buckets: Sequence[Bucket], battery: BatterySettings, now: datetime) 
             discharge_efficiency=battery.discharge_efficiency,
             until=now,
         )
-    return BatterySettings(
-        capacity_wh=battery.capacity_wh,
-        reserve_pct=battery.reserve_pct,
-        target_pct=battery.target_pct,
-        max_charge_w=max_charge_w(buckets, "battery_charge", until=now),
-        standby_w=0.0 if standby is None else standby,
-    )
+    return BatteryControls(
+        learned_limit_w=max_charge_w(buckets, "battery_charge", until=now),
+        learned_standby_w=standby,
+    ).apply(battery)
 
 
 def scaled(
