@@ -23,6 +23,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from ._forecast_plan import by_period_start, dayahead_write_plan, eligible, running_totals
+from .analysis.observations import (
+    SocSeries,
+    observation_hours,
+    recorded_extremes,
+    soc_from_diagnostics,
+)
 from .const import (
     DAYAHEAD_MIN_LEAD_HOURS,
     FORECAST_DAYAHEAD_PREFIX,
@@ -611,8 +617,8 @@ async def async_read_hourly_soc(
     what the battery actually did. Long-term statistics rather than states,
     because states are purged after about ten days and a replay wants a month.
 
-    An empty list on any failure: diagnostics must download even when the
-    recorder cannot answer.
+    An empty list is a successful read without rows. An unavailable recorder
+    or failed query returns None so the journal can retry it separately.
     """
     if not recorder_available(hass) or not entity_id:
         return None
@@ -664,11 +670,40 @@ async def async_hourly_soc(
     return [] if rows is None else rows
 
 
-async def async_observed_full_at(
-    hass: HomeAssistant, entity_id: str, start: datetime, end: datetime, level: float
-) -> datetime | None:
-    """A recorded crossing, never minutes inferred from an hourly maximum."""
-    if not recorder_available(hass):
+async def async_read_grading_soc(
+    hass: HomeAssistant, entity_id: str, start: datetime, end: datetime
+) -> SocSeries | None:
+    """Read closed hours and restrict their boundary extremes to the issue window."""
+    hours = observation_hours(start, end)
+    hour_length = timedelta(hours=1)
+    # Recorder filters by bucket start. Querying from 20:00:51 omits the
+    # entire 20:00 bucket, even though most of it is part of the observation.
+    rows = await async_read_hourly_soc(hass, entity_id, hours[0], hours[-1] + hour_length)
+    if rows is None:
+        return None
+    soc = soc_from_diagnostics(rows)
+    for hour in hours:
+        hour_end = hour + hour_length
+        if start <= hour and hour_end <= end:
+            continue
+        lower, upper = max(start, hour), min(end, hour_end)
+        states = await _async_read_soc_states(hass, entity_id, lower, upper, include_start=True)
+        if states is None:
+            return None
+        extremes = recorded_extremes(states, lower, upper)
+        if extremes is None:
+            soc.minima.pop(hour, None)
+            soc.maxima.pop(hour, None)
+        else:
+            soc.minima[hour], soc.maxima[hour] = extremes
+    return soc
+
+
+async def _async_read_soc_states(
+    hass: HomeAssistant, entity_id: str, start: datetime, end: datetime, *, include_start: bool
+) -> list[tuple[datetime, float | None]] | None:
+    """Read Recorder states, preserving unavailable periods for coverage checks."""
+    if not recorder_available(hass) or not entity_id:
         return None
     from homeassistant.components.recorder import get_instance
     from homeassistant.components.recorder.history import get_significant_states
@@ -679,6 +714,7 @@ async def async_observed_full_at(
             start,
             end,
             [entity_id],
+            include_start_time_state=include_start,
             significant_changes_only=False,
             minimal_response=False,
             no_attributes=True,
@@ -686,14 +722,29 @@ async def async_observed_full_at(
 
     try:
         rows = await get_instance(hass).async_add_executor_job(read)
-        for state in rows.get(entity_id, []):
-            try:
-                value = float(state.state)
-            except (TypeError, ValueError):
-                continue
-            when = state.last_updated
-            if start <= when <= end and level <= value <= 100:
-                return when
     except Exception:
         _LOGGER.debug("precise charge history unavailable", exc_info=True)
-    return None
+        return None
+    states = []
+    for state in rows.get(entity_id, []):
+        try:
+            value = float(state.state)
+        except (TypeError, ValueError):
+            value = None
+        states.append((state.last_updated, value))
+    return states
+
+
+async def async_observed_full_at(
+    hass: HomeAssistant, entity_id: str, start: datetime, end: datetime, level: float
+) -> datetime | None:
+    """A recorded crossing, never the synthetic state at the start of a query."""
+    states = await _async_read_soc_states(hass, entity_id, start, end, include_start=False)
+    return next(
+        (
+            when
+            for when, value in states or ()
+            if start <= when < end and value is not None and level <= value <= 100
+        ),
+        None,
+    )

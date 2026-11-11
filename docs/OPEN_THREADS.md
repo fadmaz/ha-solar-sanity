@@ -3,10 +3,17 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.43.0, 2026-11-10.
+Last updated at 0.43.1, 2026-11-11.
 
 ## Latest delivery and operational acceptance
 
+- The Nov 11 read-only check found a real evening issue still pending after its
+  window closed. Recorder returned ten of eleven required hours when queried
+  from the issue second, and all eleven when queried from the hour boundary.
+  The private observation confirms a 1.1-point error and a correct reserve
+  call. 0.43.1 aligns journal queries and restricts partial-hour extremes to
+  the issue window. Live grading and nonempty journal restore across the
+  0.43.1 restart are acceptance checks for the patch.
 - The four approved stages shipped independently: History/tools in 0.40.0
   (PR132), What if in 0.41.0 (PR133), Changes in 0.42.0 (PR134), and optional
   alternate schedules in 0.43.0 (PR135). Each was merged with a merge commit,
@@ -37,12 +44,9 @@ Last updated at 0.43.0, 2026-11-10.
   remains **unverified**: Chrome CDP timed out, and Windows browser control
   stopped because it could not determine the current URL confidently enough
   to enforce its policy. No browser protections were changed or bypassed.
-- No actual journal checkpoint is due before 20:00 local today. Nonempty issue
-  persistence across a real restart and completed-window grading remain open.
-  No synthetic issue is inserted on the real installation to satisfy this gate.
-- The existing evening/morning observations remain ACTIVE and read-only;
-  their prompts check the actually loaded stable version. No job-completion
-  automation or new background writer was added.
+- The read-only evening and morning checks completed on Nov 10 and 11. Both
+  authentic issues were observed in the journal. The morning fill window ends
+  at 22:00 local. Nonempty persistence across a Core restart remains open.
 
 ## Tools development sequence
 
@@ -58,8 +62,8 @@ Last updated at 0.43.0, 2026-11-10.
   synthetic verification. The release-reviewed morning decision remains
   explicitly unset. Selecting days does not activate production or begin live
   comparison while that prerequisite is open. No days are applied to the house.
-- The current baseline, morning and interval gates and existing read-only
-  scheduled observations remain unchanged.
+- The baseline, morning and interval gates require their existing prospective
+  evidence before promotion.
 
 ## Development sequence after 0.34.2
 
@@ -119,10 +123,11 @@ Last updated at 0.43.0, 2026-11-10.
   copy still yields no eligible historical candidate pairs. No improvement is
   claimed. The legacy period-end archive cannot recover a missing sunset split;
   actual complete new days and three usable training days per part are needed.
-- The first actual 20:00 issue is still pending at delivery time. Checkpoint
-  persistence, completed-window grading, 14 new paired mornings/nights, and
-  30+14-night interval calibration/validation remain open. The active projection
-  stays baseline-0.34.2. No threshold, efficiency or settled-time rule changed.
+- The first actual 20:00 issue was independently evaluated in the Nov 11 private
+  check. It remained pending in 0.43.0. Checkpoint persistence, automatic
+  completed-window grading, 14 new paired mornings/nights and 30+14-night
+  interval calibration/validation remain open. The active projection is
+  baseline-0.34.2.
 - No independent-installation evidence exists. Synthetic tests do not close it.
 - The product is English only. Actual authenticated dashboard rendering remains
   unverified; synthetic English phone/desktop, both themes and parent directions

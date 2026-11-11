@@ -115,7 +115,8 @@ async def test_context_changes_exclude_pending_sisters_but_preserve_production_r
             "reserve_correct": True,
         }
         baseline = deepcopy(record["result"])
-        end = dt_util.parse_datetime(record["until"]) + timedelta(hours=1)
+        # Let the last partial hour close and Recorder's grace period elapse.
+        end = dt_util.parse_datetime(record["until"]) + timedelta(hours=2)
         hass.config_entries.async_update_entry(
             entry, options={**entry.options, OPT_LOAD_PROFILE_ALTERNATE_DAYS: new_days}
         )

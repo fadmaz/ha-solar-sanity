@@ -473,12 +473,15 @@ outage is represented by missed slots after installation, not by backfilling
 predictions. Frozen inputs include the exact simulation steps, battery settings
 and corrected forecast. The model revision remains `baseline-0.34.2`.
 
-After the recorded observation window ends, hourly charge extremes grade the
-minimum or fill call. `analysis/observations.py` is also used by the historical
-replay; `analysis/grading.py` reports explicit exclusions. Failed recorder reads
-are distinct from empty history and retry for one day. Grid charging is screened
-with the replay's existing rule. Fill-time error needs a real recorded crossing;
-an hourly maximum never supplies invented minutes.
+Grading starts 15 minutes after the last intersecting UTC hour closes. Recorder
+statistics are requested from the start of the first hour because a query from
+the issue second can omit that hour. Full hours use hourly charge extremes.
+Partial hours use the recorded state in effect at their start and changes before
+their end. An unavailable state or missing starting value leaves that portion
+incomplete. `analysis/observations.py` is shared with historical replay, and
+`analysis/grading.py` screens incomplete flows and grid charging. Failed reads
+and incomplete evidence have separate exclusions after retries for one day.
+Fill-time error requires a timestamped recording inside the observation window.
 
 Provider health separates attempted, captured, submitted and verified timestamps.
 The writer supplies its exact batches, then a background read-back tries at

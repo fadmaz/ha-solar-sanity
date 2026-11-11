@@ -1,6 +1,9 @@
 """The issued journal survives restarts without rewriting yesterday's promise."""
 
+from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
@@ -10,6 +13,8 @@ from homeassistant.core import CoreState
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
+from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
+from custom_components.solar_sanity.analysis.observations import observation_hours
 from custom_components.solar_sanity.analysis.outlook import BatterySettings, Step, project
 from custom_components.solar_sanity.battery_outlook import OutlookState
 from custom_components.solar_sanity.const import DOMAIN, OPT_BATTERY_CAPACITY_KWH
@@ -213,6 +218,156 @@ async def test_context_changes_separate_metrics_and_exclude_pending_observations
     await journal._grade_pending(NOW + timedelta(days=1))
     assert journal.records[0]["result"]["reason_code"] == "context_changed"
     assert journal.summary(now=NOW)["nights"] == 0
+
+
+def _measured_flow(hours):
+    return [
+        Bucket(
+            hour,
+            3600,
+            {"pv": 0, "load": 500, "battery_charge": 0},
+            dict.fromkeys(("pv", "load", "battery_charge"), Quality.OK),
+            dict.fromkeys(("pv", "load", "battery_charge"), BucketSource.OWN_INTEGRAL),
+        )
+        for hour in hours
+    ]
+
+
+@pytest.mark.parametrize("kind", ["evening", "morning"])
+async def test_the_journal_reads_the_first_hour_without_using_outside_states(
+    recorder_mock, hass, enable_custom_integrations, entry_data, hass_storage, *, kind
+):
+    """Recorder drops the first statistics row when the issue is a few seconds late."""
+    entry, journal = await _journal(hass, entry_data)
+    await hass.config.async_set_time_zone("Asia/Jerusalem")
+    issued = NOW.replace(hour=18 if kind == "evening" else 6, minute=0, second=51)
+    journal.created_at = journal.last_checked_at = issued - timedelta(minutes=5)
+    journal._next_grade = None
+    state = _projection(issued)
+    if kind == "evening":
+        state.outlook = replace(state.outlook, takeover_at=issued + timedelta(hours=10))
+    journal.coordinator.battery.state = state
+    journal.version = "0.43.0"
+    assert journal.capture(issued)
+    record = journal.records[0]
+    original = deepcopy(record)
+    journal.version = "0.43.1"
+    end = datetime.fromisoformat(record["until"])
+    if kind == "morning":
+        assert end.astimezone(ZoneInfo("Asia/Jerusalem")).hour == 22
+    hours = observation_hours(issued, end)
+    journal.coordinator._buckets = _measured_flow(hours)
+    settle = hours[-1] + timedelta(hours=1, minutes=15)
+    soc_entity = record["soc_entity"]
+
+    def statistics(_hass, start, stop, ids, *_args):
+        assert ids == {soc_entity}
+        return {
+            soc_entity: [
+                {
+                    "start": hour.timestamp(),
+                    "mean": 75,
+                    "min": 10 if hour in (hours[0], hours[-1]) and kind == "evening" else 65,
+                    "max": 100 if hour == hours[0] else 80,
+                }
+                for hour in hours
+                if start <= hour < stop
+            ]
+        }
+
+    def history(_hass, start, stop, ids, *, include_start_time_state, **_kwargs):
+        assert ids == [soc_entity]
+        if not include_start_time_state:
+            return {soc_entity: []}
+        # Recorder gives the state in effect at the boundary even when no
+        # changes were recorded during the partial hour.
+        value = "80" if start == issued else "60"
+        return {
+            soc_entity: [
+                SimpleNamespace(last_updated=start, state=value),
+                SimpleNamespace(last_updated=stop, state="10" if kind == "evening" else "100"),
+            ]
+        }
+
+    with (
+        patch(
+            "homeassistant.components.recorder.statistics.statistics_during_period",
+            side_effect=statistics,
+        ) as read_stats,
+        patch(
+            "homeassistant.components.recorder.history.get_significant_states", side_effect=history
+        ),
+    ):
+        await journal.async_update(settle - timedelta(minutes=5))
+        assert record["result"] == {"status": "pending"}
+        read_stats.assert_not_called()
+        await journal.async_update(settle)
+        assert read_stats.call_args.args[1:3] == (hours[0], hours[-1] + timedelta(hours=1))
+        assert record["result"]["status"] == "graded"
+        if kind == "evening":
+            assert record["result"]["actual_lowest"] == 60
+            assert record["result"]["reserve_correct"]
+        else:
+            assert not record["result"]["actual_filled"]
+            assert record["result"]["time_error_minutes"] is None
+        await journal.async_update(settle + timedelta(minutes=5))
+        read_stats.assert_called_once()
+
+    for key in original.keys() - {"result"}:
+        assert record[key] == original[key]
+    saved = hass_storage[f"{JOURNAL_KEY}.{entry.entry_id}"]["data"]["records"]
+    assert [r for r in saved if r["id"] == record["id"]] == [record]
+
+
+@pytest.mark.parametrize("problem", ["missing_hour", "query_failure", "state_gap", "grid_charge"])
+async def test_the_journal_retries_missing_evidence_but_excludes_grid_charge(
+    recorder_mock, hass, enable_custom_integrations, entry_data, problem
+):
+    """A read failure, a gap and an externally charged night have distinct outcomes."""
+    _, journal = await _journal(hass, entry_data)
+    assert journal.capture(NOW)
+    record = journal.records[0]
+    end = datetime.fromisoformat(record["until"])
+    hours = observation_hours(NOW, end)
+    journal.coordinator._buckets = _measured_flow(hours)
+    if problem == "grid_charge":
+        journal.coordinator._buckets[1].wh["battery_charge"] = 1500
+    soc_entity = record["soc_entity"]
+    rows = {
+        soc_entity: [
+            {"start": hour.timestamp(), "mean": 70, "min": 75 - index, "max": 80}
+            for index, hour in enumerate(hours)
+            if problem != "missing_hour" or index != 2
+        ]
+    }
+
+    def history(_hass, start, stop, ids, **_kwargs):
+        states = [SimpleNamespace(last_updated=start, state="80" if start == NOW else "62")]
+        if problem == "state_gap" and start == NOW:
+            states.append(
+                SimpleNamespace(last_updated=start + timedelta(minutes=1), state="unavailable")
+            )
+        return {soc_entity: states}
+
+    with (
+        patch(
+            "homeassistant.components.recorder.statistics.statistics_during_period",
+            return_value=rows,
+            side_effect=RuntimeError("query unavailable") if problem == "query_failure" else None,
+        ),
+        patch(
+            "homeassistant.components.recorder.history.get_significant_states", side_effect=history
+        ),
+    ):
+        if problem == "grid_charge":
+            assert await journal._grade_pending(end + timedelta(hours=2))
+            assert record["result"] == {"status": "excluded", "reason_code": "grid_charging"}
+            return
+        assert not await journal._grade_pending(end + timedelta(hours=2))
+        assert record["result"] == {"status": "pending"}
+        assert await journal._grade_pending(end + timedelta(days=1))
+        reason = "history_read_failed" if problem == "query_failure" else "soc_incomplete"
+        assert record["result"] == {"status": "excluded", "reason_code": reason}
 
 
 async def test_an_uncommitted_batch_is_not_a_verified_archive(
