@@ -648,9 +648,7 @@ class OutlookJournal:
             )
         ]
 
-    def active_forecast_records(self, *, include_missed: bool = False) -> list[dict]:
-        """Use the published source's samples, or the latest issue during startup."""
-        context = self.context()
+    def _active_forecast_group(self, context: str) -> str | None:
         state = self.coordinator.battery.state
         if state.outlook is not None:
             group = self._forecast_group(
@@ -673,14 +671,28 @@ class OutlookJournal:
                 {},
             )
             group = self._forecast_group(latest, context)
-        return self._records_for_forecast(group, context, include_missed=include_missed)
+        return group
+
+    def active_forecast_records(self) -> list[dict]:
+        """Use the published source's samples, or the latest issue during startup."""
+        context = self.context()
+        return self._records_for_forecast(self._active_forecast_group(context), context)
 
     def summary(self, days: int = 28, now: datetime | None = None) -> dict[str, Any]:
         now = now or dt_util.utcnow()
         zone = self.coordinator.time_zone or UTC
         today = now.astimezone(zone).date()
         since = datetime.combine(today - timedelta(days=days - 1), time(), tzinfo=zone)
-        return summarize(self.active_forecast_records(include_missed=True), self.context(), since)
+        context = self.context()
+        group = self._active_forecast_group(context)
+        records = self._records_for_forecast(group, context, include_missed=True)
+        source = None
+        if group == "history":
+            source = "Production history"
+        elif group is not None:
+            provider = self.hass.config_entries.async_get_entry(group.removeprefix("provider:"))
+            source = provider.title if provider is not None else None
+        return {**summarize(records, context, since), "forecast_source": source}
 
     def interval(self, now: datetime | None = None) -> dict[str, Any]:
         selected = [

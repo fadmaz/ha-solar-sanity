@@ -332,6 +332,7 @@ def _history(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
     return {
         **check,
         "days": 28,
+        "forecast_source": summary["forecast_source"] if summary is not None else None,
         "counts": None
         if summary is None
         else {

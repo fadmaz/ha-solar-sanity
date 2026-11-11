@@ -786,7 +786,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         )
 
     def forecast_capture_time(self, provider: str) -> datetime | None:
-        if self._latest_forecast_batch is None:
+        if not self._forecast_captures:
             return self.forecast_captured_at
         return self._forecast_captures.get(provider)
 

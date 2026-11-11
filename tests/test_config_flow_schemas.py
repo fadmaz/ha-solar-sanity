@@ -105,7 +105,7 @@ class TestConfigFlowSchemas:
             OPT_LOAD_PROFILE_ALTERNATE_DAYS,
         )
 
-        stub = SimpleNamespace(config_entry=SimpleNamespace(options={}, runtime_data=None))
+        stub = SimpleNamespace(config_entry=SimpleNamespace(data={}, options={}, runtime_data=None))
         schema = vol.Schema(SolarSanityOptionsFlow._fields(stub))
 
         # 0.34.0 added the battery power sensor and its sign, for the card's

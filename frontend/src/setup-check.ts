@@ -39,6 +39,7 @@ export interface SetupCheckResponse {
   };
   history: Check & {
     days: number;
+    forecast_source?: string | null;
     counts: {graded_nights: number; graded_mornings: number; pending: number; excluded: number} | null;
     exclusions: {reason: string; count: number}[];
   };
@@ -229,7 +230,7 @@ export class SolarSanitySetupCheck extends LitElement {
   private _history(data: SetupCheckResponse["history"]): TemplateResult {
     const counts = data.counts;
     return this._group("History and accuracy", data, counts ? html`
-      <p>Last ${data.days} days in the current setup</p>
+      <p>Last ${data.days} days in the current setup${data.forecast_source ? ` · ${data.forecast_source}` : ""}</p>
       <dl><div><dt>Graded nights</dt><dd>${counts.graded_nights}</dd></div>
         <div><dt>Graded mornings</dt><dd>${counts.graded_mornings}</dd></div>
         <div><dt>Pending</dt><dd>${counts.pending}</dd></div>

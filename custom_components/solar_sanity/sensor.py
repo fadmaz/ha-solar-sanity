@@ -78,6 +78,7 @@ def _performance_attrs(coordinator: SolarSanityCoordinator, key: str) -> dict[st
         "window_days": 28,
         "sample_count": summary[count_key],
         "model_revision": MODEL_REVISION,
+        "forecast_source": summary["forecast_source"],
         "excluded": summary["excluded"],
         "pending": summary["pending"],
         "last_7_days": coordinator.journal.summary(7),
