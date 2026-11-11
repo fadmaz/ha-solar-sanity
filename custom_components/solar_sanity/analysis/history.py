@@ -16,6 +16,12 @@ OBSERVATION_REASONS = {
     "no_forecast": "The morning prediction had no solar forecast.",
 }
 
+SOLAR_COVERAGE_REASONS = {
+    **OBSERVATION_REASONS,
+    "flow_incomplete": "Complete solar and house load measurements are missing.",
+    "no_complete_hours": "There were no complete hours in the observation window.",
+}
+
 
 def history_rows(
     records: Sequence[Mapping[str, Any]], since: str, current_context: str
@@ -68,6 +74,25 @@ def history_rows(
                 "reason": OBSERVATION_REASONS.get(code, code.replace("_", " ") if code else None),
             }
         )
+        coverage = record.get("solar_coverage")
+        if record["checkpoint"] == "evening" and not missed and isinstance(coverage, Mapping):
+            result[-1]["solar_coverage"] = {
+                key: coverage.get(key)
+                for key in (
+                    "status",
+                    "reason_code",
+                    "observed_start",
+                    "observed_end",
+                    "relation",
+                    "late_soc_status",
+                    "late_lowest_pct",
+                    "late_soc_reason_code",
+                )
+            }
+            result[-1]["solar_coverage"].update(
+                reason=SOLAR_COVERAGE_REASONS.get(coverage.get("reason_code")),
+                late_soc_reason=SOLAR_COVERAGE_REASONS.get(coverage.get("late_soc_reason_code")),
+            )
         if len(result) == 180:
             break
     return result

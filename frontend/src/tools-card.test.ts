@@ -18,6 +18,27 @@ async function make(h:HomeAssistant) {const c=new SolarSanityToolsCard();c.hass=
 afterEach(()=>{document.body.innerHTML="";});
 
 describe("issued history tools",()=>{
+  it("compares a complete solar hour in the saved time zone without replacing the night grade",async()=>{
+    const r=row();
+    r.time_zone="Asia/Jerusalem";r.until="2026-11-11T05:00:00Z";
+    r.solar_coverage={status:"observed",observed_start:"2026-11-11T06:00:00Z",observed_end:"2026-11-11T07:00:00Z",
+      relation:"later",reason:null,late_soc_status:"available",late_lowest_pct:38,late_soc_reason:null};
+    const data=hass(vi.fn().mockResolvedValue({response:response([r])}));data.config.time_zone="America/Los_Angeles";
+    const c=await make(data), section=c.shadowRoot!.querySelector(".solar-coverage")!;
+    expect(section.textContent).toContain("Nov 11, 07:00");
+    expect(section.textContent).toContain("08:00–09:00");
+    expect(section.textContent).toContain("Later");
+    expect(section.textContent).toContain("38%");
+    expect(c.shadowRoot!.textContent).toContain("Minimum 40.0%");
+  });
+  it("keeps the observed hour when the later charge minimum is unavailable",async()=>{
+    const r=row();r.until="2026-11-11T05:00:00Z";
+    r.solar_coverage={status:"observed",observed_start:"2026-11-11T06:00:00Z",observed_end:"2026-11-11T07:00:00Z",
+      relation:"later",reason:null,late_soc_status:"unavailable",late_lowest_pct:null,late_soc_reason:"Battery charge observations are incomplete."};
+    const c=await make(hass(vi.fn().mockResolvedValue({response:response([r])})));
+    expect(c.shadowRoot!.textContent).toContain("06:00–07:00");
+    expect(c.shadowRoot!.textContent).toContain("Battery charge observations are incomplete.");
+  });
   it("uses registry discovery and the native response action after an entity rename",async()=>{
     const call=vi.fn().mockResolvedValue({response:response([row()])}), c=await make(hass(call));
     expect(call).toHaveBeenCalledWith(expect.objectContaining({return_response:true,service:"get_forecast_history",service_data:{device_id:"one",days:28}}));

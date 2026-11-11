@@ -483,6 +483,19 @@ incomplete. `analysis/observations.py` is shared with historical replay, and
 and incomplete evidence have separate exclusions after retries for one day.
 Fill-time error requires a timestamped recording inside the observation window.
 
+From 0.44.0, an evening issue can have a separate `solar_coverage` observation.
+It compares its frozen takeover time with the first complete UTC hour inside
+the next local date whose measured PV exceeds zero and covers house load plus
+the saved inverter estimate. Own measurements of both channels are required
+from the beginning of the window through that hour. The journal waits for a
+closed hour and recorder grace, then retries incomplete evidence through one
+day after the observation date. Active issues have priority and at most two
+older issues are processed per grading pass. A later hour can also carry the
+observed minimum SoC from the expected time up to that hour. Its missing SoC
+history does not erase a measured coverage hour. The read-only History action
+exposes only the display fields. Hour totals do not establish an instant of
+takeover or continuous coverage throughout the hour.
+
 Provider health separates attempted, captured, submitted and verified timestamps.
 The writer supplies its exact batches, then a background read-back tries at
 5, 30 and 120 seconds. Matching rows attest to content, not a physical write

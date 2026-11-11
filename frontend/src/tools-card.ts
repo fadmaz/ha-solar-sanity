@@ -7,6 +7,17 @@ import { changesPanel } from "./changes";
 import "./simulation-panel";
 import type { GridOptions, HomeAssistant, LovelaceCardConfig } from "./types/hass";
 
+interface SolarCoverage {
+  status: "pending" | "observed" | "not_observed" | "unavailable";
+  observed_start: string | null;
+  observed_end: string | null;
+  relation: "earlier" | "within" | "later" | null;
+  reason: string | null;
+  late_soc_status: "pending" | "available" | "unavailable" | "not_applicable" | null;
+  late_lowest_pct: number | null;
+  late_soc_reason: string | null;
+}
+
 export interface HistoryRow {
   id: string; local_date: string; checkpoint: "morning" | "evening";
   issued_at: string | null; scheduled_at: string | null; until: string | null;
@@ -17,6 +28,7 @@ export interface HistoryRow {
     reserve_correct: boolean | null; actual_filled: boolean | null; actual_full_at: string | null;
     fill_correct: boolean | null; timing_resolution: string | null; time_error_minutes: number | null};
   reason: string | null;
+  solar_coverage?: SolarCoverage;
 }
 export interface HistoryResponse {time_zone: string; status: string; reason_code: string | null; records: HistoryRow[]}
 export interface ToolsCardConfig extends LovelaceCardConfig {device_id?: string; default_tab?: string}
@@ -111,6 +123,39 @@ export class SolarSanityToolsCard extends LitElement {
         ${r.time_error_minutes !== null && r.timing_resolution === "state" ? html`<span>Timing error ${Math.abs(r.time_error_minutes).toFixed(0)} min ${r.time_error_minutes < 0 ? "early" : "late"}</span>` : nothing}` : nothing}
       ${row.reason ? html`<span>${row.reason}</span>` : nothing}`;
   }
+  private _coverageHour(start: string, end: string, zone: string | null): string {
+    const timeZone = safeTimeZone(zone ?? this.hass?.config.time_zone);
+    const first = new Date(start), last = new Date(end);
+    if (Number.isNaN(first.getTime()) || Number.isNaN(last.getTime())) return "—";
+    const clock = new Intl.DateTimeFormat("en", {timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23"});
+    const day = new Intl.DateTimeFormat("en", {timeZone, month: "short", day: "numeric"});
+    const offset = new Intl.DateTimeFormat("en", {timeZone, timeZoneName: "shortOffset"});
+    const offsetAt = (when: Date) => offset.formatToParts(when).find(part => part.type === "timeZoneName")?.value;
+    const a = offsetAt(first), b = offsetAt(last);
+    if (a !== b) return `${this._time(start, zone)} ${a} – ${this._time(end, zone)} ${b}`;
+    return `${this._time(start, zone)}–${day.format(first) === day.format(last) ? clock.format(last) : this._time(end, zone)}`;
+  }
+  private _solarCoverage(row: HistoryRow): TemplateResult | typeof nothing {
+    const coverage = row.solar_coverage;
+    if (row.checkpoint !== "evening" || !coverage || !row.until) return nothing;
+    const labels = {earlier: "Earlier", within: "Within the observed hour", later: "Later"};
+    const hour = coverage.observed_start && coverage.observed_end
+      ? this._coverageHour(coverage.observed_start, coverage.observed_end, row.time_zone)
+      : coverage.status === "pending" ? "Waiting for complete measurements"
+        : coverage.status === "not_observed" ? "No covering hour observed" : "Unavailable";
+    return html`<section class="solar-coverage" aria-label="Solar coverage">
+      <h3>Solar coverage</h3>
+      <dl><div><dt>Expected</dt><dd>${this._time(row.until, row.time_zone)}</dd></div>
+        <div><dt>First observed hour</dt><dd>${hour}</dd></div>
+        ${coverage.relation ? html`<div class="outcome"><dt>Comparison</dt><dd>${labels[coverage.relation]}</dd></div>` : nothing}
+        ${coverage.relation === "later" ? html`<div class="outcome"><dt>Lowest charge after expected coverage</dt>
+          <dd>${coverage.late_lowest_pct != null ? `${new Intl.NumberFormat("en", {maximumFractionDigits: 1}).format(coverage.late_lowest_pct)}%`
+            : coverage.late_soc_reason ?? (coverage.late_soc_status === "pending" ? "Waiting for charge history" : "Unavailable")}</dd></div>` : nothing}
+      </dl>
+      ${coverage.reason ? html`<p class="muted">${coverage.reason}</p>` : nothing}
+      ${coverage.status === "observed" ? html`<p class="muted">Measured hour totals include estimated inverter use in the load.</p>` : nothing}
+    </section>`;
+  }
   protected _historyPanel(): TemplateResult {
     const history = this._history;
     const dates = [...new Set(history?.records.map(r => r.local_date) ?? [])];
@@ -127,6 +172,7 @@ export class SolarSanityToolsCard extends LitElement {
           <article><header><strong>${row.local_date}</strong><span>${row.checkpoint === "evening" ? "20:00 · Night" : "08:00 · Morning"}</span></header>
             <dl><div><dt>Forecast</dt><dd>${this._forecast(row)}</dd></div><div><dt>Observed</dt><dd>${this._observed(row)}</dd></div>
             <div class="outcome"><dt>Result</dt><dd>${this._outcome(row)}</dd></div></dl>
+            ${this._solarCoverage(row)}
             <p class="muted">${row.issued_at ? `Issued ${this._time(row.issued_at, row.time_zone)}` : "Checkpoint missed"}
               · ${row.model_revision ?? "Revision unavailable"}${row.time_zone ? ` · ${row.time_zone}` : ""}${row.previous_setup ? " · Previous setup" : ""}</p>
           </article>`)}</div>
@@ -158,6 +204,10 @@ export class SolarSanityToolsCard extends LitElement {
     article {border-top:1px solid var(--divider-color);padding:16px 0} article header {display:flex;gap:12px;justify-content:space-between;flex-wrap:wrap}
     dl {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0} dt {margin-bottom:4px} dd {margin:0;line-height:1.5;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
     .outcome {grid-column:1/-1} .outcome dd {display:flex;gap:4px 12px;flex-wrap:wrap} .status {font-weight:500}
+    .solar-coverage {border-top:1px solid var(--divider-color);padding-top:12px}
+    .solar-coverage h3 {margin:0;font-size:.95rem}
+    .solar-coverage dl {margin:8px 0;gap:8px 16px}
+    .solar-coverage p {margin:6px 0}
     ::selection {background:var(--primary-color);color:var(--text-primary-color,#fff)}
     .changes{width:100%;border-collapse:collapse;table-layout:fixed;font-size:.875rem}.changes td,.changes th{text-align:left;padding:12px 4px;border-bottom:1px solid var(--divider-color);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.changes th{font-weight:500}.changes tbody th{color:var(--secondary-text-color)}
     @media(max-width:420px){.root{padding:16px}dl{grid-template-columns:1fr}.outcome{grid-column:auto}}

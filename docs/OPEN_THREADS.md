@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.43.1, 2026-11-11.
+Last updated at 0.44.0, 2026-11-11.
 
 ## Latest delivery and operational acceptance
 
@@ -12,8 +12,13 @@ Last updated at 0.43.1, 2026-11-11.
   from the issue second, and all eleven when queried from the hour boundary.
   The private observation confirms a 1.1-point error and a correct reserve
   call. 0.43.1 aligns journal queries and restricts partial-hour extremes to
-  the issue window. Live grading and nonempty journal restore across the
-  0.43.1 restart are acceptance checks for the patch.
+  the issue window. The 0.43.1 HACS restart preserved both genuine issues;
+  the evening issue graded automatically with the independently checked
+  1.1-point error and correct reserve call. Archive read-back succeeded.
+- 0.44.0 adds a separate hourly coverage observation and the charge minimum
+  between expected coverage and a later observed hour. The private reference
+  case provides the acceptance example for backfill. Live History display
+  and persistence of a completed coverage observation require verification.
 - The four approved stages shipped independently: History/tools in 0.40.0
   (PR132), What if in 0.41.0 (PR133), Changes in 0.42.0 (PR134), and optional
   alternate schedules in 0.43.0 (PR135). Each was merged with a merge commit,
@@ -21,8 +26,8 @@ Last updated at 0.43.1, 2026-11-11.
   HA 2025.11.0 and 2026.2.3. The final code passes 717 Python tests at each
   version and 203 card tests. Local full gates pass 419 Python tests with nine
   HA modules skipped, TypeScript, build, cards and the size budget.
-- **Current installed version: 0.43.0.** HACS install/restart and Core RUNNING
-  are verified. Archive read-back succeeded at 16:07:35 UTC, the resource uses
+- **Prior 0.43.0 verification.** HACS install/restart and Core RUNNING
+  were verified. Archive read-back succeeded at 16:07:35 UTC, the resource used
   `?v=0.43.0` and the outlook advanced to 16:10:51 UTC. Collection is ok and the
   live system log contains no Solar Sanity warnings/errors. All 772 prior rows,
   dayahead contents and 30/35/100 settings survived the restart. The day list is
@@ -46,15 +51,15 @@ Last updated at 0.43.1, 2026-11-11.
   to enforce its policy. No browser protections were changed or bypassed.
 - The read-only evening and morning checks completed on Nov 10 and 11. Both
   authentic issues were observed in the journal. The morning fill window ends
-  at 22:00 local. Nonempty persistence across a Core restart remains open.
+  at 22:00 local. The 0.43.1 restart verified nonempty journal persistence.
 
 ## Tools development sequence
 
 - 0.40.0 adds issued history and a separate tools card. Native read-only
   actions return display fields from the in-memory journal, scoped by device
   and read permissions. Synthetic UI checks cover desktop/phone layouts.
-  Real authenticated dashboard rendering and nonempty journal restart
-  persistence remain open until observed; no checkpoint is fabricated.
+  Real authenticated dashboard rendering remains open. Nonempty journal
+  persistence was verified with the 0.43.1 restart.
 - 0.43.0 prepares alternate schedule learning, with an empty day selection by
   default for every installation, including the reference house. Operational
   comparison waits for a documented close of the morning experiment.
@@ -98,9 +103,8 @@ Last updated at 0.43.1, 2026-11-11.
   independent house's download is available; provider timing/completeness,
   independent provenance and the night gate still need actual evidence.
   Generalization and 1.0 readiness remain unproven.
-- Keep the owner's existing evening/morning scheduled checks active at 20:00
-  on Nov 10 and 09:00 on Nov 11. They remain read-only, preserve immutable issue
-  evidence, and distinguish pending morning/interval gates from faults.
+- The Nov 10 and 11 evening/morning checks completed. The owner authorized a
+  single read-only follow-up at 22:25 local on Nov 11 for the morning fill outcome.
 - Startup verification waits for Core to start: on the real house an unrelated
   slow startup exceeded the read-back retry window. The 0.39.0 post-start
   read-back succeeded and returned collection health to ok.
@@ -124,9 +128,9 @@ Last updated at 0.43.1, 2026-11-11.
   claimed. The legacy period-end archive cannot recover a missing sunset split;
   actual complete new days and three usable training days per part are needed.
 - The first actual 20:00 issue was independently evaluated in the Nov 11 private
-  check. It remained pending in 0.43.0. Checkpoint persistence, automatic
-  completed-window grading, 14 new paired mornings/nights and 30+14-night
-  interval calibration/validation remain open. The active projection is
+  check and graded automatically after the 0.43.1 restart. The 14 new paired
+  mornings/nights and 30+14-night interval calibration/validation remain open.
+  The active projection is
   baseline-0.34.2.
 - No independent-installation evidence exists. Synthetic tests do not close it.
 - The product is English only. Actual authenticated dashboard rendering remains
