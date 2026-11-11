@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, STATE_UNAVAILABLE
 from homeassistant.core import Context, CoreState, HomeAssistant, callback
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -122,7 +122,15 @@ class LoadReminders:
         try:
             if (saved := await self._store.async_load()) is not None:
                 self._record = Reminder.load(saved)
-        except (ValueError, TypeError, KeyError, OSError, OverflowError, NotImplementedError):
+        except (
+            HomeAssistantError,
+            ValueError,
+            TypeError,
+            KeyError,
+            OSError,
+            OverflowError,
+            NotImplementedError,
+        ):
             self._storage_error = True
             _LOGGER.exception("Could not restore the load reminder")
 

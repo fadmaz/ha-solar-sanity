@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.core import Context
-from homeassistant.exceptions import ServiceValidationError, Unauthorized
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized
 
 from custom_components.solar_sanity.analysis.outlook import Step, project
 from custom_components.solar_sanity.analysis.profile import ForecastScale
@@ -271,6 +271,33 @@ async def test_reminder_rechecks_after_recording_dispatch_attempt(
     assert result["status"] == "waiting"
     assert result["reason_code"] == "forecast_unavailable"
     assert not messages
+
+
+async def test_store_failure_is_visible_and_never_sends_without_a_durable_marker(
+    hass, enable_custom_integrations, entry_data, clock
+):
+    """Home Assistant may swallow a write failure, and a read failure must stay local."""
+    now, _ = clock
+    entry, journal, state = await setup(hass, entry_data)
+    coordinator = journal.coordinator
+    runner = coordinator.reminders
+    state.scale = ForecastScale(1, 30, 5)
+    messages = install_notify(hass, runner)
+    record = await schedule(hass, entry)
+    now.return_value = datetime.fromisoformat(record["scheduled_at"])
+    state.computed_at = now.return_value
+    with patch.object(runner._store, "async_save", new=AsyncMock()):
+        await wake(hass, runner, force=True)
+    assert runner.view() == {"reminder": None, "storage_error": True}
+    assert not messages
+    assert (await runner._store.async_load())["status"] == "scheduled"
+    restored = LoadReminders(coordinator)
+    with patch.object(
+        restored._store, "async_load", side_effect=HomeAssistantError("Cannot read storage.")
+    ):
+        await restored.async_restore()
+    assert restored.view() == runner.view()
+    assert (await invoke(hass, entry))["scenario"]["reserve_at"] is None
 
 
 @pytest.mark.parametrize("interrupted", [False, True])
