@@ -2,6 +2,18 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.44.0] - 2026-11-11
+
+### Added
+
+- The evening History row compares expected solar coverage with the first
+  measured hour when solar energy covered house load and estimated inverter
+  use. When that hour starts later, History shows the lowest recorded charge
+  between the expected time and the start of the observed hour, if available.
+- Eligible older issues gain the same comparison from retained measurements.
+  Coverage observations survive restarts and leave the original forecasts,
+  night grades, reserve decisions and accuracy metrics intact.
+
 ## [0.43.1] - 2026-11-11
 
 ### Fixed

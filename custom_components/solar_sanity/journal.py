@@ -23,6 +23,7 @@ from .analysis.experiment import shape_gate
 from .analysis.grading import grade, summarize
 from .analysis.load_schedule import LOAD_REVISION, WEEKDAYS
 from .analysis.observations import observation_hours
+from .analysis.solar_coverage import coverage_day, observe_coverage
 from .const import (
     CONF_CHANNELS,
     CONF_ENTITY_ID,
@@ -281,6 +282,7 @@ class OutlookJournal:
             if self._next_grade is None or now >= self._next_grade:
                 self._next_grade = now + timedelta(minutes=5)
                 changed = await self._grade_pending(now) or changed
+                changed = await self._update_solar_coverage(now) or changed
             cutoff = now - timedelta(days=RETENTION_DAYS)
             retained = [r for r in self.records if datetime.fromisoformat(r["issued_at"]) >= cutoff]
             retained = retained[-MAX_RECORDS:]
@@ -505,6 +507,106 @@ class OutlookJournal:
             record["graded_at"] = now.isoformat()
             changed = True
         return changed
+
+    async def _update_solar_coverage(self, now: datetime) -> bool:
+        zone = self.coordinator.time_zone
+        if zone is None:
+            return False
+        context = self.context()
+        candidates = []
+        for record in reversed(self.records):
+            if record["checkpoint"] != "evening" or not record.get("until"):
+                continue
+            prior = record.get("solar_coverage")
+            if (
+                isinstance(prior, dict)
+                and prior.get("status") in ("observed", "not_observed", "unavailable")
+                and prior.get("late_soc_status") != "pending"
+            ):
+                continue
+            inputs = record.get("inputs")
+            battery = inputs.get("battery") if isinstance(inputs, dict) else None
+            if not isinstance(battery, dict):
+                continue
+            standby = battery.get("standby_w")
+            if not isinstance(standby, (float, int)) or not math.isfinite(standby) or standby < 0:
+                continue
+            try:
+                issued = datetime.fromisoformat(record["issued_at"])
+                expected = datetime.fromisoformat(record["until"])
+            except (ValueError, TypeError):
+                continue
+            if expected.tzinfo is None or expected <= issued:
+                continue
+            start, end = coverage_day(issued, zone)
+            legacy = record.get("version") != self.version or now >= end + timedelta(days=1)
+            candidates.append((legacy, record, prior, start, end, expected, standby))
+        if not candidates:
+            return False
+
+        buckets = {b.start_utc: b for b in self.coordinator.buckets}
+        changed = False
+        backfilled = 0
+        for legacy, record, prior, start, end, expected, standby in sorted(
+            candidates, key=lambda item: item[0]
+        ):
+            if legacy:
+                if backfilled == 2:
+                    break
+                backfilled += 1
+            settled_hour = isinstance(prior, dict) and prior.get("status") == "observed"
+            same_setup = (
+                record["context"] == context
+                and record.get("time_zone") == self.hass.config.time_zone
+                and record["result"].get("reason_code") != "context_changed"
+            )
+            if settled_hour:
+                result = dict(prior)
+            elif same_setup:
+                result = observe_coverage(buckets, start, end, expected, standby_w=standby, now=now)
+            else:
+                result = {"status": "unavailable", "reason_code": "context_changed"}
+
+            if result.get("late_soc_status") == "pending":
+                observed = datetime.fromisoformat(result["observed_start"])
+                if same_setup and self.context() == context:
+                    await self._read_late_minimum(
+                        record, result, expected, observed, day_end=end, now=now
+                    )
+                else:
+                    result.update(
+                        late_soc_status="unavailable", late_soc_reason_code="context_changed"
+                    )
+            if result != prior:
+                record["solar_coverage"] = result
+                changed = True
+        return changed
+
+    async def _read_late_minimum(
+        self,
+        record: dict[str, Any],
+        result: dict[str, Any],
+        expected: datetime,
+        observed: datetime,
+        *,
+        day_end: datetime,
+        now: datetime,
+    ) -> None:
+        context = self.context()
+        soc = await async_read_grading_soc(self.hass, record["soc_entity"], expected, observed)
+        if self.context() != context:
+            result.update(late_soc_status="unavailable", late_soc_reason_code="context_changed")
+            return
+        reading = soc.lowest_reading(expected, observed) if soc is not None else None
+        if reading is not None and 0 <= reading[0] <= 100:
+            result.update(late_soc_status="available", late_lowest_pct=reading[0])
+            result.pop("late_soc_reason_code", None)
+        else:
+            result["late_soc_reason_code"] = (
+                "history_read_failed" if soc is None else "soc_incomplete"
+            )
+            if now >= day_end + timedelta(days=1):
+                result["late_soc_status"] = "unavailable"
 
     def summary(self, days: int = 28, now: datetime | None = None) -> dict[str, Any]:
         now = now or dt_util.utcnow()
