@@ -1,9 +1,10 @@
-/** Issued observations, read on demand from the same journal that grades them. */
+/** Setup, issued observations and projection tools for one installation. */
 import { LitElement, css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { findInstallations, hasOutlook } from "./battery-model";
+import { findInstallations, hasBatterySetup } from "./battery-model";
 import { safeTimeZone } from "./forecast-data";
 import { changesPanel } from "./changes";
+import "./setup-check";
 import "./simulation-panel";
 import type { GridOptions, HomeAssistant, LovelaceCardConfig } from "./types/hass";
 
@@ -33,6 +34,13 @@ export interface HistoryRow {
 export interface HistoryResponse {time_zone: string; status: string; reason_code: string | null; records: HistoryRow[]}
 export interface ToolsCardConfig extends LovelaceCardConfig {device_id?: string; default_tab?: string}
 
+export const TOOLS_TABS = [
+  {value: "history", label: "History"},
+  {value: "what_if", label: "What if"},
+  {value: "changes", label: "Changes"},
+  {value: "setup", label: "Setup"},
+];
+
 @customElement("solar-sanity-tools-card")
 export class SolarSanityToolsCard extends LitElement {
   @property({attribute: false}) public hass?: HomeAssistant;
@@ -49,7 +57,7 @@ export class SolarSanityToolsCard extends LitElement {
   public setConfig(config: ToolsCardConfig): void {
     if (config.device_id !== undefined && typeof config.device_id !== "string") throw new Error("Select an installation.");
     this._config = config;
-    this._tab = ["what_if", "changes"].includes(config.default_tab ?? "") ? config.default_tab! : "history";
+    this._tab = TOOLS_TABS.find(tab => tab.value === config.default_tab)?.value ?? "history";
   }
   public getCardSize(): number { return 8; }
   public getGridOptions(): GridOptions { return {rows: "auto", columns: 12, min_columns: 6}; }
@@ -58,23 +66,33 @@ export class SolarSanityToolsCard extends LitElement {
   public override connectedCallback(): void { super.connectedCallback(); this.requestUpdate(); }
   public override disconnectedCallback(): void { super.disconnectedCallback(); this._generation++; this._key = ""; }
 
-  protected _device(): string | undefined {
-    const all = findInstallations(this.hass).filter(hasOutlook);
-    return this._config.device_id ? all.find(i => i.deviceId === this._config.device_id)?.deviceId
-      : all.length === 1 ? all[0]!.deviceId : undefined;
+  protected _installation() {
+    const all = findInstallations(this.hass);
+    return this._config.device_id ? all.find(i => i.deviceId === this._config.device_id)
+      : all.length === 1 ? all[0] : undefined;
   }
-  protected updated(): void {
-    const device = this._device(), hass = this.hass;
-    if (!device || !hass || hass.config.state !== "RUNNING") {
+  protected override willUpdate(): void {
+    const installation = this._installation(), hass = this.hass;
+    if (!installation || !hasBatterySetup(installation) || !hass || hass.config.state !== "RUNNING") {
       if (this._key) { this._key = ""; this._generation++; this._history = undefined; this._loading = false; }
       return;
     }
+    const device = installation.deviceId;
     const metrics = Object.values(hass.entities ?? {}).filter(e => e.device_id === device
       && e.platform === "solar_sanity" && ["night_lowest_mae", "morning_fill_accuracy"].includes(e.translation_key ?? ""))
       .map(e => { const a = hass.states[e.entity_id]?.attributes; return [a?.sample_count, a?.pending, a?.excluded]; });
     const outlook = Object.values(hass.entities ?? {}).find(e => e.device_id === device && e.platform === "solar_sanity" && e.translation_key === "battery_lowest_before_sunrise");
     const key = JSON.stringify([device, this._days, metrics, hass.config.time_zone, outlook ? hass.states[outlook.entity_id]?.attributes.computed_at : null]);
     if (this._tab === "history" && this._key !== key) { this._key = key; void this._load(device); }
+  }
+  private _onTabKey(event: KeyboardEvent, tabs: string[], selected: string): void {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const index = tabs.indexOf(selected);
+    const offset = event.key === "ArrowLeft" ? tabs.length - 1 : 1;
+    this._tab = event.key === "Home" ? tabs[0]! : event.key === "End" ? tabs.at(-1)!
+      : tabs[(index + offset) % tabs.length]!;
+    void this.updateComplete.then(() => this.shadowRoot?.querySelector<HTMLElement>(`#tab-${this._tab}`)?.focus());
   }
   private async _load(device: string): Promise<void> {
     const generation = ++this._generation;
@@ -180,22 +198,31 @@ export class SolarSanityToolsCard extends LitElement {
         ${dates.length > this._visibleDays ? html`<button @click=${() => {this._visibleDays += 7;}}>Show earlier days</button>` : nothing}</div>` : nothing}`;
   }
   protected render(): TemplateResult {
-    const source = Object.values(this.hass?.entities ?? {}).find(e => e.platform === "solar_sanity" && e.device_id === this._device() && e.translation_key === "battery_lowest_before_sunrise");
-    const attrs = source ? this.hass?.states[source.entity_id]?.attributes : undefined;
+    const installation = this._installation();
+    const source = installation?.outlook.battery_lowest_before_sunrise;
+    const attrs = source ? this.hass?.states[source]?.attributes : undefined;
+    const withOutlook = installation && hasBatterySetup(installation);
+    const selected = withOutlook ? this._tab : "setup";
+    const tabs = withOutlook ? TOOLS_TABS : TOOLS_TABS.filter(tab => tab.value === "setup");
     const projectionId = Array.isArray(attrs?.trajectory) && attrs.trajectory.length ? String(attrs.projection_id ?? "") : "";
     const note = !this.hass ? "Waiting for Home Assistant." : this.hass.config.state !== "RUNNING" ? "Home Assistant is still starting."
-      : !this._device() ? "Choose an installation with a battery outlook in the card editor." : null;
+      : !installation ? "Choose an installation in the card editor." : null;
     return html`<ha-card><div class="root" lang="en" dir="ltr"><h2>Solar Sanity tools</h2>
-      ${note ? html`<p>${note}</p>` : html`<div role="tablist" aria-label="Solar Sanity tools">${["history", "what_if", "changes"].map(tab => html`<button role="tab" id=${`tab-${tab}`} aria-selected=${this._tab === tab} aria-controls=${`panel-${tab}`} tabindex=${this._tab === tab ? 0 : -1}
-        @click=${()=>{this._tab=tab;}} @keydown=${(e:KeyboardEvent)=>{if(["ArrowLeft","ArrowRight","Home","End"].includes(e.key)){e.preventDefault();const tabs=["history","what_if","changes"];this._tab=e.key==="Home"?"history":e.key==="End"?"changes":tabs[(tabs.indexOf(this._tab)+(e.key==="ArrowLeft"?2:1))%3]!;void this.updateComplete.then(()=>this.shadowRoot?.querySelector<HTMLElement>(`#tab-${this._tab}`)?.focus());}}}>${tab === "history" ? "History" : tab === "what_if" ? "What if" : "Changes"}</button>`)}</div>
-        <div role="tabpanel" id="panel-history" aria-labelledby="tab-history" ?hidden=${this._tab!=="history"}>${this._historyPanel()}</div>
-        <div role="tabpanel" id="panel-what_if" aria-labelledby="tab-what_if" ?hidden=${this._tab!=="what_if"}><solar-sanity-simulation .hass=${this.hass} .deviceId=${this._device()??""} .projectionId=${projectionId} .active=${this._tab==="what_if"}></solar-sanity-simulation></div>
-        <div role="tabpanel" id="panel-changes" tabindex="0" aria-labelledby="tab-changes" ?hidden=${this._tab!=="changes"}>${changesPanel(attrs?.outlook_changes,this.hass?.config.time_zone)}</div>`}</div></ha-card>`;
+      ${note ? html`<p>${note}</p>` : html`<div role="tablist" aria-label="Solar Sanity tools">${tabs.map(({value, label}) => html`
+        <button role="tab" id=${`tab-${value}`} aria-selected=${selected === value} aria-controls=${`panel-${value}`} tabindex=${selected === value ? 0 : -1}
+          @click=${() => {this._tab = value;}} @keydown=${(e: KeyboardEvent) => this._onTabKey(e, tabs.map(tab => tab.value), selected)}>${label}</button>`)}</div>
+        ${withOutlook ? html`
+          <div role="tabpanel" id="panel-history" aria-labelledby="tab-history" ?hidden=${selected !== "history"}>${this._historyPanel()}</div>
+          <div role="tabpanel" id="panel-what_if" aria-labelledby="tab-what_if" ?hidden=${selected !== "what_if"}><solar-sanity-simulation .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""} .projectionId=${projectionId} .active=${selected === "what_if"}></solar-sanity-simulation></div>
+          <div role="tabpanel" id="panel-changes" tabindex="0" aria-labelledby="tab-changes" ?hidden=${selected !== "changes"}>${changesPanel(attrs?.outlook_changes, this.hass?.config.time_zone)}</div>` : nothing}
+        <div role="tabpanel" id="panel-setup" aria-labelledby="tab-setup" ?hidden=${selected !== "setup"}>
+          <solar-sanity-setup-check .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""} .active=${selected === "setup"}></solar-sanity-setup-check>
+        </div>`}</div></ha-card>`;
   }
   public static styles = css`
     :host {display:block;color:var(--primary-text-color);font-family:var(--ha-card-header-font-family,inherit)}
     .root {padding:20px} h2 {font-size:1.2rem;font-weight:500;margin:0 0 20px} h3 {font-size:1rem;margin:0 0 12px}
-    [hidden]{display:none!important}[role=tablist]{display:flex;gap:8px;border-bottom:1px solid var(--divider-color);padding-bottom:12px;margin-bottom:16px}[role=tab][aria-selected=true]{font-weight:600;border-color:var(--primary-color)}
+    [hidden]{display:none!important}[role=tablist]{display:flex;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--divider-color);padding-bottom:12px;margin-bottom:16px}[role=tab][aria-selected=true]{font-weight:600;border-color:var(--primary-color)}
     p {line-height:1.6} .muted,dt {color:var(--secondary-text-color);font-size:.875rem}
     .toolbar {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
     button,select {font:inherit;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:8px 12px;cursor:pointer}
@@ -210,6 +237,12 @@ export class SolarSanityToolsCard extends LitElement {
     .solar-coverage p {margin:6px 0}
     ::selection {background:var(--primary-color);color:var(--text-primary-color,#fff)}
     .changes{width:100%;border-collapse:collapse;table-layout:fixed;font-size:.875rem}.changes td,.changes th{text-align:left;padding:12px 4px;border-bottom:1px solid var(--divider-color);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.changes th{font-weight:500}.changes tbody th{color:var(--secondary-text-color)}
-    @media(max-width:420px){.root{padding:16px}dl{grid-template-columns:1fr}.outcome{grid-column:auto}}
+    @media(max-width:420px){
+      .root{padding:16px}
+      [role=tablist]{gap:6px}
+      [role=tab]{padding-inline:8px}
+      dl{grid-template-columns:1fr}
+      .outcome{grid-column:auto}
+    }
   `;
 }

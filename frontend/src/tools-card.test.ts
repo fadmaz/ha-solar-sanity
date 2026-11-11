@@ -1,5 +1,6 @@
 import {afterEach, describe, expect, it, vi} from "vitest";
 import {SolarSanityToolsCard, type HistoryResponse, type HistoryRow} from "./tools-card";
+import type {SetupCheckResponse, SolarSanitySetupCheck} from "./setup-check";
 import type {HomeAssistant} from "./types/hass";
 
 function row(day="2026-11-10"): HistoryRow {
@@ -15,6 +16,31 @@ function hass(callWS:unknown):HomeAssistant {
 }
 async function settle(c:SolarSanityToolsCard) {await c.updateComplete;await Promise.resolve();await c.updateComplete;}
 async function make(h:HomeAssistant) {const c=new SolarSanityToolsCard();c.hass=h;document.body.append(c);await settle(c);return c;}
+async function setup(c:SolarSanityToolsCard) {
+  await settle(c);
+  const panel = c.shadowRoot!.querySelector<SolarSanitySetupCheck>("solar-sanity-setup-check")!;
+  await panel.updateComplete;
+  await Promise.resolve();
+  await panel.updateComplete;
+  return panel.shadowRoot!;
+}
+function setupData(): SetupCheckResponse {
+  const waiting = {status:"waiting_for_data",reason:null,action:null} as const;
+  const off = {status:"not_configured",reason:"No battery outlook is set up.",action:"configure"} as const;
+  return {time_zone:"Asia/Jerusalem",
+    measurements:{...waiting,status:"needs_attention",channels:[
+      {...waiting,key:"pv",kind:"energy",unit:"kWh",hours:11,status:"needs_attention",
+        reason:"Energy sensors must use the total or total_increasing state class.",action:"reconfigure"},
+      {...waiting,key:"load",kind:"power",unit:"W",hours:8,status:"ready"},
+    ]},
+    forecast:{...waiting,corrected:false,correction_reason:"Learning the roof.",providers:[
+      {...waiting,integration:"forecast_solar",captured_at:"2026-11-11T06:30:00Z",
+        verified_at:"2026-11-11T05:30:00Z",verification:"pending"},
+    ]},
+    battery:{...off,settings:null,charge_level:null},
+    history:{...waiting,days:28,counts:null,exclusions:[]},
+  };
+}
 afterEach(()=>{document.body.innerHTML="";});
 
 describe("issued history tools",()=>{
@@ -98,6 +124,8 @@ describe("issued history tools",()=>{
     expect(panel.textContent).toContain("Nov 10, 14:05");expect(panel.textContent).toContain("8 kWh");expect(panel.textContent).toContain("9 kWh");expect(panel.textContent).toContain("common future");
     expect(call).not.toHaveBeenCalled();expect(c.shadowRoot!.querySelector("#tab-changes")!.getAttribute("aria-selected")).toBe("true");
     c.shadowRoot!.querySelector("#tab-changes")!.dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowRight"}));await settle(c);
+    expect(c.shadowRoot!.querySelector("#tab-setup")!.getAttribute("aria-selected")).toBe("true");
+    c.shadowRoot!.querySelector("#tab-setup")!.dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowRight"}));await settle(c);
     expect(c.shadowRoot!.querySelector("#tab-history")!.getAttribute("aria-selected")).toBe("true");
   });
   it("distinguishes an unchanged pair, initial collection and a failed projection",async()=>{
@@ -107,5 +135,66 @@ describe("issued history tools",()=>{
     const update=async(value:unknown)=>{c.hass={...c.hass!,states:{"sensor.renamed":{entity_id:"sensor.renamed",state:"40",last_updated:"",attributes:{outlook_changes:value}}}};await settle(c);};
     await update({status:"ok",fields:[]});expect(panel().textContent).toContain("Comparable inputs are unchanged");expect(panel().textContent).toContain("Unavailable estimates are omitted");
     await update({status:"unavailable"});expect(panel().textContent).toContain("valid outlook is unavailable");expect(panel().querySelector("table")).toBeNull();
+  });
+});
+
+describe("setup check tools", () => {
+  it("opens Setup directly for a solar-only installation and shows actionable checks in local time", async () => {
+    const call = vi.fn().mockResolvedValue({response:setupData()}), data = hass(call);
+    data.config.time_zone = "America/Los_Angeles";
+    const collection = "sensor.collection";
+    data.entities![collection] = {...data.entities!.renamed!, entity_id:collection, translation_key:"collection_status"};
+    data.states[collection] = {entity_id:collection,state:"ok",last_updated:"",
+      attributes:{battery_outlook_configured:false}};
+    const c = await make(data), panel = await setup(c);
+    expect([...c.shadowRoot!.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(["Setup"]);
+    expect(call).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      service:"get_setup_check",return_response:true,service_data:{device_id:"one"},
+    }));
+    expect(panel.textContent).toContain("11 retained hours");
+    expect(panel.textContent).toContain("Reconfigure");
+    expect(panel.textContent).toContain("Needs attention");
+    expect(panel.textContent).toContain("No battery outlook is set up");
+    expect(panel.textContent).toContain("Nov 11, 08:30");
+    expect(panel.textContent).toContain("Nov 11, 07:30");
+    expect(panel.textContent).toContain("Verification pending");
+    expect(panel.querySelectorAll("section")).toHaveLength(4);
+  });
+
+  it("ignores a late setup response for the previous installation", async () => {
+    let old: (v:unknown)=>void = ()=>{};
+    const next = setupData();
+    next.battery.settings = {capacity_kwh:13.2,reserve_pct:25,target_pct:90};
+    const call = vi.fn().mockImplementationOnce(()=>new Promise(resolve=>{old=resolve;}))
+      .mockResolvedValue({response:next});
+    const data = hass(call);
+    data.entities!.other = {...data.entities!.renamed!, device_id:"two"};
+    const c = new SolarSanityToolsCard();
+    c.setConfig({type:"custom:solar-sanity-tools-card",default_tab:"setup",device_id:"one"});
+    c.hass = data; document.body.append(c);
+    await setup(c);
+    c.setConfig({type:"custom:solar-sanity-tools-card",default_tab:"setup",device_id:"two"});
+    const panel = await setup(c);
+    old({response:setupData()});
+    await setup(c);
+    expect(panel.textContent).toContain("13.2 kWh");
+    expect(call.mock.calls.map(([request]) => request.service_data.device_id)).toEqual(["one","two"]);
+  });
+
+  it("recovers after a failed check without reading the hidden tab on unrelated updates", async () => {
+    const call = vi.fn().mockRejectedValueOnce(new Error("unavailable")).mockResolvedValue({response:setupData()});
+    const c = new SolarSanityToolsCard();
+    c.setConfig({type:"custom:solar-sanity-tools-card",default_tab:"setup"});
+    c.hass = hass(call); document.body.append(c);
+    const panel = await setup(c);
+    expect(panel.querySelector('[role="alert"]')?.textContent).toContain("Setup Check could not be read");
+    panel.querySelector("button")!.click();
+    await setup(c);
+    expect(panel.textContent).toContain("Solar generation");
+    c.shadowRoot!.querySelector<HTMLButtonElement>("#tab-changes")!.click();
+    await settle(c);
+    c.hass = {...c.hass!};
+    await setup(c);
+    expect(call).toHaveBeenCalledTimes(2);
   });
 });

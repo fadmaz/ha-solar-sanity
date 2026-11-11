@@ -200,6 +200,16 @@
     }
   },
   "services": {
+    "get_setup_check": {
+      "name": "Get setup check",
+      "description": "Read the measurement, forecast, battery outlook and history readiness of one installation.",
+      "fields": {
+        "device_id": {
+          "name": "Installation",
+          "description": "The Solar Sanity device to check."
+        }
+      }
+    },
     "get_forecast_history": {
       "name": "Get forecast history",
       "description": "Read issued predictions and their observed results for one installation.",

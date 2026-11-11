@@ -30,6 +30,7 @@ export type OutlookKey = (typeof OUTLOOK_KEYS)[number];
 /** One config entry of this integration: its device, and its outlook sensors. */
 export interface Installation {
   deviceId: string;
+  batteryConfigured?: boolean;
   /** Entity ids by key. Empty when the battery outlook is not set up there. */
   outlook: Partial<Record<OutlookKey, string>>;
 }
@@ -52,6 +53,10 @@ export function findInstallations(hass: HomeAssistant | undefined): Installation
       byDevice.set(entry.device_id, found);
     }
     const key = entry.translation_key;
+    if (key === "collection_status") {
+      const configured = hass?.states[entry.entity_id]?.attributes.battery_outlook_configured;
+      if (typeof configured === "boolean") found.batteryConfigured = configured;
+    }
     if (key && (OUTLOOK_KEYS as readonly string[]).includes(key)) {
       found.outlook[key as OutlookKey] = entry.entity_id;
     }
@@ -61,6 +66,11 @@ export function findInstallations(hass: HomeAssistant | undefined): Installation
 
 export function hasOutlook(installation: Installation): boolean {
   return Boolean(installation.outlook.battery_lowest_before_sunrise);
+}
+
+/** The active configuration takes precedence over old registered outlook entities. */
+export function hasBatterySetup(installation: Installation): boolean {
+  return installation.batteryConfigured ?? hasOutlook(installation);
 }
 
 export interface Point {

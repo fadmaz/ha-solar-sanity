@@ -22,7 +22,8 @@
 import { LitElement, css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
-import { findInstallations, hasOutlook } from "./battery-model";
+import { findInstallations, hasBatterySetup, hasOutlook } from "./battery-model";
+import { TOOLS_TABS } from "./tools-card";
 import { type ArchiveMeta, dayAheadArchives, providerLabel } from "./forecast-data";
 import type { HomeAssistant, LovelaceCardConfig } from "./types/hass";
 
@@ -298,11 +299,17 @@ export class SolarSanityToolsCardEditor extends LitElement {
   @state() private _config: LovelaceCardConfig = {type: "custom:solar-sanity-tools-card"};
   public setConfig(config: LovelaceCardConfig): void { this._config = config; }
   protected render(): TemplateResult {
+    const installations = findInstallations(this.hass);
+    const selected = this._config.device_id
+      ? installations.find(i => i.deviceId === this._config.device_id)
+      : installations.length === 1 ? installations[0] : undefined;
+    const setupOnly = selected && !hasBatterySetup(selected);
+    const tabs = setupOnly ? TOOLS_TABS.filter(tab => tab.value === "setup") : TOOLS_TABS;
     const schema: FormRow[] = [
       {name: "device_id", selector: {device: {integration: "solar_sanity"}}},
-      {name: "default_tab", selector: {select: {options: [{value: "history", label: "History"}, {value: "what_if", label: "What if"}, {value: "changes", label: "Changes"}]}}},
+      {name: "default_tab", selector: {select: {options: tabs}}},
     ];
-    return html`<div lang="en" dir="ltr"><ha-form .hass=${this.hass} .data=${this._config} .schema=${schema}
+    return html`<div lang="en" dir="ltr"><ha-form .hass=${this.hass} .data=${setupOnly ? {...this._config, default_tab: "setup"} : this._config} .schema=${schema}
       .computeLabel=${(r: FormRow) => r.name === "device_id" ? "Installation" : "Default tab"}
       @value-changed=${(e: CustomEvent) => {e.stopPropagation(); const values = {...e.detail.value}; delete values.language;
         this._config = {...pruned(values), type: "custom:solar-sanity-tools-card"}; emit(this, this._config);}}></ha-form></div>`;

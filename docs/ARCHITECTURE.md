@@ -711,6 +711,24 @@ The version lives in `manifest.json` and nowhere else that matters. Its heading 
 
 ## 9. Where to start reading
 
+### Installation setup check (0.45.0)
+
+`setup_check.py` builds four groups from live channel states, the retained
+measurement window, forecast capture and verification health, the published
+battery state and the current journal summary. The response action reuses the
+loaded-device and entity read-permission checks in `services.py`. Its response
+omits source entity IDs, readings, provider entry IDs and journal records. The
+last successful read-back and the latest batch's verification status are
+separate. A provider's capture or read-back can be pending while older evidence
+is still available. A retained hour does not make a currently unavailable meter
+readable, and a valid current reading does not imply retained history.
+
+The card reads this action only when Setup is visible. The existing collection
+sensor identifies whether a battery outlook is configured, so leftover
+registry entries do not enable battery tabs after the battery is removed.
+Existing Home Assistant config and options flows own all changes. The check
+uses the same forecast-correction getters as the existing sensors.
+
 ### Issued history tools (0.40.0)
 
 The tools card reads a native response action rather than copying the journal
