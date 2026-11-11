@@ -139,7 +139,6 @@ async def test_forecast_health_separates_capture_and_readback(
     provider.add_to_hass(hass)
     entry_data[CONF_FORECAST_ENTRIES] = [provider.entry_id]
     entry = await _loaded(hass, MockConfigEntry(domain=DOMAIN, data=entry_data))
-    provider.mock_state(hass, ConfigEntryState.LOADED)
     coordinator = entry.runtime_data.coordinator
     now = dt_util.utcnow()
     verified = (now - timedelta(hours=5)).isoformat()
@@ -148,17 +147,22 @@ async def test_forecast_health_separates_capture_and_readback(
         "verified_at": verified,
         "verification": "verified",
     }
-    with patch.object(coordinator, "async_capture_forecasts", new=AsyncMock()) as capture:
-        stale = (await check(hass, entry))["forecast"]
-        assert stale["status"] == "needs_attention"
-        assert "three hours" in stale["providers"][0]["reason"]
-        health.update(captured_at=now.isoformat(), verification="pending")
-        pending = (await check(hass, entry))["forecast"]
-        assert pending["status"] == "waiting_for_data"
-        assert pending["providers"][0]["verified_at"] == verified
-        assert pending["providers"][0]["verification"] == "pending"
-        assert not pending["corrected"]
-        assert not capture.called
+    provider.mock_state(hass, ConfigEntryState.LOADED)
+    try:
+        with patch.object(coordinator, "async_capture_forecasts", new=AsyncMock()) as capture:
+            stale = (await check(hass, entry))["forecast"]
+            assert stale["status"] == "needs_attention"
+            assert "three hours" in stale["providers"][0]["reason"]
+            health.update(captured_at=now.isoformat(), verification="pending")
+            pending = (await check(hass, entry))["forecast"]
+            assert pending["status"] == "waiting_for_data"
+            assert pending["providers"][0]["verified_at"] == verified
+            assert pending["providers"][0]["verification"] == "pending"
+            assert not pending["corrected"]
+            assert not capture.called
+    finally:
+        # This test supplies capture health without starting the provider.
+        provider.mock_state(hass, ConfigEntryState.NOT_LOADED)
 
 
 async def test_history_counts_and_failure_are_read_without_regrading(
