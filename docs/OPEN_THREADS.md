@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated for 0.48.0, 2026-11-11.
+Last updated for 0.49.0, 2026-11-11.
 
 ## Latest delivery and operational acceptance
 
@@ -72,6 +72,8 @@ Last updated for 0.48.0, 2026-11-11.
 
 ## Tools development sequence
 
+- 0.49.0 adds Find best time to What if. Operational acceptance compares its
+  suggestion with a simulation at the same start on one real projection.
 - 0.40.0 adds issued history and a separate tools card. Native read-only
   actions return display fields from the in-memory journal, scoped by device
   and read permissions. Synthetic UI checks cover desktop/phone layouts.

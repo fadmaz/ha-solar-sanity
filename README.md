@@ -235,6 +235,20 @@ can differ from the main card's settled times. Inputs stay in the card.
 `solar_sanity.simulate_load` provides the same read-only comparison by device,
 including additional and uncovered energy. It never controls an appliance.
 
+Choose **Find best time** in **What if** to plan a complete run of one extra
+load. Enter its power, duration and finish deadline in the Home Assistant time
+zone. The earliest start defaults to now. Solar Sanity checks quarter hours and
+both exact ends of the allowed start window. It uses the same outlook for each
+option and only recommends a time that stays above the configured reserve
+through the end of that outlook.
+
+The recommendation and **Run now** comparison show start, finish, minimum
+battery charge and estimated additional grid energy relative to the baseline.
+The ranking prefers less additional grid energy, a higher minimum charge and
+then an earlier start. Use the suggested time to run the appliance manually.
+Calculate again when the outlook changes. The same read-only calculation is
+available as `solar_sanity.find_best_time`.
+
 Expand **Preview battery settings** in What if to compare the current power
 settings with proposed ones. Both columns use the same starting charge, solar
 forecast and consumption. The times are calculated from the issue shown above

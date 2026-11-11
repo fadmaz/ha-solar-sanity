@@ -273,6 +273,32 @@
       "name": "Rescore forecasts",
       "description": "Compare every configured forecast provider against what your roof actually produced, now rather than at the next six-hourly scoring. Returns what it found, including why it will not put a number to a provider yet."
     },
+    "find_best_time": {
+      "name": "Find best time",
+      "description": "Find a time to run one extra load within a deadline and above the battery reserve in the current outlook.",
+      "fields": {
+        "device_id": {
+          "name": "Installation",
+          "description": "The Solar Sanity battery installation to use."
+        },
+        "power_w": {
+          "name": "Extra power",
+          "description": "Finite non-negative additional power in watts."
+        },
+        "duration_minutes": {
+          "name": "Duration",
+          "description": "Whole elapsed minutes from 1 to 1440."
+        },
+        "earliest_start": {
+          "name": "Earliest start",
+          "description": "Optional ISO8601 time with a UTC offset. Leave blank to search from now."
+        },
+        "finish_by": {
+          "name": "Finish by",
+          "description": "ISO8601 deadline with a UTC offset, within the current outlook."
+        }
+      }
+    },
     "simulate_load": {
       "name": "Simulate additional load",
       "description": "Compare one extra load against the current frozen battery projection without changing published predictions.",

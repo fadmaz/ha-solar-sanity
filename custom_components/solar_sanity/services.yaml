@@ -74,3 +74,34 @@ simulate_load:
     start_at:
       selector:
         text:
+find_best_time:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
+    power_w:
+      required: true
+      default: 1000
+      selector:
+        number:
+          min: 0
+          mode: box
+          unit_of_measurement: W
+    duration_minutes:
+      required: true
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 1440
+          mode: box
+          unit_of_measurement: min
+    earliest_start:
+      selector:
+        text:
+    finish_by:
+      required: true
+      selector:
+        text:
