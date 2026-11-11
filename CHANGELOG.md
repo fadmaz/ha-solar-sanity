@@ -2,6 +2,15 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.48.0] - 2026-11-11
+
+### Added
+
+- Reserve risk and Solar surplus ready binary sensors, with per-installation
+  warning, power and hold settings. Setup explains their current states.
+- Notification blueprints for reserve risk and measured solar surplus, with an
+  optional, explicitly labelled forecast-based surplus notification.
+
 ## [0.47.0] - 2026-11-11
 
 ### Added

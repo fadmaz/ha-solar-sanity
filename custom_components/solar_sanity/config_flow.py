@@ -44,7 +44,10 @@ from .const import (
     CONF_FORECAST_ENTRIES,
     CONF_ORIGIN,
     CONF_ROLE,
+    DEFAULT_MINIMUM_SURPLUS_W,
     DEFAULT_RESERVE_PCT,
+    DEFAULT_RESERVE_WARNING_MINUTES,
+    DEFAULT_SURPLUS_HOLD_MINUTES,
     DEFAULT_TARGET_PCT,
     DOMAIN,
     OPT_BATTERY_CAPACITY_KWH,
@@ -55,7 +58,10 @@ from .const import (
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
     OPT_LOAD_PROFILE_ALTERNATE_DAYS,
+    OPT_MINIMUM_SURPLUS_W,
     OPT_PREFERRED_FORECAST_PROVIDER,
+    OPT_RESERVE_WARNING_MINUTES,
+    OPT_SURPLUS_HOLD_MINUTES,
 )
 from .discovery import Discovery, async_discover
 from .statistics_source import async_forecast_providers
@@ -155,12 +161,12 @@ def _percent_selector(low: int, high: int) -> selector.NumberSelector:
     )
 
 
-class _ManualPowerSelector(selector.NumberSelector):
-    """Keep a boolean from being coerced to a watt value by the number selector."""
+class _FiniteNumberSelector(selector.NumberSelector):
+    """Keep a boolean from being coerced to a number by the selector."""
 
     def __call__(self, data: Any) -> float:
         if isinstance(data, bool):
-            raise vol.Invalid("Enter a number in watts.")
+            raise vol.Invalid("Enter a number.")
         return super().__call__(data)
 
 
@@ -539,6 +545,26 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
         ):
             errors[OPT_LOAD_PROFILE_ALTERNATE_DAYS] = "all_schedule_days"
 
+        if user_input is not None:
+            for key, maximum in (
+                (OPT_RESERVE_WARNING_MINUTES, 1440),
+                (OPT_SURPLUS_HOLD_MINUTES, 60),
+                (OPT_MINIMUM_SURPLUS_W, None),
+            ):
+                if key not in user_input or key not in fields:
+                    continue
+                try:
+                    number = power_override(user_input[key], positive=True)
+                    if number < 1:
+                        raise ValueError("Expected a number of at least one.")
+                    if maximum is not None:
+                        if not number.is_integer() or not 1 <= number <= maximum:
+                            raise ValueError("Expected whole minutes in range.")
+                        number = int(number)
+                    manual[key] = number
+                except ValueError:
+                    errors[key] = "invalid_signal_threshold"
+
         if user_input is not None and not errors:
             # Merge, then drop what was offered and left blank. `vol.Optional`
             # omits a cleared field rather than sending an empty one, so a plain
@@ -601,15 +627,44 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
         fields[vol.Optional(OPT_BATTERY_TARGET_PCT)] = _percent_selector(10, 100)
         if battery_settings(dict(self.config_entry.options)) is not None:
             for key in CONTROL_KEYS:
-                fields[vol.Optional(key)] = _ManualPowerSelector(
+                fields[vol.Optional(key)] = _FiniteNumberSelector(
                     selector.NumberSelectorConfig(
                         step="any",
                         mode=selector.NumberSelectorMode.BOX,
                         unit_of_measurement="W",
                     )
                 )
+            fields[
+                vol.Optional(OPT_RESERVE_WARNING_MINUTES, default=DEFAULT_RESERVE_WARNING_MINUTES)
+            ] = _FiniteNumberSelector(
+                selector.NumberSelectorConfig(
+                    min=1,
+                    max=1440,
+                    step=1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="min",
+                )
+            )
+        fields[vol.Optional(OPT_MINIMUM_SURPLUS_W, default=DEFAULT_MINIMUM_SURPLUS_W)] = (
+            _FiniteNumberSelector(
+                selector.NumberSelectorConfig(
+                    min=1, step="any", mode=selector.NumberSelectorMode.BOX, unit_of_measurement="W"
+                )
+            )
+        )
+        fields[vol.Optional(OPT_SURPLUS_HOLD_MINUTES, default=DEFAULT_SURPLUS_HOLD_MINUTES)] = (
+            _FiniteNumberSelector(
+                selector.NumberSelectorConfig(
+                    min=1,
+                    max=60,
+                    step=1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="min",
+                )
+            )
+        )
 
-        # For the battery card's live flow only. The battery's mapped channels
+        # For the battery card's live flow and the measured surplus check. The mapped channels
         # are often lifetime energy counters, as on the reference installation,
         # and a counter cannot say what the battery is doing this second. The
         # sign has a default rather than a suggested value: an unticked box

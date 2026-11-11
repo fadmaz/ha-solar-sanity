@@ -713,8 +713,15 @@ def _spare_power(coordinator: SolarSanityCoordinator) -> StateType:
 def _spare_power_attrs(coordinator: SolarSanityCoordinator) -> dict[str, Any]:
     found = coordinator.battery.spare_power()
     if found is not None:
-        _spare_w, potential, source = found
-        return {"potential_w": _tens(potential), "source": source}
+        spare_w, potential, source = found
+        signals = coordinator.automation
+        return {
+            "potential_w": _tens(potential),
+            "source": source,
+            "estimated_alert_ready": (
+                source == "forecast" and signals.estimated_ready and spare_w >= signals.minimum_w
+            ),
+        }
     state = coordinator.battery.state
     if state.reason in ("soc_unavailable", "soc_stale"):
         return {"reason": REASONS[state.reason]}

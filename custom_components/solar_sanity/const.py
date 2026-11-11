@@ -6,7 +6,7 @@ from datetime import timedelta
 from typing import Final
 
 DOMAIN: Final = "solar_sanity"
-PLATFORMS: Final = ["sensor"]
+PLATFORMS: Final = ["sensor", "binary_sensor"]
 
 URL_BASE: Final = "/solar_sanity"
 CARD_FILENAME: Final = "solar-sanity.js"
@@ -38,17 +38,20 @@ OPT_BATTERY_TARGET_PCT: Final = "battery_target_pct"
 # Optional projection inputs in W. Absence selects the learned value.
 OPT_BATTERY_CHARGE_POWER_LIMIT_W: Final = "battery_charge_power_limit_w"
 OPT_INVERTER_STANDBY_W: Final = "inverter_standby_w"
-#: The battery's own power sensor, in W or kW, signed. Optional and shown only:
-#: the battery card draws the flow from it. Nothing is computed from it, because
-#: the projection already has the battery's energy from the mapped channels. It
-#: exists because those are often lifetime energy counters, as on the reference
-#: installation, and a counter cannot say what the battery is doing this second.
+#: The signed battery power sensor used by the card and measured surplus check.
+#: The projection still uses the mapped channels, which can be energy counters.
 OPT_BATTERY_POWER: Final = "battery_power_entity"
 #: Whether that sensor is positive while the battery charges. Inverters disagree;
 #: absent means yes.
 OPT_BATTERY_POWER_CHARGING_POSITIVE: Final = "battery_power_charging_positive"
 # Empty for every installation until its owner chooses a separate day group.
 OPT_LOAD_PROFILE_ALTERNATE_DAYS: Final = "load_profile_alternate_days"
+OPT_RESERVE_WARNING_MINUTES: Final = "reserve_warning_minutes"
+OPT_MINIMUM_SURPLUS_W: Final = "minimum_surplus_w"
+OPT_SURPLUS_HOLD_MINUTES: Final = "surplus_hold_minutes"
+DEFAULT_RESERVE_WARNING_MINUTES: Final = 120
+DEFAULT_MINIMUM_SURPLUS_W: Final = 1500
+DEFAULT_SURPLUS_HOLD_MINUTES: Final = 5
 #: Defaults for the two above. Twenty percent is a common lithium cut-off and
 #: errs early for the ones set lower.
 DEFAULT_RESERVE_PCT: Final = 20.0

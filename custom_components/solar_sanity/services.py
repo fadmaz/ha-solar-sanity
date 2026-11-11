@@ -63,23 +63,9 @@ def _projection_view(outlook, uncovered_wh):
 
 
 def _current_projection(coordinator, now: datetime) -> OutlookState:
-    state = coordinator.battery.state
-    # Two missed five-minute recomputations cannot be called a current basis.
-    if (
-        state.outlook is None
-        or state.reason
-        or state.computed_at is None
-        or not state.projection_id
-        or state.soc_pct is None
-        or state.computed_at > now
-        or now - state.computed_at > timedelta(minutes=10)
-    ):
-        raise ServiceValidationError("No current valid battery projection is available.")
-    if state.outlook.forecast_used and not coordinator.battery.forecast_fresh(state, now):
-        raise ServiceValidationError(
-            "The solar forecast has not been refreshed within three hours."
-        )
-    return state
+    if problem := coordinator.battery.projection_problem(now):
+        raise ServiceValidationError(problem)
+    return coordinator.battery.state
 
 
 def _frozen_inputs(state: OutlookState) -> tuple[BatterySettings, tuple[Step, ...]]:

@@ -3,9 +3,14 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated at 0.47.0, 2026-11-11.
+Last updated for 0.48.0, 2026-11-11.
 
 ## Latest delivery and operational acceptance
+
+- 0.48.0 adds installation-scoped reserve and measured surplus signals and
+  notification blueprints. The reference installation can exercise reserve and
+  optional estimated notifications. Field validation of measured readiness
+  requires a separate installation with live export power.
 
 - The Nov 11 read-only check found a real evening issue still pending after its
   window closed. Recorder returned ten of eleven required hours when queried

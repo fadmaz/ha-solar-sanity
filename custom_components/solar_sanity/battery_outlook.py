@@ -283,6 +283,23 @@ class BatteryOutlook:
         )
         return forecast_is_fresh(captured, now, FORECAST_MAX_AGE)
 
+    def projection_problem(self, now: datetime) -> str | None:
+        """Why the published projection cannot be used as a current basis."""
+        state = self.state
+        # Two missed five-minute recomputations invalidate the basis.
+        if (
+            state.outlook is None
+            or state.reason
+            or state.computed_at is None
+            or not state.projection_id
+            or state.soc_pct is None
+            or not timedelta(0) <= now - state.computed_at <= timedelta(minutes=10)
+        ):
+            return "No current valid battery projection is available."
+        if state.outlook.forecast_used and not self.forecast_fresh(state, now):
+            return "The solar forecast has not been refreshed within three hours."
+        return None
+
     def power_controls(
         self, learned_limit_w: float | None = None, learned_standby_w: float | None = None
     ) -> BatteryControls:
@@ -354,8 +371,8 @@ class BatteryOutlook:
 
         Read when the sensor is written, every thirty seconds, from the live
         readings rather than from the last refresh: the house's load moves by
-        the second, and an air conditioner switched on by this figure must see
-        it move. The battery and its charge come from the last refresh.
+        the second. The forecast-based result is for notifications. The battery
+        and its charge come from the last refresh.
         ``None`` while the charge level cannot be believed.
         """
         state = self.state

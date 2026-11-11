@@ -1,0 +1,88 @@
+blueprint:
+  name: Solar Sanity — Solar surplus notification
+  description: Notify when the selected installation has measured surplus. Optionally include estimated surplus from that same installation for notifications. Requires Solar Sanity 0.48.0 or later. Select one notification destination.
+  domain: automation
+  homeassistant:
+    min_version: 2025.11.0
+  source_url: https://github.com/fadmaz/ha-solar-sanity/blob/main/blueprints/automation/solar_sanity/solar_surplus_notification.yaml
+  input:
+    solar_surplus_ready:
+      name: Installation's Solar surplus ready
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+              integration: solar_sanity
+    include_estimated:
+      name: Include estimated surplus
+      default: false
+      selector:
+        boolean:
+    spare_solar_power:
+      name: Installation's Spare solar power now
+      description: Select this sensor from the same installation when including estimates.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              integration: solar_sanity
+    notify_entity:
+      name: Notify entity
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: notify
+    mobile_app_action:
+      name: Companion app notification action
+      description: Optional fallback when your phone has no notify entity. Enter its action, for example notify.mobile_app_my_phone.
+      default: ""
+      selector:
+        text:
+trigger_variables:
+  measured: !input solar_surplus_ready
+  include_estimated: !input include_estimated
+  spare: !input spare_solar_power
+variables:
+  destination: !input notify_entity
+  mobile_action: !input mobile_app_action
+triggers:
+  - trigger: template
+    value_template: >-
+      {{ (is_state(measured, 'on') and state_attr(measured, 'minimum_w') is not none)
+          or (include_estimated and spare and device_id(measured)
+              and device_id(measured) == device_id(spare)
+              and state_attr(spare, 'source') == 'forecast'
+              and state_attr(spare, 'estimated_alert_ready') == true) }}
+conditions:
+  - condition: template
+    value_template: >-
+      {{ (is_state(measured, 'on') and state_attr(measured, 'minimum_w') is not none)
+          or (include_estimated and spare and device_id(measured)
+              and device_id(measured) == device_id(spare)
+              and state_attr(spare, 'source') == 'forecast'
+              and state_attr(spare, 'estimated_alert_ready') == true) }}
+actions:
+  - variables:
+      message: >-
+        {% if is_state(measured, 'on') and state_attr(measured, 'minimum_w') is not none %}
+          {{ state_attr(measured, 'friendly_name') or 'Solar Sanity' }}:
+          {{ state_attr(measured, 'measured_w') }} W of measured solar surplus.
+        {% else %}
+          Estimated solar surplus: about {{ states(spare) }} W based on the corrected forecast.
+        {% endif %}
+  - choose:
+      - conditions: "{{ destination is match('^notify[.][a-z0-9_]+$') }}"
+        sequence:
+          - action: notify.send_message
+            target:
+              entity_id: !input notify_entity
+            data:
+              message: "{{ message }}"
+      - conditions: "{{ mobile_action is match('^notify[.]mobile_app_[a-z0-9_]+$') }}"
+        sequence:
+          - action: "{{ mobile_action }}"
+            data:
+              message: "{{ message }}"
+mode: single

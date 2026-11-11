@@ -47,6 +47,7 @@ from ._forecast_plan import (
 from ._local_time import local_day
 from .analysis.forecast import Correction, RoofForecast, corrected_hours, correction, roof_forecast
 from .analysis.model import Bucket, BucketSource, ChannelSpec, Quality, Role
+from .automation_signals import AutomationSignals
 from .battery_outlook import BatteryOutlook
 from .const import (
     CONF_CHANNELS,
@@ -214,6 +215,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         #: Where the battery is heading. Built here because it reads the window,
         #: the forecast and the open hour, all of which this class owns.
         self.battery = BatteryOutlook(hass, self)
+        self.automation = AutomationSignals(self)
         self.journal = OutlookJournal(self)
 
     # -- configuration ------------------------------------------------------
@@ -555,6 +557,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         a sensor once stuck at 0% for six hours because the integration loaded
         before the inverter's entities had published and nothing rewrote it.
         """
+        self.automation.async_refresh(dt_util.utcnow())
         self.async_update_listeners()
 
     def _counter_went_quiet(self, key: str, closing: datetime) -> bool:

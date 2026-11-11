@@ -22,6 +22,10 @@ interface ForecastSource {
   captured_at: string | null;
   reason: string | null;
 }
+interface AutomationSignal {
+  state: "on" | "off" | "unavailable";
+  reason: string;
+}
 export interface SetupCheckResponse {
   time_zone: string;
   measurements: Check & {channels: Channel[]};
@@ -43,6 +47,10 @@ export interface SetupCheckResponse {
     counts: {graded_nights: number; graded_mornings: number; pending: number; excluded: number} | null;
     exclusions: {reason: string; count: number}[];
   };
+  automation?: {
+    reserve_risk: (AutomationSignal & {reserve_pct: number; lead_minutes: number}) | null;
+    solar_surplus_ready: AutomationSignal & {minimum_w: number; hold_minutes: number};
+  };
 }
 
 const STATUS_LABELS: Record<Status, string> = {
@@ -60,7 +68,8 @@ const CHANNEL_LABELS: Record<string, string> = {
   battery_discharge: "Battery discharge",
 };
 const ACTION_LABELS = {configure: "Configure", reconfigure: "Reconfigure"};
-const REFRESH_KEYS = new Set(["collection_status", "forecast_last_captured_at", "forecast_archive_verified_at"]);
+const REFRESH_KEYS = new Set(["collection_status", "forecast_last_captured_at", "forecast_archive_verified_at",
+  "reserve_risk", "solar_surplus_ready"]);
 const SOURCE_KEYS = new Set(["battery_lowest_before_sunrise", "solar_energy_today_corrected", "expected_tomorrow_corrected"]);
 const SOURCE_LABELS = {battery:"Battery outlook",today:"Today's corrected forecast",tomorrow:"Tomorrow's corrected forecast"};
 const numbers = new Intl.NumberFormat("en", {maximumFractionDigits: 2});
@@ -109,7 +118,9 @@ export class SolarSanitySetupCheck extends LitElement {
           return [e.entity_id, state?.attributes.forecast_statistic_id, state?.attributes.production_from,
             state?.attributes.reason, !state || ["unknown", "unavailable"].includes(state.state)];
         }
-        return [e.entity_id, state?.state, state?.attributes.reason_code, state?.attributes.verification];
+        return [e.entity_id, state?.state, state?.attributes.reason_code, state?.attributes.verification,
+          state?.attributes.reason, state?.attributes.lead_minutes, state?.attributes.minimum_w,
+          state?.attributes.hold_minutes];
       });
     const key = JSON.stringify([device, hass.config.time_zone, health]);
     if (this._key === key) return;
@@ -240,6 +251,22 @@ export class SolarSanitySetupCheck extends LitElement {
       </ul>` : nothing}` : nothing);
   }
 
+  private _automation(data: NonNullable<SetupCheckResponse["automation"]>): TemplateResult {
+    const reserve = data.reserve_risk, surplus = data.solar_surplus_ready;
+    const labels = {on: "On", off: "Off", unavailable: "Unavailable"};
+    return html`<section aria-label="Automation signals">
+      <h3>Automation signals</h3>
+      <ul>
+        ${reserve ? html`<li><header><h4>Reserve risk</h4><span class="status">${labels[reserve.state]}</span></header>
+          <p>${numbers.format(reserve.reserve_pct)}% reserve · ${numbers.format(reserve.lead_minutes)} min warning</p>
+          <p>${reserve.reason}</p></li>` : nothing}
+        <li><header><h4>Solar surplus ready</h4><span class="status">${labels[surplus.state]}</span></header>
+          <p>${numbers.format(surplus.minimum_w)} W minimum · ${numbers.format(surplus.hold_minutes)} min hold</p>
+          <p>${surplus.reason}</p></li>
+      </ul>
+    </section>`;
+  }
+
   protected override render(): TemplateResult {
     const data = this._data;
     const needsSettings = data && [
@@ -255,6 +282,7 @@ export class SolarSanitySetupCheck extends LitElement {
         ${this._measurements(data.measurements)}
         ${this._forecast(data.forecast)}
         ${this._battery(data.battery)}
+        ${data.automation ? this._automation(data.automation) : nothing}
         ${this._history(data.history)}
       </div>` : nothing}
       ${needsSettings ? html`<p class="settings">Open <strong>Settings → Devices &amp; services → Solar Sanity</strong> and select this installation.</p>` : nothing}`;

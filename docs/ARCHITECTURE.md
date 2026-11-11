@@ -744,11 +744,11 @@ inputs. Setup reports the effective values and their provenance.
 
 ### Installation setup check (0.45.0)
 
-`setup_check.py` builds four groups from live channel states, the retained
+`setup_check.py` builds its groups from live channel states, the retained
 measurement window, forecast capture and verification health, the published
 battery state and the current journal summary. The response action reuses the
 loaded-device and entity read-permission checks in `services.py`. Its response
-omits source entity IDs, readings, provider entry IDs and journal records. The
+omits source entity IDs, raw readings, provider entry IDs and journal records. The
 last successful read-back and the latest batch's verification status are
 separate. A provider's capture or read-back can be pending while older evidence
 is still available. A retained hour does not make a currently unavailable meter
@@ -759,6 +759,17 @@ sensor identifies whether a battery outlook is configured, so leftover
 registry entries do not enable battery tabs after the battery is removed.
 Existing Home Assistant config and options flows own all changes. The check
 uses the same forecast-correction getters as the existing sensors.
+
+### Automation signals (0.48.0)
+
+`automation_signals.py` evaluates one installation at a time. Reserve risk
+shares the tools' projection freshness check and uses the raw reserve crossing.
+The measured surplus hold uses direct state reports, including unchanged
+reports, and drops on gaps or brief power changes between the 30-second ticks.
+The timer lives in memory and resets on reload. Estimated alerts qualify
+separately on those ticks from the existing corrected-forecast spare power.
+The binary sensors and Setup expose the measured result. The optional estimate
+flag lives on the existing spare-power sensor for the notification blueprint.
 
 ### Issued history tools (0.40.0)
 
