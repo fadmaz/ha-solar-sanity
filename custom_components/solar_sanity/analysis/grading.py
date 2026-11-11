@@ -8,17 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .model import Bucket
-from .observations import SocSeries, grid_charged
-
-
-def observation_hours(start: datetime, end: datetime) -> list[datetime]:
-    """Each required closed hour, including a partial boundary hour."""
-    hour = start.replace(minute=0, second=0, microsecond=0)
-    result = []
-    while hour < end:
-        result.append(hour)
-        hour += timedelta(hours=1)
-    return result
+from .observations import SocSeries, grid_charged, observation_hours
 
 
 def flow_coverage(buckets: Sequence[Bucket], start: datetime, end: datetime) -> bool:
@@ -86,7 +76,7 @@ def grade(
         "timing_resolution": "hour",
         "time_error_minutes": None,
     }
-    if actual and full_observed_at is not None and start <= full_observed_at <= end:
+    if actual and full_observed_at is not None and start <= full_observed_at < end:
         result["actual_full_at"] = full_observed_at.isoformat()
         result["timing_resolution"] = "state"
         if predicted and predicted_at is not None:

@@ -2,6 +2,15 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.43.1] - 2026-11-11
+
+### Fixed
+
+- Morning and evening predictions issued a few seconds after the hour can now
+  be graded. The recorder query includes the first hour, and recorded states
+  constrain partial hours to the original observation window. Pending issues
+  are retried without rewriting their forecasts or reopening settled results.
+
 ## [0.43.0] - 2026-11-10
 
 ### Added

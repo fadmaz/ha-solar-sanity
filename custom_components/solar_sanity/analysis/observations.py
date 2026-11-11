@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from .model import Bucket
 from .profile import GRID_CHARGE_MARGIN_WH
@@ -97,7 +97,7 @@ class SocSeries:
 
         An incomplete night is not evidence that the battery stayed above reserve.
         """
-        hours = _hours(start, end)
+        hours = observation_hours(start, end)
         if not self.covers(start, end):
             return None
         if not self.hourly_extremes:
@@ -114,7 +114,9 @@ class SocSeries:
             return False
         if self.hourly_extremes:
             values = self.maxima if extreme == "max" else self.minima
-            return all(h in values and math.isfinite(values[h]) for h in _hours(start, end))
+            return all(
+                h in values and math.isfinite(values[h]) for h in observation_hours(start, end)
+            )
         if self.at(start) is None or self.at(end) is None:
             return False
         lo = max(0, _right(self.times, start) - 1)
@@ -130,7 +132,12 @@ class SocSeries:
             return None
         if self.hourly_extremes:
             hour = next(
-                (h for h in _hours(start, end) if self.maxima.get(h, -math.inf) >= level), None
+                (
+                    h
+                    for h in observation_hours(start, end)
+                    if self.maxima.get(h, -math.inf) >= level
+                ),
+                None,
             )
             return None if hour is None else max(hour + timedelta(minutes=30), start)
         return self._first_crossing(level, start, end, rising=True)
@@ -140,7 +147,8 @@ class SocSeries:
             return None
         if self.hourly_extremes:
             hour = next(
-                (h for h in _hours(start, end) if self.minima.get(h, math.inf) <= level), None
+                (h for h in observation_hours(start, end) if self.minima.get(h, math.inf) <= level),
+                None,
             )
             return None if hour is None else max(hour + timedelta(minutes=30), start)
         return self._first_crossing(level, start, end, rising=False)
@@ -167,14 +175,33 @@ class SocSeries:
         return None
 
 
-def _hours(start: datetime, end: datetime) -> list[datetime]:
-    """Hour starts from the one containing ``start`` up to before ``end``."""
-    hour = start.replace(minute=0, second=0, microsecond=0)
+def observation_hours(start: datetime, end: datetime) -> list[datetime]:
+    """Recorder's UTC hour starts intersecting the observation window."""
+    hour = start.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+    end = end.astimezone(UTC)
     out = []
     while hour < end:
         out.append(hour)
         hour += timedelta(hours=1)
     return out
+
+
+def recorded_extremes(
+    states: Sequence[tuple[datetime, float | None]], start: datetime, end: datetime
+) -> tuple[float, float] | None:
+    """Extremes in a partial hour, including the state in effect at its start."""
+    levels: list[float | None] = []
+    for when, value in states:
+        if when <= start:
+            levels = [value]
+        elif when < end:
+            if not levels:
+                return None
+            levels.append(value)
+    valid = [value for value in levels if value is not None and 0 <= value <= 100]
+    if not valid or len(valid) != len(levels):
+        return None
+    return min(valid), max(valid)
 
 
 def soc_from_diagnostics(rows: list[dict]) -> SocSeries:

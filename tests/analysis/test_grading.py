@@ -1,11 +1,11 @@
 """Issued forecasts are scored only against complete, independent observations."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from analysis.grading import grade, summarize
 from analysis.model import Bucket, BucketSource, Quality
-from analysis.observations import SocSeries
+from analysis.observations import SocSeries, observation_hours, recorded_extremes
 
 START = datetime(2026, 11, 1, 20, tzinfo=UTC)
 
@@ -54,6 +54,27 @@ def test_every_missing_hour_excludes_the_night(gap):
     soc = observations()
     del soc.minima[START + timedelta(hours=gap)]
     assert grade(record(), soc, buckets())["reason_code"] == "soc_incomplete"
+
+
+def test_observation_hours_follow_recorder_utc_boundaries():
+    """A fractional local offset does not move the recorder's hour starts."""
+    local = timezone(timedelta(hours=5, minutes=45))
+    start = START.astimezone(local) + timedelta(seconds=51)
+    assert observation_hours(start, start + timedelta(hours=1)) == [
+        START,
+        START + timedelta(hours=1),
+    ]
+
+
+def test_partial_extremes_use_the_last_state_at_start_and_exclude_the_end():
+    """A stable battery has evidence even when there are no new state changes."""
+    start = START + timedelta(minutes=1)
+    end = START + timedelta(hours=1)
+    states = [(START, 25), (start, 80), (end, 100)]
+    assert recorded_extremes(states, start, end) == (80, 80)
+    states.insert(2, (start + timedelta(minutes=1), None))
+    assert recorded_extremes(states, start, end) is None
+    assert recorded_extremes([(end, 70)], start, end) is None
 
 
 def test_missing_battery_flow_cannot_attest_to_no_grid_charge():

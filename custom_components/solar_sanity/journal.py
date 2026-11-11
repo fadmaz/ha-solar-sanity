@@ -22,7 +22,7 @@ from .analysis.daylight_shape import SHAPE_REVISION
 from .analysis.experiment import shape_gate
 from .analysis.grading import grade, summarize
 from .analysis.load_schedule import LOAD_REVISION, WEEKDAYS
-from .analysis.observations import soc_from_diagnostics
+from .analysis.observations import observation_hours
 from .const import (
     CONF_CHANNELS,
     CONF_ENTITY_ID,
@@ -35,7 +35,7 @@ from .const import (
     OPT_BATTERY_TARGET_PCT,
 )
 from .load_trial import LoadTrial, valid_control
-from .statistics_source import async_forecast_series, async_observed_full_at, async_read_hourly_soc
+from .statistics_source import async_forecast_series, async_observed_full_at, async_read_grading_soc
 
 if TYPE_CHECKING:
     from .coordinator import SolarSanityCoordinator
@@ -463,8 +463,11 @@ class OutlookJournal:
         ):
             if record["result"]["status"] != "pending":
                 continue
-            end = datetime.fromisoformat(record["until"])
-            if now < end + timedelta(minutes=15):
+            start = datetime.fromisoformat(record["issued_at"]).astimezone(UTC)
+            end = datetime.fromisoformat(record["until"]).astimezone(UTC)
+            # A partial last hour still needs a closed flow bucket and time for
+            # Recorder to settle, just as an hour-aligned observation does.
+            if now < observation_hours(start, end)[-1] + timedelta(hours=1, minutes=15):
                 continue
             context = self.load_trial.context() if is_load else self.context()
             if record["context"] != context or (
@@ -472,9 +475,8 @@ class OutlookJournal:
             ):
                 record["result"] = {"status": "excluded", "reason_code": "context_changed"}
             else:
-                start = datetime.fromisoformat(record["issued_at"])
-                rows = await async_read_hourly_soc(self.hass, record["soc_entity"], start, end)
-                if rows is None:
+                soc = await async_read_grading_soc(self.hass, record["soc_entity"], start, end)
+                if soc is None:
                     if now < end + timedelta(days=1):
                         continue
                     result = {"status": "excluded", "reason_code": "history_read_failed"}
@@ -490,7 +492,7 @@ class OutlookJournal:
                         )
                     result = grade(
                         record,
-                        soc_from_diagnostics(rows),
+                        soc,
                         self.coordinator.buckets,
                         full_observed_at=observed,
                     )
