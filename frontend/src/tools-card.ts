@@ -237,6 +237,12 @@ export class SolarSanityToolsCard extends LitElement {
     .solar-coverage p {margin:6px 0}
     ::selection {background:var(--primary-color);color:var(--text-primary-color,#fff)}
     .changes{width:100%;border-collapse:collapse;table-layout:fixed;font-size:.875rem}.changes td,.changes th{text-align:left;padding:12px 4px;border-bottom:1px solid var(--divider-color);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.changes th{font-weight:500}.changes tbody th{color:var(--secondary-text-color)}
-    @media(max-width:420px){.root{padding:16px}dl{grid-template-columns:1fr}.outcome{grid-column:auto}}
+    @media(max-width:420px){
+      .root{padding:16px}
+      [role=tablist]{gap:6px}
+      [role=tab]{padding-inline:8px}
+      dl{grid-template-columns:1fr}
+      .outcome{grid-column:auto}
+    }
   `;
 }

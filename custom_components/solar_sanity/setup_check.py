@@ -106,6 +106,7 @@ def _provider(coordinator: SolarSanityCoordinator, entry_id: str, now: datetime)
     entry = coordinator.hass.config_entries.async_get_entry(entry_id)
     health = coordinator.journal.health.get(entry_id, {})
     capture = health.get("captured_at")
+    verification = health.get("verification")
     code = health.get("reason_code")
     if entry is None:
         check = _check(
@@ -123,8 +124,10 @@ def _provider(coordinator: SolarSanityCoordinator, entry_id: str, now: datetime)
         check = _check(WAITING, COLLECTION_REASONS[code])
     elif not capture:
         check = _check(WAITING, COLLECTION_REASONS["waiting_for_capture"])
-    elif health.get("verification") != "verified":
-        check = _check(WAITING, COLLECTION_REASONS["archive_pending"])
+    elif verification != "verified":
+        check = _check(
+            WAITING, None if verification == "pending" else COLLECTION_REASONS["archive_pending"]
+        )
     else:
         check = _check(READY)
     return {
@@ -132,14 +135,14 @@ def _provider(coordinator: SolarSanityCoordinator, entry_id: str, now: datetime)
         "integration": entry.domain if entry is not None else None,
         "captured_at": capture,
         "verified_at": health.get("verified_at"),
-        "verification": health.get("verification"),
+        "verification": verification,
     }
 
 
 def _forecast(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
     providers = [
         _provider(coordinator, entry_id, now)
-        for entry_id in coordinator.entry.data.get(CONF_FORECAST_ENTRIES, [])
+        for entry_id in coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or ()
     ]
     figures = coordinator.roof_forecast() if providers else None
     corrected = (
