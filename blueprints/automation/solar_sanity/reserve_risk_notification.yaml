@@ -1,0 +1,64 @@
+blueprint:
+  name: Solar Sanity — Reserve risk notification
+  description: Notify when the selected installation reaches reserve or is projected to reach it within its warning lead time. Requires Solar Sanity 0.48.0 or later. Select one notification destination.
+  domain: automation
+  homeassistant:
+    min_version: 2025.11.0
+  source_url: https://github.com/fadmaz/ha-solar-sanity/blob/main/blueprints/automation/solar_sanity/reserve_risk_notification.yaml
+  input:
+    reserve_risk:
+      name: Installation's Reserve risk
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+              integration: solar_sanity
+    notify_entity:
+      name: Notify entity
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: notify
+    mobile_app_action:
+      name: Companion app notification action
+      description: Optional fallback when your phone has no notify entity. Enter its action, for example notify.mobile_app_my_phone.
+      default: ""
+      selector:
+        text:
+variables:
+  risk: !input reserve_risk
+  destination: !input notify_entity
+  mobile_action: !input mobile_app_action
+triggers:
+  - trigger: state
+    entity_id: !input reserve_risk
+    to: "on"
+conditions:
+  - condition: template
+    value_template: "{{ is_state(risk, 'on') and state_attr(risk, 'reserve_pct') is not none }}"
+actions:
+  - variables:
+      message: >-
+        {{ state_attr(risk, 'friendly_name') or 'Solar Sanity' }}:
+        {% set reserve = state_attr(risk, 'reserve_pct') %}
+        {% set when = as_datetime(state_attr(risk, 'reserve_at'), none) %}
+        {% if state_attr(risk, 'at_reserve') %}
+          The battery is already at or below its {{ reserve }}% reserve.
+        {% elif when %}
+          The battery is expected to reach its {{ reserve }}% reserve at {{ as_local(when).strftime('%b %d, %H:%M') }}.
+        {% endif %}
+  - choose:
+      - conditions: "{{ destination is match('^notify[.][a-z0-9_]+$') }}"
+        sequence:
+          - action: notify.send_message
+            target:
+              entity_id: "{{ destination }}"
+            data:
+              message: "{{ message }}"
+      - conditions: "{{ mobile_action is match('^notify[.]mobile_app_[a-z0-9_]+$') }}"
+        sequence:
+          - action: "{{ mobile_action }}"
+            data:
+              message: "{{ message }}"
+mode: single

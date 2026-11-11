@@ -102,19 +102,25 @@
           "battery_charge_power_limit_w": "Battery charge power limit",
           "inverter_standby_w": "Inverter standby draw",
           "load_profile_alternate_days": "Alternate schedule days",
-          "preferred_forecast_provider": "Preferred forecast provider"
+          "preferred_forecast_provider": "Preferred forecast provider",
+          "reserve_warning_minutes": "Reserve warning lead time",
+          "minimum_surplus_w": "Minimum measured surplus",
+          "surplus_hold_minutes": "Surplus hold time"
         },
         "data_description": {
           "battery_soc_entity": "Optional. Your battery's state of charge, as a percentage. With the capacity below, it is what the battery outlook projects from.",
           "battery_capacity_kwh": "How much energy the battery holds between empty and full, as its specification or your inverter states it. The battery outlook needs this to turn a percentage into hours; without it the outlook sensors are not created.",
           "battery_reserve_pct": "The level the battery is not taken below, usually your inverter's cut-off. \"Reaches reserve\" in the outlook means reaching this, not zero.",
           "battery_target_pct": "The level the battery is charged to, usually 100. Lower it if your inverter stops charging early; sunshine beyond it counts as spare.",
-          "battery_power_entity": "Optional, for the battery card only: a sensor of the power going into or out of the battery right now, in W or kW. Pick it when the battery channels you mapped are energy totals, which cannot show what the battery is doing this second.",
+          "battery_power_entity": "Optional signed power in W or kW for the battery card and measured surplus check. Use it if battery discharge is mapped to an energy total.",
           "battery_power_charging_positive": "Untick if that sensor reads positive while the battery discharges.",
           "battery_charge_power_limit_w": "Maximum power reaching the battery, in watts. Leave blank for Auto.",
           "inverter_standby_w": "Power the inverter draws beyond measured house load, in watts. Use zero when the house meter already includes it. Leave blank for Auto.",
           "load_profile_alternate_days": "Optional experiment. Selected days form one consumption group; all remaining days form the other, in Home Assistant time. Leave empty to use one weekly schedule. No days are selected automatically. Comparison waits for the morning experiment decision and does not change production predictions.",
-          "preferred_forecast_provider": "Choose which provider to try first. Solar Sanity uses the next eligible provider when the preferred forecast cannot serve a result."
+          "preferred_forecast_provider": "Choose which provider to try first. Solar Sanity uses the next eligible provider when the preferred forecast cannot serve a result.",
+          "reserve_warning_minutes": "Warn this many minutes before the battery is projected to reach its configured reserve (1–1440).",
+          "minimum_surplus_w": "Minimum surplus power in watts. Also applies to estimated alerts if you opt in through the notification blueprint.",
+          "surplus_hold_minutes": "How many whole minutes the surplus must stay at or above the threshold (1–60)."
         }
       }
     },
@@ -122,10 +128,19 @@
       "target_below_reserve": "The charging target must be above the reserve, or the battery has no range to use.",
       "all_schedule_days": "Choose at most six days. Leave the list empty to use one schedule for the whole week.",
       "invalid_charge_limit": "Enter a finite charge power limit above zero.",
-      "invalid_standby": "Enter a finite standby draw of zero or more."
+      "invalid_standby": "Enter a finite standby draw of zero or more.",
+      "invalid_signal_threshold": "Enter a finite value in range. Enter durations in whole minutes."
     }
   },
   "entity": {
+    "binary_sensor": {
+      "reserve_risk": {
+        "name": "Reserve risk"
+      },
+      "solar_surplus_ready": {
+        "name": "Solar surplus ready"
+      }
+    },
     "sensor": {
       "forecast_bias": {
         "name": "{provider} accuracy"

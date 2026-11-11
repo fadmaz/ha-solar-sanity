@@ -355,10 +355,16 @@ def _history(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
 
 def setup_check(coordinator: SolarSanityCoordinator, now: datetime) -> dict[str, Any]:
     """Return an allowlisted view, without source entity IDs or journal records."""
+    signals = coordinator.automation
+    reserve = signals.reserve(now)
     return {
         "time_zone": coordinator.hass.config.time_zone,
         "measurements": _measurements(coordinator),
         "forecast": _forecast(coordinator, now),
         "battery": _battery(coordinator, now),
         "history": _history(coordinator, now),
+        "automation": {
+            "reserve_risk": reserve.view() if reserve is not None else None,
+            "solar_surplus_ready": signals.measured.view(),
+        },
     }

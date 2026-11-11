@@ -139,6 +139,25 @@ describe("issued history tools",()=>{
 });
 
 describe("setup check tools", () => {
+  it("shows installation thresholds and why measured surplus is unavailable", async () => {
+    const result = setupData();
+    result.automation = {
+      reserve_risk: {state:"off",reason:"No reserve risk within the warning lead time.",
+        reserve_pct:35,lead_minutes:90},
+      solar_surplus_ready: {state:"unavailable",reason:"No grid export measurement.",
+        minimum_w:1700,hold_minutes:4},
+    };
+    const c = new SolarSanityToolsCard();
+    c.setConfig({type:"custom:solar-sanity-tools-card",default_tab:"setup"});
+    c.hass = hass(vi.fn().mockResolvedValue({response:result}));
+    document.body.append(c);
+    const panel = await setup(c);
+    const signals = panel.querySelector('section[aria-label="Automation signals"]')!;
+    expect(signals.textContent).toContain("35% reserve · 90 min warning");
+    expect(signals.textContent).toContain("1,700 W minimum · 4 min hold");
+    expect(signals.textContent).toContain("No grid export measurement.");
+  });
+
   it("shows the actual sources for different horizons and refreshes after a source switch", async () => {
     const result = setupData();
     const source = {provider:"Preferred roof",status:"preferred" as const,

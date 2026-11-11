@@ -344,8 +344,9 @@ of the battery outlook and the corrected forecasts for today and tomorrow.
 Everything chosen at setup can be changed afterwards through **Reconfigure**,
 without losing any history. Battery settings are also under **Configure**,
 with one more: an optional **battery power** sensor, for the battery card's
-live line. Pick it when your battery channels are energy totals, which cannot
-say what the battery is doing this second, and untick "positive while
+live line and the measured surplus check. Pick it when your battery channels
+are energy totals, which cannot say what the battery is doing this second,
+and untick "positive while
 charging" if your inverter signs it the other way.
 Adding a second entry for the same house is caught rather than allowed to
 quietly corrupt a shared forecast archive.
@@ -358,6 +359,38 @@ Clear either field for Auto. Setup shows the value used and whether it comes
 from a manual setting, measurements or the default. History keeps each issued
 prediction and its original settings context.
 
+## Automation signals and notifications
+
+**Configure** sets the thresholds for each installation. **Reserve warning lead
+time** defaults to 120 minutes (1–1440). **Reserve risk** turns on when the
+battery is at or below its configured reserve, or a current outlook expects it
+to reach reserve within that lead time. It is unavailable when there is too
+little evidence to decide.
+
+**Minimum measured surplus** defaults to 1,500 W and **Surplus hold time**
+defaults to 5 minutes (1–60). **Solar surplus ready** needs live solar, grid
+export and grid import power. Battery installations also need direct discharge
+power or the optional signed battery power sensor in Configure. The export
+margin subtracts import and battery discharge and is capped by measured solar
+power. Import or discharge above 50 W stops the signal. Each meter must report
+at least every three minutes. An outage or reload restarts the hold.
+**Setup → Automation signals** shows the configured thresholds and why each
+signal is on, off or unavailable.
+
+Import a blueprint under **Settings → Automations & scenes → Blueprints**,
+then select your installation's entity and a notification destination:
+
+- [Reserve risk notification](https://github.com/fadmaz/ha-solar-sanity/blob/main/blueprints/automation/solar_sanity/reserve_risk_notification.yaml)
+- [Solar surplus notification](https://github.com/fadmaz/ha-solar-sanity/blob/main/blueprints/automation/solar_sanity/solar_surplus_notification.yaml)
+
+Select a notify entity or enter a Companion App action such as
+`notify.mobile_app_my_phone`. Solar surplus notifications can also include
+**Estimated solar surplus** by opting in and selecting **Spare solar power now**
+from the same installation. This is useful for a battery installation without
+an export meter. The estimate uses a corrected forecast and the same threshold
+and hold time. **Solar surplus ready** is the signal to use when an automation
+needs proof of measured export. The blueprints send notifications only.
+
 ## Entities
 
 | Entity | Meaning |
@@ -369,7 +402,9 @@ prediction and its original settings context.
 | `sensor.*_spare_solar` | Sunshine the battery will have no room for. Needs a forecast provider |
 | `sensor.*_usable_battery_energy` | What the battery can still give the house before its reserve, after the inverter's loss. A measurement, recorded as a statistic |
 | `sensor.*_expected_use_tonight` | What the house and the inverter will use from dusk until the sun takes over, from the learned hours. Its `from` and `until` say when |
-| `sensor.*_spare_solar_power_now` | Solar power going to waste now, because the battery is full or charging as fast as it can: what an air conditioner or a water heater could take at no cost to the battery or the grid. Worked every 30 seconds from the live readings; `potential_w` is what the sun could give, and `source` says whether that was measured or, while production is held down, the corrected forecast |
+| `sensor.*_spare_solar_power_now` | Modelled surplus after house load and battery charging. `potential_w` is what the sun could give and `source` identifies measured production or the corrected forecast. The forecast-based result is for notifications |
+| `binary_sensor.*_reserve_risk` | The battery is at reserve or a valid outlook predicts reaching it within the configured warning lead time |
+| `binary_sensor.*_solar_surplus_ready` | Direct measurements support surplus at or above the configured threshold for the full hold time |
 | `sensor.*_solar_power_now_corrected` | Your provider's forecast power now, as your roof would make it. Drawn between the hourly averages |
 | `sensor.*_solar_energy_this_hour_corrected` | This hour's forecast, corrected |
 | `sensor.*_solar_energy_next_hour_corrected` | The next sixty minutes, corrected |

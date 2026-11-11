@@ -153,6 +153,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     # cannot see a kettle that ran for ninety seconds between two ticks.
     entry.async_on_unload(coordinator.async_track_power())
     entry.async_on_unload(coordinator.battery.async_track())
+    for unsubscribe in coordinator.automation.async_track():
+        entry.async_on_unload(unsubscribe)
 
     @callback
     def _sample(_now: Any) -> None:
@@ -191,6 +193,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     # Before the platforms are set up, so the outlook sensors are born with a
     # projection, or with the reason there is none, rather than blank.
     coordinator.battery.refresh(force=True)
+    coordinator.notify_live_entities()
     await coordinator.journal.async_update()
 
     _remove_retired_entities(hass, entry)

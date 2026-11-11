@@ -103,6 +103,8 @@ class TestConfigFlowSchemas:
             OPT_BATTERY_SOC,
             OPT_BATTERY_TARGET_PCT,
             OPT_LOAD_PROFILE_ALTERNATE_DAYS,
+            OPT_MINIMUM_SURPLUS_W,
+            OPT_SURPLUS_HOLD_MINUTES,
         )
 
         stub = SimpleNamespace(config_entry=SimpleNamespace(data={}, options={}, runtime_data=None))
@@ -118,6 +120,8 @@ class TestConfigFlowSchemas:
             OPT_BATTERY_POWER,
             OPT_BATTERY_POWER_CHARGING_POSITIVE,
             OPT_LOAD_PROFILE_ALTERNATE_DAYS,
+            OPT_MINIMUM_SURPLUS_W,
+            OPT_SURPLUS_HOLD_MINUTES,
         }
         assert schema({})[OPT_LOAD_PROFILE_ALTERNATE_DAYS] == []
 
