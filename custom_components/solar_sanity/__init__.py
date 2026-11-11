@@ -39,6 +39,7 @@ from .const import (
 )
 from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .journal import JOURNAL_KEY, JOURNAL_VERSION
+from .reminders import reminder_store
 from .repairs import RETIRED_CODES, remove_energy_issues, sync_energy_issues
 from .statistics_source import (
     async_classify_statistics,
@@ -121,7 +122,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     coordinator = SolarSanityCoordinator(hass, entry)
     await coordinator.async_restore()
     await coordinator.journal.async_restore()
+    await coordinator.reminders.async_restore()
     entry.async_on_unload(coordinator.journal.cancel)
+    entry.async_on_unload(coordinator.reminders.async_stop)
 
     await _async_backfill(hass, coordinator)
     await coordinator.async_config_entry_first_refresh()
@@ -198,12 +201,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
 
     _remove_retired_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    coordinator.reminders.async_start()
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) -> bool:
-    """Unload. ``runtime_data`` is cleared for us, so there is no bookkeeping."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    """Stop reminders before replacing the loaded entry."""
+    reminders = entry.runtime_data.coordinator.reminders
+    await reminders.async_quiesce()
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unloaded:
+        reminders.async_start()
+    return unloaded
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -219,6 +228,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     except Exception:
         _LOGGER.debug("could not remove state for %s", entry.entry_id, exc_info=True)
     await Store(hass, JOURNAL_VERSION, f"{JOURNAL_KEY}.{entry.entry_id}").async_remove()
+    await reminder_store(hass, entry.entry_id).async_remove()
 
 
 async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinator) -> None:

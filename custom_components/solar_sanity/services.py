@@ -1,4 +1,4 @@
-"""Read-only tools over the loaded installation's private in-memory data."""
+"""Native response actions scoped to the selected Solar Sanity installation."""
 
 import math
 from dataclasses import replace
@@ -15,10 +15,10 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .analysis.history import history_rows
-from .analysis.outlook import BatterySettings, Outlook, Step, project
+from .analysis.outlook import BatterySettings, Outlook, project
 from .analysis.scenarios import LoadTiming, compare_load, find_best_time
 from .battery_controls import control_view, power_override
-from .battery_outlook import OutlookState
+from .battery_outlook import OutlookState, frozen_inputs
 from .const import (
     DOMAIN,
     OPT_BATTERY_CHARGE_POWER_LIMIT_W,
@@ -93,20 +93,6 @@ def _timing_view(timing: LoadTiming | None) -> dict | None:
     }
 
 
-def _frozen_inputs(state: OutlookState) -> tuple[BatterySettings, tuple[Step, ...]]:
-    steps = tuple(
-        Step(
-            datetime.fromisoformat(row["start"]),
-            row["hours"],
-            row["pv_wh"],
-            row["load_wh"],
-            row["daylight_wh"],
-        )
-        for row in state.inputs["steps"]
-    )
-    return BatterySettings(**state.inputs["battery"]), steps
-
-
 def _preview_power(value: object, *, positive: bool) -> float | None:
     if value is None:
         return None
@@ -158,7 +144,7 @@ async def coordinator_for(hass: HomeAssistant, call: ServiceCall):
 
 @callback
 def async_setup_tools(hass: HomeAssistant) -> None:
-    """Register native response actions; none triggers capture, grading or control."""
+    """Register native response actions for analysis and load reminders."""
 
     async def get_setup_check(call: ServiceCall):
         coordinator = await coordinator_for(hass, call)
@@ -186,7 +172,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
             manual_standby_w=requested[OPT_INVERTER_STANDBY_W],
         )
         try:
-            settings, steps = _frozen_inputs(state)
+            settings, steps = frozen_inputs(state)
             current = project(
                 state.soc_pct, settings, steps, forecast_used=state.outlook.forecast_used
             )
@@ -262,7 +248,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         now = dt_util.utcnow()
         state = _current_projection(coordinator, now)
         try:
-            settings, steps = _frozen_inputs(state)
+            settings, steps = frozen_inputs(state)
             comparison = compare_load(
                 state.soc_pct,
                 settings,
@@ -304,7 +290,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         now = dt_util.utcnow()
         state = _current_projection(coordinator, now)
         try:
-            settings, steps = _frozen_inputs(state)
+            settings, steps = frozen_inputs(state)
             result = find_best_time(
                 state.soc_pct,
                 settings,
@@ -319,6 +305,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
             raise ServiceValidationError(str(err)) from err
         return {
             "basis": _projection_basis(state, settings, hass.config.time_zone),
+            "solar_corrected": state.outlook.forecast_used and state.scale is not None,
             "recommendation": _timing_view(result.recommendation),
             "run_now": _timing_view(result.run_now),
             "reason_code": result.reason_code,
@@ -336,6 +323,58 @@ def async_setup_tools(hass: HomeAssistant) -> None:
                 vol.Optional("earliest_start"): _start_time,
                 vol.Required("finish_by"): _start_time,
             }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def reminders_for(call: ServiceCall):
+        user_id = call.context.user_id
+        user = await hass.auth.async_get_user(user_id) if user_id is not None else None
+        if user is None or not user.is_active or not user.is_admin:
+            raise Unauthorized()
+        return (await coordinator_for(hass, call)).reminders
+
+    async def schedule_load_reminder(call: ServiceCall):
+        reminders = await reminders_for(call)
+        return await reminders.async_schedule(call.context.user_id, call.data)
+
+    async def get_load_reminder(call: ServiceCall):
+        return (await reminders_for(call)).view()
+
+    async def cancel_load_reminder(call: ServiceCall):
+        reminders = await reminders_for(call)
+        return await reminders.async_cancel(call.data["reminder_id"])
+
+    hass.services.async_register(
+        DOMAIN,
+        "schedule_load_reminder",
+        schedule_load_reminder,
+        schema=vol.Schema(
+            {
+                vol.Required("device_id"): cv.string,
+                vol.Required("projection_id"): cv.string,
+                vol.Required("destination"): cv.string,
+                vol.Required("power_w"): _power,
+                vol.Required("duration_minutes"): _duration,
+                vol.Optional("earliest_start"): _start_time,
+                vol.Required("finish_by"): _start_time,
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "get_load_reminder",
+        get_load_reminder,
+        schema=vol.Schema({vol.Required("device_id"): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "cancel_load_reminder",
+        cancel_load_reminder,
+        schema=vol.Schema(
+            {vol.Required("device_id"): cv.string, vol.Required("reminder_id"): cv.string}
         ),
         supports_response=SupportsResponse.ONLY,
     )

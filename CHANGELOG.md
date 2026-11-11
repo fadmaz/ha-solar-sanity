@@ -2,6 +2,15 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.50.0] - 2026-11-11
+
+### Added
+
+- Remind me in What if saves a single manual-run reminder for an installation.
+  It follows the corrected solar outlook and checks the deadline and battery
+  reserve again before sending to the selected Home Assistant notification
+  destination. Scheduled reminders survive Home Assistant restarts.
+
 ## [0.49.0] - 2026-11-11
 
 ### Added

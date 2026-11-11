@@ -105,3 +105,61 @@ find_best_time:
       required: true
       selector:
         text:
+schedule_load_reminder:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
+    projection_id:
+      required: true
+      selector:
+        text:
+    destination:
+      required: true
+      selector:
+        text:
+    power_w:
+      required: true
+      default: 1000
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+          unit_of_measurement: W
+    duration_minutes:
+      required: true
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 1440
+          mode: box
+          unit_of_measurement: min
+    earliest_start:
+      selector:
+        text:
+    finish_by:
+      required: true
+      selector:
+        text:
+get_load_reminder:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
+cancel_load_reminder:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
+    reminder_id:
+      required: true
+      selector:
+        text:

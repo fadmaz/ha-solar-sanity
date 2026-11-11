@@ -169,6 +169,21 @@ class OutlookState:
         return self.reason not in ("soc_unavailable", "soc_stale")
 
 
+def frozen_inputs(state: OutlookState) -> tuple[BatterySettings, tuple[Step, ...]]:
+    """Reconstruct the exact model inputs used by a published outlook."""
+    steps = tuple(
+        Step(
+            datetime.fromisoformat(row["start"]),
+            row["hours"],
+            row["pv_wh"],
+            row["load_wh"],
+            row["daylight_wh"],
+        )
+        for row in state.inputs["steps"]
+    )
+    return BatterySettings(**state.inputs["battery"]), steps
+
+
 def battery_settings(options: dict[str, Any]) -> BatterySettings | None:
     """The configured battery, or ``None`` until the outlook can run.
 

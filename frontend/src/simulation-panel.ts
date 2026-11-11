@@ -2,8 +2,9 @@
 import {LitElement, css, html, svg, nothing, type PropertyValues, type TemplateResult} from "lit";
 import {customElement,property,state} from "lit/decorators.js";
 import {safeTimeZone} from "./forecast-data";
-import {localInstants,type LoadPlanResponse,type SimulationProjection,type SimulationResponse} from "./simulation";
+import {localInstants,type LoadPlanRequest,type LoadPlanResponse,type SimulationProjection,type SimulationResponse} from "./simulation";
 import type {HomeAssistant} from "./types/hass";
+import "./load-reminder-panel";
 
 const planReasons: Record<NonNullable<LoadPlanResponse["reason_code"]>, string> = {
   window_too_short: "The load cannot finish by the deadline. Allow more time.",
@@ -29,7 +30,7 @@ export class SolarSanitySimulation extends LitElement {
   @state() protected _loading=false;
   @state() protected _error="";
   @state() protected _result?:SimulationResponse;
-  @state() private _plan?:LoadPlanResponse;
+  @state() private _plan?:{response:LoadPlanResponse; request:LoadPlanRequest};
   @state() private _planning=false;
   private _timer?:ReturnType<typeof setTimeout>;
   private _endTimer?:ReturnType<typeof setTimeout>;
@@ -120,11 +121,11 @@ export class SolarSanitySimulation extends LitElement {
   private async _findBestTime():Promise<void> {
     if(this._planning||this._validation()||!this.active||!this.hass||!this.projectionId) return;
     const generation=this._generation;
-    const data={
+    const data:LoadPlanRequest={
       device_id:this.deviceId,
       power_w:Number(this._power),
       duration_minutes:Number(this._minutes),
-      finish_by:this._candidates(this._deadline)[Number(this._deadlineFold)],
+      finish_by:this._candidates(this._deadline)[Number(this._deadlineFold)]!,
       ...(this._local?{earliest_start:this._candidates()[Number(this._fold)]}:{}),
     };
     this._planning=true;
@@ -139,7 +140,7 @@ export class SolarSanitySimulation extends LitElement {
         this._error="The outlook changed. Find the best time again.";
         return;
       }
-      this._plan=response;
+      this._plan={response,request:data};
     } catch(error) {
       if(generation===this._generation && this.isConnected) {
         this._error=typeof (error as {message?:unknown})?.message==="string"?(error as {message:string}).message:
@@ -198,6 +199,8 @@ export class SolarSanitySimulation extends LitElement {
   protected render():TemplateResult {
     const r=this._result,validation=this._validation(),candidates=this._candidates();
     const planning=this._mode==="best_time",deadlineCandidates=planning?this._candidates(this._deadline):[];
+    const plan=this._plan?.response;
+    const currentPlan=plan?.basis.projection_id===this.projectionId && !!plan.recommendation;
     return html`<section lang="en" dir="ltr"><p>Compare one extra load with the current projection. Calculated times can differ from the main card's settled times.</p>
       <div class="form"><label>Extra power (W)<input type="number" min="0" step="any" .value=${this._power} @input=${(e:Event)=>this._input("_power",e)}></label>
       <label>Duration (minutes)<input type="number" min="1" max="1440" step="1" .value=${this._minutes} @input=${(e:Event)=>this._input("_minutes",e)}></label>
@@ -215,7 +218,13 @@ export class SolarSanitySimulation extends LitElement {
       ${this._started?html`<span class="muted" role="status">${this._loading?"Updating…":"Updates automatically with the outlook"}</span>`:nothing}
       ${validation||this._error?html`<p role="alert">${validation??this._error}</p>`:nothing}
       ${!this.projectionId?html`<p>Waiting for a valid current projection.</p>`:nothing}
-      ${planning && this._plan?this._planView(this._plan):nothing}
+      ${planning && plan?this._planView(plan):nothing}
+      ${this.hass?.user?.is_admin?html`
+        ${planning && currentPlan && !plan?.solar_corrected?html`<p>Reminders require a current corrected solar forecast.</p>`:nothing}
+        <solar-sanity-load-reminder .hass=${this.hass} .deviceId=${this.deviceId}
+          .active=${this.active} .projectionId=${this.projectionId}
+          .request=${planning && currentPlan && plan?.solar_corrected?this._plan?.request:undefined}>
+        </solar-sanity-load-reminder>`:nothing}
       ${r?html`<p>Based on ${this._time(r.basis.computed_at)} · ${r.basis.forecast_used?"Solar forecast":"Production history"}</p>${this._graph(r)}
         <table><thead><tr><th>Result</th><th>Baseline</th><th>Extra load</th></tr></thead><tbody>
         <tr><th>Night minimum</th><td>${r.baseline.lowest_pct===null?"—":`${r.baseline.lowest_pct.toFixed(1)}%`}</td><td>${r.scenario.lowest_pct===null?"—":`${r.scenario.lowest_pct.toFixed(1)}%`}</td></tr>
