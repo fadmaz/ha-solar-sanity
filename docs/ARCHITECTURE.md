@@ -711,6 +711,22 @@ The version lives in `manifest.json` and nowhere else that matters. Its heading 
 
 ## 9. Where to start reading
 
+### Preferred forecast provider (0.47.0)
+
+The coordinator tracks valid capture times per provider and the providers that
+returned usable data in the last completed cycle. An explicit preference
+selects the first fresh provider covering each output's horizon. Battery
+selection needs hours through the current hour. The two corrected forecasts
+select by local calendar date and use their own provider's roof correction.
+Auto follows the existing capture and provider order, including retention of
+the last usable batch for the live outlook when a whole capture fails.
+
+Archive ownership, submission and read-back are independent of selection.
+Each battery projection freezes its provider and capture time for journal
+issues and simulations. Accuracy and interval calibration group observations
+by source and setup. Automatic fallback does not change the setup identity or
+reopen an issued prediction.
+
 ### Battery projection controls (0.46.0)
 
 The battery outlook resolves manual and learned power values once per issue.

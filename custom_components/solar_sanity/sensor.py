@@ -78,6 +78,7 @@ def _performance_attrs(coordinator: SolarSanityCoordinator, key: str) -> dict[st
         "window_days": 28,
         "sample_count": summary[count_key],
         "model_revision": MODEL_REVISION,
+        "forecast_source": summary["forecast_source"],
         "excluded": summary["excluded"],
         "pending": summary["pending"],
         "last_7_days": coordinator.journal.summary(7),
@@ -565,6 +566,7 @@ def _reserve_attrs(state: OutlookState) -> dict[str, Any]:
 
 def _lowest_attrs(state: OutlookState) -> dict[str, Any]:
     outlook = state.outlook
+    source = state.forecast_source
     production: str | None = None
     if outlook is not None:
         production = f"forecast: {state.provider}" if outlook.forecast_used else "history"
@@ -586,6 +588,9 @@ def _lowest_attrs(state: OutlookState) -> dict[str, Any]:
         "target_pct": state.settings.get("target_pct"),
         "consumption_days": state.load_days,
         "production_from": production,
+        "forecast_statistic_id": forecast_statistic_id(source.provider_id)
+        if outlook is not None and source is not None and source.provider_id is not None
+        else None,
         **_scales(state),
         "inverter_standby_w": _standby(state),
         # Disclosed rather than modelled. The projection never counts the grid

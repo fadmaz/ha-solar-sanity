@@ -1,5 +1,6 @@
 """Present the installation's current setup without starting collection or grading."""
 
+from collections import Counter
 from datetime import datetime
 from typing import Any
 
@@ -7,7 +8,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
 
-from ._forecast_plan import forecast_is_fresh
+from ._forecast_plan import FORECAST_SOURCE_REASONS, ForecastSelection, forecast_is_fresh
 from .analysis.history import OBSERVATION_REASONS
 from .analysis.model import ChannelSpec, Role
 from .battery_controls import control_view
@@ -140,25 +141,67 @@ def _provider(coordinator: SolarSanityCoordinator, entry_id: str, now: datetime)
     }
 
 
+def _source_view(
+    selection: ForecastSelection,
+    labels: dict[str, str],
+    preferred: str | None,
+    *,
+    available: bool,
+    unavailable_reason: str | None = None,
+    history: bool = False,
+) -> dict:
+    provider = selection.provider_id
+    reason = FORECAST_SOURCE_REASONS.get(selection.reason_code)
+    if history:
+        status = "history"
+        reason = reason or "No usable solar forecast is available."
+    elif not available or provider is None:
+        status = "unavailable"
+        reason = unavailable_reason or reason or "Waiting for a forecast."
+    elif preferred is not None and provider != preferred:
+        status = "fallback"
+        reason = f"The preferred provider could not be used. {reason}" if reason else None
+    else:
+        status = "preferred" if preferred is not None else "auto"
+    return {
+        "provider": labels.get(provider) if available and provider is not None else None,
+        "status": status,
+        "captured_at": selection.captured_at.isoformat()
+        if available and selection.captured_at is not None
+        else None,
+        "reason": reason,
+    }
+
+
 def _forecast(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
-    providers = [
-        _provider(coordinator, entry_id, now)
-        for entry_id in coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or ()
-    ]
+    labels: dict[str, str] = {}
+    providers = []
+    for index, entry_id in enumerate(
+        coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or (), start=1
+    ):
+        entry = coordinator.hass.config_entries.async_get_entry(entry_id)
+        labels[entry_id] = entry.title if entry is not None else f"Unavailable provider {index}"
+        providers.append({**_provider(coordinator, entry_id, now), "name": labels[entry_id]})
+    # Disambiguate entries even when two instances of the same integration
+    # have the same title.
+    counts = Counter(labels.values())
+    for index, entry_id in enumerate(labels, start=1):
+        if counts[labels[entry_id]] > 1:
+            labels[entry_id] = f"{labels[entry_id]} ({index})"
+            providers[index - 1]["name"] = labels[entry_id]
     figures = coordinator.roof_forecast() if providers else None
-    corrected = (
-        figures is not None
-        and any(
-            value is not None
-            for value in (
-                figures.power_now_w,
-                figures.this_hour_kwh,
-                figures.next_hour_kwh,
-                figures.remaining_today_kwh,
-                figures.today_kwh,
-            )
+    today_available = figures is not None and any(
+        value is not None
+        for value in (
+            figures.power_now_w,
+            figures.this_hour_kwh,
+            figures.next_hour_kwh,
+            figures.remaining_today_kwh,
+            figures.today_kwh,
         )
-    ) or bool(providers and coordinator.expected_tomorrow_corrected_kwh is not None)
+    )
+    tomorrow_available = bool(providers and coordinator.expected_tomorrow_corrected_kwh is not None)
+    corrected = today_available or tomorrow_available
     if not providers:
         check = _check(
             NOT_CONFIGURED, "No solar forecast provider is selected.", action="reconfigure"
@@ -169,12 +212,56 @@ def _forecast(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
         check = _check(WAITING)
     else:
         check = _check(READY)
-    attrs = coordinator.roof_forecast_attrs if providers and not corrected else {}
+    today_reason = (
+        coordinator.roof_forecast_attrs.get("reason") if providers and not today_available else None
+    )
+    tomorrow_reason = (
+        coordinator.expected_tomorrow_corrected_attrs.get("reason")
+        if providers and not tomorrow_available
+        else None
+    )
+    preferred = coordinator.preferred_forecast_provider
+    sources = {
+        "today": _source_view(
+            coordinator.select_forecast("today", now),
+            labels,
+            preferred,
+            available=today_available,
+            unavailable_reason=today_reason,
+        ),
+        "tomorrow": _source_view(
+            coordinator.select_forecast("tomorrow", now),
+            labels,
+            preferred,
+            available=tomorrow_available,
+            unavailable_reason=tomorrow_reason,
+        ),
+    }
+    if coordinator.battery.configured:
+        state = coordinator.battery.state
+        outlook = state.outlook
+        available = outlook is not None and (
+            not outlook.forecast_used or coordinator.battery.forecast_fresh(state, now)
+        )
+        sources["battery"] = _source_view(
+            state.forecast_source or ForecastSelection(),
+            labels,
+            preferred,
+            available=available,
+            unavailable_reason=(
+                FORECAST_SOURCE_REASONS["forecast_stale"]
+                if outlook is not None and not available
+                else REASONS.get(state.reason, "Waiting for a battery projection.")
+            ),
+            history=available and not outlook.forecast_used,
+        )
     return {
         **check,
         "providers": providers,
+        "preferred_provider": labels.get(preferred) if preferred is not None else None,
+        "sources": sources,
         "corrected": corrected,
-        "correction_reason": attrs.get("reason")
+        "correction_reason": (today_reason or tomorrow_reason if not corrected else None)
         or (
             "The current capture does not cover the corrected forecast hours."
             if providers and not corrected
@@ -213,9 +300,7 @@ def _battery(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
         check = _check(charge_level["status"])
     elif state.outlook is None or state.reason:
         check = _check(WAITING, REASONS.get(state.reason, "Waiting for a battery projection."))
-    elif state.outlook.forecast_used and not forecast_is_fresh(
-        coordinator.forecast_captured_at, now, FORECAST_MAX_AGE
-    ):
+    elif state.outlook.forecast_used and not coordinator.battery.forecast_fresh(state, now):
         check = _check(WAITING, COLLECTION_REASONS["forecast_stale"])
     else:
         check = _check(READY)
@@ -247,6 +332,7 @@ def _history(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
     return {
         **check,
         "days": 28,
+        "forecast_source": summary["forecast_source"] if summary is not None else None,
         "counts": None
         if summary is None
         else {

@@ -175,6 +175,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
             # expensive silent failure this integration has — and it stayed
             # silent for a fortnight the first time it happened.
             _LOGGER.warning("Forecast capture failed; history is not being kept", exc_info=True)
+        else:
+            if _now is not None and coordinator.preferred_forecast_provider is not None:
+                coordinator.battery.refresh(force=True)
+                coordinator.notify_live_entities()
+                coordinator.journal.schedule()
         try:
             await coordinator.battery.async_learn()
         except Exception:

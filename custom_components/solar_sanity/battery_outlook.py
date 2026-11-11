@@ -27,7 +27,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
-from ._forecast_plan import forecast_is_fresh
+from ._forecast_plan import ForecastSelection, forecast_is_fresh
 from .analysis.changes import InputChanges, InputSnapshot
 from .analysis.daylight_shape import DaylightShape, learn_shape
 from .analysis.forecast import corrected_hours
@@ -128,6 +128,7 @@ class OutlookState:
     full_at: datetime | None = None
     reserve_at: datetime | None = None
     provider: str | None = None
+    forecast_source: ForecastSelection | None = None
     load_days: int = 0
     grid_charged_hours: int | None = None
     max_charge_w: float | None = None
@@ -274,6 +275,13 @@ class BatteryOutlook:
     @property
     def configured(self) -> bool:
         return self.settings is not None
+
+    def forecast_fresh(self, state: OutlookState, now: datetime) -> bool:
+        source = state.forecast_source
+        captured = (
+            source.captured_at if source is not None else self.coordinator.forecast_captured_at
+        )
+        return forecast_is_fresh(captured, now, FORECAST_MAX_AGE)
 
     def power_controls(
         self, learned_limit_w: float | None = None, learned_standby_w: float | None = None
@@ -573,7 +581,9 @@ class BatteryOutlook:
             base.reason = "learning_consumption"
             return base
 
-        provider, forecast, scale, factors = self._forecast(now)
+        source = coordinator.select_forecast("battery", now)
+        provider, forecast, scale, factors = self._forecast(source.provider_id, now)
+        base.forecast_source = source
         base.scale = scale
         today = _local_date(coordinator.time_zone)(now)
         base.scale_today = factors.get(today)
@@ -753,9 +763,9 @@ class BatteryOutlook:
         return total, complete
 
     def _forecast(
-        self, now: datetime
+        self, entry_id: str | None, now: datetime
     ) -> tuple[str | None, dict[datetime, float] | None, ForecastScale | None, dict[date, float]]:
-        """The first configured provider with a fresh forecast reaching past now.
+        """Apply the selected provider's scale to its current forecast.
 
         In Wh per UTC hour, scaled by what this roof has delivered against that
         provider's day-ahead forecast (see ``profile.forecast_scale``). The scale
@@ -765,27 +775,16 @@ class BatteryOutlook:
         for the kind of day forecast (``day_factors``); a later day, the overall
         one. Unscaled until there is enough to learn from.
         """
-        self._forecast_provider_id = None
-        captured = self.coordinator.forecast_captured_at
-        if not forecast_is_fresh(captured, now, FORECAST_MAX_AGE):
+        self._forecast_provider_id = entry_id
+        if entry_id is None:
             return None, None, None, {}
-        hour = now.replace(minute=0, second=0, microsecond=0)
-        points = self.coordinator.forecast_points
-        for entry_id in self.coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or []:
-            series = points.get(entry_id)
-            if not series or max(series) < hour:
-                continue
-            provider = self.hass.config_entries.async_get_entry(entry_id)
-            scale = self._scales.get(entry_id)
-            factors = self.day_factors(entry_id, now)
-            self._forecast_provider_id = entry_id
-            return (
-                provider.title if provider is not None else entry_id,
-                self.corrected_hours(entry_id, now),
-                scale,
-                factors,
-            )
-        return None, None, None, {}
+        provider = self.hass.config_entries.async_get_entry(entry_id)
+        return (
+            provider.title if provider is not None else entry_id,
+            self.corrected_hours(entry_id, now),
+            self._scales.get(entry_id),
+            self.day_factors(entry_id, now),
+        )
 
     def _anchor(self, now: datetime) -> tuple[float, float] | None:
         """This hour's measured production and consumption, in W, if trustworthy."""

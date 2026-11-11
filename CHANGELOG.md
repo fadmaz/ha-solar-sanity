@@ -2,6 +2,16 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.47.0] - 2026-11-11
+
+### Added
+
+- Choose a preferred solar forecast provider for each installation in Configure.
+  Battery, today and tomorrow can use different providers when their forecast
+  coverage differs. Setup shows the provider actually used and why it switched.
+- Issued predictions retain their actual forecast source and capture time.
+  Accuracy and interval calibration use observations from the same source.
+
 ## [0.46.0] - 2026-11-11
 
 ### Added
