@@ -202,11 +202,26 @@ Until then the sensor reads unknown and its `reason` says what it is waiting for
 
 ## Cards
 
-**Solar Sanity: tools** shows saved forecasts against what the battery actually
-did. Its History view offers 7, 28 or 90 days, seven dates at a time. Pending,
+**Solar Sanity: tools** offers a Setup Check for each installation, including
+solar-only setups. The generated dashboard adds one tools card per installation.
+For manual cards, choose an installation in the card editor when there is more
+than one. Setup is the default for solar-only installations. History remains
+the default when a battery outlook is configured.
+
+The **Setup** tab separates live readings from retained hours, the last valid
+forecast capture from the last verified archive read-back, and battery settings
+from outlook availability. It also shows graded, pending and excluded or missed
+checkpoints for the current setup over the last 28 days. Use **Reconfigure**
+to change measurement sensors or forecast providers and **Configure** to change
+battery options. Both are under **Settings → Devices & services → Solar Sanity**.
+The response-only action `solar_sanity.get_setup_check` accepts an installation
+device and returns the same readiness details. A check reads existing state
+without changing the setup, requesting a forecast or grading an issue.
+
+The **History** tab shows saved forecasts against what the battery actually did.
+It offers 7, 28 or 90 days, seven dates at a time. Pending,
 excluded and missed checkpoints remain visible with their reasons. An hourly
 maximum can prove that full occurred without supplying a precise fill time.
-The card has its own installation picker and appears in generated dashboards.
 `solar_sanity.get_forecast_history` returns the same bounded display data for a
 selected device, with read-permission checks and no private replay inputs.
 

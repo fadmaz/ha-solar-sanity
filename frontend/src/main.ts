@@ -20,7 +20,7 @@ export { SolarSanityBatteryCard, SolarSanityForecastCard, SolarSanityToolsCard }
 
 window.customCards = window.customCards ?? [];
 window.customCards.push(
-  {type: "solar-sanity-tools-card", name: "Solar Sanity: tools", description: "Issued forecasts compared with what the battery actually did.", preview: true, documentationURL: "https://github.com/fadmaz/ha-solar-sanity"},
+  {type: "solar-sanity-tools-card", name: "Solar Sanity: tools", description: "Check your setup and inspect issued battery forecasts.", preview: true, documentationURL: "https://github.com/fadmaz/ha-solar-sanity"},
   {
     type: "solar-sanity-battery-card",
     name: "Solar Sanity: battery",

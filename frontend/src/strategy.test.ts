@@ -49,6 +49,17 @@ describe("buildCards", () => {
     expect(buildCards(undefined)).toHaveLength(2);
   });
 
+  it("adds a Setup card for the installation with measurements and no battery", () => {
+    const cards = buildCards(hass({
+      ...outlookOf("dev-a"),
+      "sensor.collection": {entity_id:"sensor.collection",platform:"solar_sanity",
+        translation_key:"collection_status",device_id:"dev-b"},
+    }));
+    expect(cards.at(-1)).toEqual({
+      type:"custom:solar-sanity-tools-card",device_id:"dev-b",default_tab:"setup",
+    });
+  });
+
   it("always offers the forecast card exactly once", () => {
     for (const entities of [{}, outlookOf("a"), { ...outlookOf("a"), ...outlookOf("b") }]) {
       const forecast = buildCards(hass(entities)).filter(

@@ -2,6 +2,13 @@ rescore_forecasts:
   # No fields. It scores every configured provider on every installation,
   # because a service that made you name one would be asking you to know
   # an entry id.
+get_setup_check:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
 get_forecast_history:
   fields:
     device_id:

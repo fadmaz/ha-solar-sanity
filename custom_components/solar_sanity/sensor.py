@@ -188,6 +188,7 @@ COLLECTION_SENSOR = SolarSanitySensorDescription(
     attrs_fn=lambda c: {
         "reason_code": c.journal.status()[1],
         "reason": COLLECTION_REASONS.get(c.journal.status()[1]),
+        "battery_outlook_configured": c.battery.configured,
     },
 )
 

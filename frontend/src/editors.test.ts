@@ -15,9 +15,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import "./editors";
-import type { SolarSanityBatteryCardEditor, SolarSanityForecastCardEditor } from "./editors";
+import type { SolarSanityBatteryCardEditor, SolarSanityForecastCardEditor, SolarSanityToolsCardEditor } from "./editors";
 import { SolarSanityBatteryCard } from "./battery-card";
 import { SolarSanityForecastCard } from "./forecast-card";
+import { SolarSanityToolsCard } from "./tools-card";
 import type { HassEntity, HomeAssistant, LovelaceCardConfig } from "./types/hass";
 
 function hassWith(entities: HassEntity[], archives: unknown[] = []): HomeAssistant {
@@ -86,6 +87,27 @@ describe("the cards hand back an editor", () => {
     expect(SolarSanityForecastCard.getConfigElement().localName).toBe(
       "solar-sanity-forecast-card-editor",
     );
+  });
+});
+
+describe("the tools card editor", () => {
+  it("offers Setup for a solar-only device and all tabs for a battery device", async () => {
+    const editor = SolarSanityToolsCard.getConfigElement() as SolarSanityToolsCardEditor;
+    const type = "custom:solar-sanity-tools-card";
+    editor.hass = {...hassWith([]), entities:{
+      solar:{entity_id:"sensor.solar",platform:"solar_sanity",device_id:"solar",translation_key:"collection_status"},
+      battery:{entity_id:"sensor.battery",platform:"solar_sanity",device_id:"battery",translation_key:"battery_lowest_before_sunrise"},
+    }};
+    editor.setConfig({type, device_id:"solar"});
+    const rendered = await form(editor);
+    expect(rendered.schema?.[1]?.selector).toEqual({select:{options:[{value:"setup",label:"Setup"}]}});
+    expect(rendered.data?.default_tab).toBe("setup");
+    editor.setConfig({type, device_id:"battery"});
+    await editor.updateComplete;
+    expect(rendered.schema?.[1]?.selector).toEqual({select:{options:[
+      {value:"history",label:"History"}, {value:"what_if",label:"What if"},
+      {value:"changes",label:"Changes"}, {value:"setup",label:"Setup"},
+    ]}});
   });
 });
 

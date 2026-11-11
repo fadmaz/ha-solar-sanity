@@ -2,6 +2,18 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.45.0] - 2026-11-11
+
+### Added
+
+- The tools card's Setup tab checks measurements, solar forecast capture and
+  archive verification, battery outlook settings, and prediction history for
+  one installation. Configuration problems point to the relevant Home
+  Assistant settings.
+- Solar-only installations get the tools card in generated dashboards and open
+  directly to Setup. The read-only `solar_sanity.get_setup_check` action returns
+  the same installation-scoped checks.
+
 ## [0.44.0] - 2026-11-11
 
 ### Added

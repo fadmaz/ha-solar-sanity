@@ -18,7 +18,7 @@
  * drift.
  */
 
-import { findInstallations, hasOutlook } from "./battery-model";
+import { findInstallations, hasBatterySetup, hasOutlook } from "./battery-model";
 import type { HomeAssistant, LovelaceCardConfig } from "./types/hass";
 
 /**
@@ -26,7 +26,8 @@ import type { HomeAssistant, LovelaceCardConfig } from "./types/hass";
  * which is what you look at when the battery has nothing to say.
  */
 export function buildCards(hass: HomeAssistant | undefined): LovelaceCardConfig[] {
-  const batteries = findInstallations(hass).filter(hasOutlook);
+  const installations = findInstallations(hass);
+  const batteries = installations.filter(hasOutlook);
   const battery: LovelaceCardConfig[] =
     batteries.length > 1
       ? batteries.map((installation) => ({
@@ -35,7 +36,11 @@ export function buildCards(hass: HomeAssistant | undefined): LovelaceCardConfig[
         }))
       : [{ type: "custom:solar-sanity-battery-card" }];
 
-  return [...battery, { type: "custom:solar-sanity-forecast-card" }, ...batteries.map(i => ({type: "custom:solar-sanity-tools-card", device_id: i.deviceId}))];
+  return [...battery, {type: "custom:solar-sanity-forecast-card"}, ...installations.map(i => ({
+    type: "custom:solar-sanity-tools-card",
+    device_id: i.deviceId,
+    ...(!hasBatterySetup(i) ? {default_tab: "setup"} : {}),
+  }))];
 }
 
 /** Fills a view. Selected with `strategy: {type: "custom:solar-sanity"}`. */

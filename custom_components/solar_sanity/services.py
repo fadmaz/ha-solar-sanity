@@ -19,6 +19,7 @@ from .analysis.outlook import BatterySettings, Step
 from .analysis.scenarios import compare_load
 from .const import DOMAIN, FORECAST_MAX_AGE
 from .journal import MODEL_REVISION
+from .setup_check import setup_check
 
 
 def _power(value):
@@ -89,6 +90,18 @@ async def coordinator_for(hass: HomeAssistant, call: ServiceCall):
 @callback
 def async_setup_tools(hass: HomeAssistant) -> None:
     """Register native response actions; none triggers capture, grading or control."""
+
+    async def get_setup_check(call: ServiceCall):
+        coordinator = await coordinator_for(hass, call)
+        return setup_check(coordinator, dt_util.utcnow())
+
+    hass.services.async_register(
+        DOMAIN,
+        "get_setup_check",
+        get_setup_check,
+        schema=vol.Schema({vol.Required("device_id"): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
 
     async def get_history(call: ServiceCall):
         coordinator = await coordinator_for(hass, call)
