@@ -318,6 +318,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         return {
             "basis": _projection_basis(state, settings, hass.config.time_zone),
             "solar_corrected": state.outlook.forecast_used and state.scale is not None,
+            "load_actions": coordinator.reminders.forecast_action_status(state, now),
             "recommendation": _timing_view(result.recommendation),
             "run_now": _timing_view(result.run_now),
             "reason_code": result.reason_code,

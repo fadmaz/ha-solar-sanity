@@ -5,14 +5,18 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized
 
+from custom_components.solar_sanity._forecast_plan import ForecastSelection
 from custom_components.solar_sanity.analysis.outlook import Step, project
 from custom_components.solar_sanity.analysis.profile import ForecastScale
-from custom_components.solar_sanity.const import DOMAIN
+from custom_components.solar_sanity.const import CONF_FORECAST_ENTRIES, DOMAIN
 from custom_components.solar_sanity.reminders import LoadReminders
-from tests.integration.test_simulation_service import NOW, invoke, setup
+from tests.integration.ha_harness import MockConfigEntry
+from tests.integration.test_simulation_service import NOW, invoke
+from tests.integration.test_simulation_service import setup as setup_simulation
 from tests.integration.test_tools_services import device
 
 OWNER = Context(user_id="admin")
@@ -27,7 +31,37 @@ def clock(hass):
         patch.object(hass.auth, "async_get_user", new=AsyncMock(return_value=user)),
         patch("custom_components.solar_sanity.reminders.dt_util.utcnow", return_value=NOW) as now,
     ):
-        yield now, user
+        try:
+            yield now, user
+        finally:
+            for entry in hass.config_entries.async_entries():
+                if (
+                    isinstance(entry, MockConfigEntry)
+                    and entry.title == "Synthetic action provider"
+                ):
+                    entry.mock_state(hass, ConfigEntryState.NOT_LOADED)
+
+
+def action_provider(hass, coordinator, state, captured_at, *, domain="forecast_solar"):
+    provider = MockConfigEntry(domain=domain, title="Synthetic action provider")
+    provider.add_to_hass(hass)
+    provider.mock_state(hass, ConfigEntryState.LOADED)
+    key = provider.entry_id
+    hass.config_entries.async_update_entry(
+        coordinator.entry, data={**coordinator.entry.data, CONF_FORECAST_ENTRIES: [key]}
+    )
+    coordinator.forecast_points = {key: {state.outlook.horizon_end: 1}}
+    coordinator._forecast_captures = {key: captured_at}
+    coordinator._latest_forecast_batch = frozenset({key})
+    coordinator.journal.health[key] = {"provider_updated_at": captured_at.isoformat()}
+    state.forecast_source = ForecastSelection(key, captured_at)
+    return key
+
+
+async def setup(hass, entry_data):
+    entry, journal, state = await setup_simulation(hass, entry_data)
+    action_provider(hass, journal.coordinator, state, NOW)
+    return entry, journal, state
 
 
 async def action(hass, entry, name, *, context=OWNER, **data):
@@ -187,6 +221,68 @@ async def test_late_reserve_and_forecast_loss_wait_then_recover_or_expire(
     now.return_value = datetime.fromisoformat(result["latest_start"]) + timedelta(seconds=1)
     assert (await wake(hass, runner, force=True))["status"] == "expired"
     assert not messages
+
+
+@pytest.mark.parametrize("fits", [False, True])
+async def test_due_load_is_checked_against_its_own_end_when_the_outlook_shortens(
+    hass, enable_custom_integrations, entry_data, clock, fits
+):
+    """A short forecast may still cover the run, even when it ends before the deadline."""
+    now, _ = clock
+    entry, journal, state = await setup(hass, entry_data)
+    coordinator = journal.coordinator
+    runner = coordinator.reminders
+    messages = install_notify(hass, runner)
+    state.scale = ForecastScale(1, 30, 5)
+    reminder = await schedule(hass, entry)
+    now.return_value = datetime.fromisoformat(reminder["scheduled_at"])
+    state.computed_at = now.return_value
+    steps = (Step(NOW, 1, 0, 200, 0),)
+    if fits:
+        steps += (Step(NOW + timedelta(hours=1), 1, 0, 200, 0),)
+    state.outlook = project(80, state.battery, steps, forecast_used=True)
+    state.inputs["steps"] = [{**asdict(step), "start": step.start.isoformat()} for step in steps]
+    result = await wake(hass, runner, force=True)
+    assert result["finish_by"] == reminder["finish_by"]
+    if fits:
+        assert result["status"] == "sent"
+        assert len(messages) == 1
+    else:
+        assert result["reason_code"] == "beyond_horizon"
+        assert not messages
+
+
+async def test_provider_eligibility_is_shared_by_planning_scheduling_and_delivery(
+    hass, enable_custom_integrations, entry_data, clock
+):
+    """Planning remains usable when the actual forecast source cannot authorize actions."""
+    now, _ = clock
+    entry, journal, state = await setup(hass, entry_data)
+    coordinator = journal.coordinator
+    runner = coordinator.reminders
+    state.scale = ForecastScale(1, 30, 5)
+    messages = install_notify(hass, runner)
+    action_provider(hass, coordinator, state, NOW, domain="synthetic_forecast")
+    plan = await invoke(
+        hass, entry, action="find_best_time", finish_by=(NOW + timedelta(hours=2)).isoformat()
+    )
+    assert plan["recommendation"] is not None
+    assert plan["load_actions"]["status"] == "unsupported"
+    with pytest.raises(ServiceValidationError, match="supports planning only"):
+        await schedule(hass, entry)
+
+    key = action_provider(hass, coordinator, state, NOW)
+    coordinator.journal.health[key].pop("provider_updated_at")
+    saved = await schedule(hass, entry)
+    now.return_value = datetime.fromisoformat(saved["scheduled_at"])
+    state.computed_at = now.return_value
+    assert (await wake(hass, runner, force=True))["reason_code"] == "provider_update_unverified"
+    action_provider(hass, coordinator, state, now.return_value, domain="synthetic_forecast")
+    assert (await wake(hass, runner))["reason_code"] == "provider_unsupported_for_actions"
+    assert not messages
+    action_provider(hass, coordinator, state, now.return_value)
+    assert (await wake(hass, runner, force=True))["status"] == "sent"
+    assert len(messages) == 1
 
 
 async def test_reminder_actions_require_admin_current_projection_and_valid_target(
@@ -350,6 +446,7 @@ async def test_fold_offsets_preserve_elapsed_duration_and_no_early_send(
     state.inputs["steps"] = [{**asdict(step), "start": step.start.isoformat()} for step in steps]
     state.scale = ForecastScale(1, 30, 5)
     journal.coordinator.forecast_captured_at = base
+    action_provider(hass, journal.coordinator, state, base)
     messages = install_notify(hass, runner)
     reminder = await schedule(
         hass,

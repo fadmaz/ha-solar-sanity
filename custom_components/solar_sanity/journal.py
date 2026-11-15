@@ -31,6 +31,7 @@ from .const import (
     CONF_FORECAST_ENTRIES,
     CONF_ROLE,
     DOMAIN,
+    FORECAST_DAYAHEAD_PREFIX,
     OPT_BATTERY_CAPACITY_KWH,
     OPT_BATTERY_RESERVE_PCT,
     OPT_BATTERY_SOC,
@@ -38,10 +39,13 @@ from .const import (
 )
 from .load_trial import LoadTrial, valid_control
 from .statistics_source import (
+    ArchiveExpectations,
+    ArchiveRows,
     async_forecast_series,
     async_observed_full_at,
     async_read_boundary_flows,
     async_read_grading_soc,
+    forecast_statistic_id,
 )
 
 if TYPE_CHECKING:
@@ -52,6 +56,7 @@ JOURNAL_KEY = f"{DOMAIN}.outlook_journal"
 JOURNAL_VERSION = 1
 MODEL_REVISION = "baseline-0.34.2"
 GRADING_REVISION = "verified-flows-0.51.2"
+ARCHIVE_PROOF_REVISION = 1
 COLLECTION_REASONS = {
     "journal_restore_failed": "The journal could not be read; its file was left untouched.",
     "journal_write_failed": "The issued prediction could not be saved.",
@@ -219,9 +224,10 @@ class OutlookJournal:
         self,
         provider: str,
         points: dict[datetime, float],
-        submitted: dict[str, list[tuple[datetime, float]]],
+        submitted: dict[str, ArchiveRows],
         *,
         captured_at: datetime | None = None,
+        expected: ArchiveExpectations | None = None,
     ) -> None:
         now = dt_util.utcnow().isoformat()
         health = self.health.setdefault(provider, {})
@@ -233,19 +239,33 @@ class OutlookJournal:
         if unsubscribe is not None:
             unsubscribe()
         if submitted:
-            health.update(submitted_at=now, verification="pending")
-            self._queue_verification(provider, submitted)
-        elif self.coordinator._owns_archive(provider):
-            health.update(reason_code="archive_not_submitted", verification="unverified")
-        else:
-            # A shared provider has one writer. This entry can verify content
-            # without pretending that it submitted another entry's batch.
-            from .statistics_source import forecast_statistic_id
+            health["submitted_at"] = now
+        if expected is None:
+            expected = submitted or {forecast_statistic_id(provider): list(points.items())}
+        health.update(
+            verification="pending",
+            archive_series={
+                _series_label(key): "pending" if rows != [] else "not_required"
+                for key, rows in expected.items()
+            },
+            archive_expected={
+                key: None if rows is None else [[hour.isoformat(), value] for hour, value in rows]
+                for key, rows in expected.items()
+            },
+        )
+        self._queue_verification(provider, expected)
 
-            health["verification"] = "pending"
-            self._queue_verification(
-                provider, {forecast_statistic_id(provider): list(points.items())}
-            )
+    def archive_expectations(self, provider: str) -> ArchiveExpectations:
+        return {
+            key: None
+            if rows is None
+            else [(datetime.fromisoformat(hour), value) for hour, value in rows]
+            for key, rows in self.health.get(provider, {}).get("archive_expected", {}).items()
+        }
+
+    def archive_pending(self, provider: str) -> bool:
+        task = self._verification.get(provider)
+        return provider in self._startup_verification or (task is not None and not task.done())
 
     @callback
     def _queue_verification(self, provider, expected):
@@ -271,35 +291,55 @@ class OutlookJournal:
     async def _verify_archive(
         self,
         provider: str,
-        expected: dict[str, list[tuple[datetime, float]]],
+        expected: ArchiveExpectations,
         delays: tuple[float, ...] = (5, 25, 90),
     ) -> None:
         # Attempts at 5, 30 and 120 seconds let the recorder commit its queue.
         # Matching content proves archive availability, not a physical write time.
+        results: dict[str, str] = {}
         for delay in delays:
             await asyncio.sleep(delay)
-            verified = True
             for statistic_id, rows in expected.items():
+                label = _series_label(statistic_id)
+                if rows is None:
+                    results[label] = "unverified"
+                    continue
+                if not rows:
+                    results[label] = "not_required"
+                    continue
                 series = await async_forecast_series(
                     self.hass,
                     statistic_id,
                     min(t for t, _ in rows),
                     max(t for t, _ in rows) + timedelta(hours=1),
                 )
-                if series is None or any(
-                    t not in series or abs(series[t] - value) > 1e-7 for t, value in rows
-                ):
-                    verified = False
-            if verified:
-                self.health[provider].update(
+                matches = series is not None and all(
+                    t in series and math.isfinite(series[t]) and abs(series[t] - value) <= 1e-7
+                    for t, value in rows
+                )
+                results[label] = "verified" if matches else "unverified"
+            if results and "unverified" not in results.values():
+                health = self.health[provider]
+                health.update(
                     verified_at=dt_util.utcnow().isoformat(),
                     verification="verified",
-                    reason_code=None,
+                    archive_proof_revision=ARCHIVE_PROOF_REVISION,
+                    archive_series=results,
                 )
+                if health.get("reason_code") in (
+                    None,
+                    "archive_unverified",
+                    "archive_not_submitted",
+                ):
+                    health["reason_code"] = None
+                health.pop("archive_expected", None)
                 await self.async_save()
                 self.coordinator.notify_live_entities()
                 return
-        self.health[provider].update(verification="unverified", reason_code="archive_unverified")
+        health = self.health[provider]
+        health.update(verification="unverified", archive_series=results)
+        if health.get("reason_code") in (None, "archive_unverified", "archive_not_submitted"):
+            health["reason_code"] = "archive_unverified"
         await self.async_save()
         self.coordinator.notify_live_entities()
 
@@ -807,6 +847,10 @@ class OutlookJournal:
         return ("ok", None) if self.records or providers else ("starting", "waiting_for_checkpoint")
 
 
+def _series_label(statistic_id: str) -> str:
+    return "dayahead" if statistic_id.startswith(FORECAST_DAYAHEAD_PREFIX) else "latest"
+
+
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
@@ -887,10 +931,34 @@ def _valid_health(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
     try:
-        return all(
-            datetime.fromisoformat(value[key]).tzinfo is not None
-            for key in ("attempted_at", "captured_at", "submitted_at", "verified_at")
-            if value.get(key) is not None
+        expectations = value.get("archive_expected", {})
+        return (
+            isinstance(expectations, dict)
+            and all(
+                rows is None
+                or (
+                    isinstance(rows, list)
+                    and all(
+                        datetime.fromisoformat(hour).tzinfo is not None
+                        and isinstance(kwh, (int, float))
+                        and math.isfinite(kwh)
+                        and kwh >= 0
+                        for hour, kwh in rows
+                    )
+                )
+                for rows in expectations.values()
+            )
+            and all(
+                datetime.fromisoformat(value[key]).tzinfo is not None
+                for key in (
+                    "attempted_at",
+                    "provider_updated_at",
+                    "captured_at",
+                    "submitted_at",
+                    "verified_at",
+                )
+                if value.get(key) is not None
+            )
         )
     except (TypeError, ValueError):
         return False

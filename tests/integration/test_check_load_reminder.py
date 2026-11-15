@@ -16,8 +16,16 @@ from custom_components.solar_sanity.analysis.profile import ForecastScale
 from custom_components.solar_sanity.const import OPT_BATTERY_SOC
 from custom_components.solar_sanity.reminders import LoadReminders
 from tests.integration import test_load_reminders
-from tests.integration.test_load_reminders import action, install_notify, publish, schedule, wake
-from tests.integration.test_simulation_service import NOW, invoke, setup
+from tests.integration.test_load_reminders import (
+    action,
+    action_provider,
+    install_notify,
+    publish,
+    schedule,
+    setup,
+    wake,
+)
+from tests.integration.test_simulation_service import NOW, invoke
 
 clock = test_load_reminders.clock
 SCRIPT = "script.test_reminder_start"
@@ -55,6 +63,21 @@ async def start(hass, entry, record, projection_id="synthetic-basis"):
     return await action(
         hass, entry, "start_load_reminder", reminder_id=record["id"], projection_id=projection_id
     )
+
+
+async def test_fallback_without_update_evidence_cannot_start_a_linked_script(hass, prepared, clock):
+    """The linked script follows the actual provider, including after a fallback switch."""
+    entry, coordinator, state, events, notifications = prepared
+    now, _ = clock
+    saved = await schedule(hass, entry, script_entity_id=SCRIPT)
+    now.return_value = datetime.fromisoformat(saved["earliest_start"])
+    state.computed_at = now.return_value
+    action_provider(hass, coordinator, state, now.return_value, domain="synthetic_forecast")
+    result = await check(hass, entry, saved)
+    assert result["reason_code"] == "provider_unsupported_for_actions"
+    assert (await start(hass, entry, saved))["check"] == result
+    assert not notifications
+    assert not events
 
 
 async def test_no_reminder_or_script_uses_solar_before_the_current_charge(hass, prepared, clock):

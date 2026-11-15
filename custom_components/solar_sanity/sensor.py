@@ -256,6 +256,7 @@ class CaptureSensor(SolarSanityEntity, SensorEntity):
             "attempted_at": health.get("attempted_at"),
             "submitted_at": health.get("submitted_at"),
             "verification": health.get("verification", "pending"),
+            "archive_series": health.get("archive_series"),
             "forecast_statistic_id": forecast_statistic_id(self.provider_id),
             "provider": self._attr_translation_placeholders["provider"],
         }

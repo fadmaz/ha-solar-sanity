@@ -1,5 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {SolarSanitySimulation} from "./simulation-panel";
+import type {SolarSanityLoadReminder} from "./load-reminder-panel";
 import type {LoadPlanResponse, SimulationResponse} from "./simulation";
 import type {HomeAssistant} from "./types/hass";
 
@@ -98,6 +99,29 @@ describe("live load exploration",()=>{
 });
 
 describe("finding the best time", () => {
+  it.each(["unsupported", "waiting_for_update"] as const)(
+    "shows action availability %s without hiding the recommendation", async status => {
+      const plan = planResponse();
+      const waiting = status === "waiting_for_update";
+      const reason = waiting ? "Waiting for a confirmed forecast provider update."
+        : "The current forecast provider supports planning only.";
+      plan.response.solar_corrected = true;
+      plan.response.load_actions = {status, reason, reason_code: null};
+      const call = vi.fn().mockImplementation(async ({service}) => service === "find_best_time"
+        ? plan : {response: {reminder: null, storage_error: false}});
+      const {c} = await make(call);
+      c.hass = {...c.hass!, user: {is_admin: true}} as HomeAssistant;
+      await settle(c);
+      await input(c, "select", "best_time", "change");
+      await input(c, "input[name=finish_by]", "2026-11-10T13:00");
+      await start(c);
+      expect(c.shadowRoot!.querySelector("table")?.textContent).toContain("45.0%");
+      expect(c.shadowRoot!.textContent).toContain(reason);
+      const reminder = c.shadowRoot!.querySelector<SolarSanityLoadReminder>("solar-sanity-load-reminder")!;
+      expect(reminder.request !== undefined).toBe(waiting);
+    },
+  );
+
   it("makes one manual request, compares the options and marks an outdated plan", async () => {
     const {c, call} = await make(vi.fn().mockResolvedValue(planResponse()));
     await input(c, "select", "best_time", "change");

@@ -3,10 +3,16 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated for 0.51.3, 2026-11-15.
+Last updated for 0.51.4, 2026-11-15.
 
 ## Latest delivery and operational acceptance
 
+- 0.51.4 requires proof across the latest and day-ahead archives, retries an
+  incomplete batch after a restart, and recovers from longer outages when a
+  preceding total is known. Load actions report eligibility for the actual
+  provider, and saved reminders can use a shorter outlook if the run fits.
+  The forecast card uses fresh corrected hours. HACS deployment and live
+  read-back for this version are pending.
 - 0.51.1 evaluates load actions from the current charge, checks reserve risk across
   the full warning window, and separates upstream update evidence from recorder
   verification. The reference provider is Forecast.Solar. Field evidence for

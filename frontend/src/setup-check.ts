@@ -4,6 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { safeTimeZone } from "./forecast-data";
 import { powerControlLabel, type BatteryControls } from "./battery-controls";
 import type { HomeAssistant } from "./types/hass";
+import type { LoadActionAvailability } from "./simulation";
 
 type Status = "ready" | "waiting_for_data" | "needs_attention" | "not_configured";
 type Action = "configure" | "reconfigure";
@@ -13,9 +14,12 @@ interface Provider extends Check {
   name?: string;
   integration: string | null;
   captured_at: string | null;
+  attempted_at?: string | null;
+  submitted_at?: string | null;
   provider_updated_at?: string | null;
   verified_at: string | null;
   verification: "pending" | "verified" | "unverified" | null;
+  archive_series?: Partial<Record<"latest" | "dayahead", "pending" | "verified" | "unverified" | "not_required">> | null;
 }
 interface ForecastSource {
   provider: string | null;
@@ -36,6 +40,7 @@ export interface SetupCheckResponse {
     correction_reason: string | null;
     preferred_provider?: string | null;
     sources?: Partial<Record<"battery" | "today" | "tomorrow", ForecastSource>>;
+    load_actions?: LoadActionAvailability | null;
   };
   battery: Check & {
     settings: {capacity_kwh: number; reserve_pct: number; target_pct: number} | null;
@@ -73,6 +78,8 @@ const REFRESH_KEYS = new Set(["collection_status", "forecast_last_captured_at", 
   "reserve_risk", "solar_surplus_ready"]);
 const SOURCE_KEYS = new Set(["battery_lowest_before_sunrise", "solar_energy_today_corrected", "expected_tomorrow_corrected"]);
 const SOURCE_LABELS = {battery:"Battery outlook",today:"Today's corrected forecast",tomorrow:"Tomorrow's corrected forecast"};
+const ARCHIVE_LABELS = {latest: "Latest forecast", dayahead: "Day-ahead forecast"};
+const ARCHIVE_STATUS = {pending: "Pending", verified: "Verified", unverified: "Unverified", not_required: "No hours due"};
 const numbers = new Intl.NumberFormat("en", {maximumFractionDigits: 2});
 
 @customElement("solar-sanity-setup-check")
@@ -195,6 +202,7 @@ export class SolarSanitySetupCheck extends LitElement {
   private _forecast(data: SetupCheckResponse["forecast"]): TemplateResult {
     return this._group("Solar forecast", data, html`
       ${data.sources && data.providers.length ? html`<p>Preferred forecast provider <strong>${data.preferred_provider ?? "Auto"}</strong></p>` : nothing}
+      ${data.load_actions?.reason ? html`<p>Load actions · ${data.load_actions.reason}</p>` : nothing}
       <ul>
         ${data.sources ? (Object.keys(SOURCE_LABELS) as (keyof typeof SOURCE_LABELS)[]).map(key => {
           const source = data.sources?.[key];
@@ -218,9 +226,15 @@ export class SolarSanitySetupCheck extends LitElement {
             : provider.verification === "unverified" ? "Latest batch unverified" : null;
           return html`<li><header><h4>${label}</h4>${this._status(provider.status)}</header>
             <dl><div><dt>Last successful provider update</dt><dd>${this._time(provider.provider_updated_at ?? null)}</dd></div>
+              <div><dt>Last capture attempt</dt><dd>${this._time(provider.attempted_at ?? null)}</dd></div>
               <div><dt>Last valid capture</dt><dd>${this._time(provider.captured_at)}</dd></div>
+              <div><dt>Last submitted batch</dt><dd>${this._time(provider.submitted_at ?? null)}</dd></div>
               <div><dt>Last verified archive read-back</dt><dd>${this._time(provider.verified_at)}</dd></div></dl>
             ${verification ? html`<p>${verification}</p>` : nothing}
+            ${provider.archive_series ? html`<dl>${(Object.keys(ARCHIVE_LABELS) as (keyof typeof ARCHIVE_LABELS)[]).map(key => {
+              const status = provider.archive_series?.[key];
+              return status ? html`<div><dt>${ARCHIVE_LABELS[key]}</dt><dd>${ARCHIVE_STATUS[status]}</dd></div>` : nothing;
+            })}</dl>` : nothing}
             ${this._details(provider)}</li>`;
         })}
       </ul>`);

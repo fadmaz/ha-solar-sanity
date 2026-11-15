@@ -497,11 +497,13 @@ exposes only the display fields. Hour totals do not establish an instant of
 takeover or continuous coverage throughout the hour.
 
 Provider health separates attempted, captured, submitted and verified timestamps.
-The writer supplies its exact batches, then a background read-back tries at
-5, 30 and 120 seconds. Matching rows attest to content, not a physical write
-instant; exhaustion remains unverified. A no-op day-ahead append does not reset
-its history. Unload cancels verification and journal tasks. Entry removal also
-removes the journal. None of these paths change the projection or its constants.
+The writer supplies the expectations for both series, including required
+content that could not be submitted, before read-back at 5, 30 and 120 seconds.
+An empty day-ahead plan differs from a failed query. An incomplete batch keeps
+one pending set of expectations per provider, keyed by the captured data and
+time. The next regular capture can retry it even when the provider data has
+not changed. The newest Recorder total can cover a longer gap when its hour
+is strictly before the new batch. Unload cancels verification and journal tasks.
 
 Four descriptive sensors summarize 28 days, with a seven-day summary and counts;
 they have no cumulative state class. Collection status and per-provider capture
@@ -538,24 +540,18 @@ pushes two entries onto `window.customCards`: `solar-sanity-battery-card` and
 a subclass of the battery card, so dashboards built before 0.30.0 still render. It is not
 offered in the picker, and it ignores the old `entity:` setting.
 
-**`solar-sanity-forecast-card`** draws one SVG chart per provider of tomorrow's forecast,
-with a hidden screen-reader table. The table sits in a hidden wrapper, because a table
-ignores a 1-pixel width. Providers are found by their day-ahead archive, whose metadata
-carries the name and whose id the `provider` option stores; the hours are read from the
-same provider's rolling archive, which for tomorrow is simply the forecast as it stands.
-Until 0.31.0 it drew the day-ahead rows, which for tomorrow are the first ones seen, about
-two days old: 48.2 kWh beside a sensor reading 34.6. "Never `latest`" is a rule for hours
-that have passed. When exactly one `expected_tomorrow_corrected` sensor names the same
-rolling archive with a `factor`, the curve and the total are multiplied by it and the
-uncorrected figure is not shown (0.33.0); otherwise the provider's forecast, and a line
-saying it is not corrected. It reads again every 30 minutes, keeping what is
-on screen meanwhile and through a failed refresh.
+**`solar-sanity-forecast-card`** reads the registry and draws the current
+`expected_tomorrow_corrected` sensor's `corrected_hours`, with a screen-reader
+table of the same values. The card retains the legacy day-ahead ID in the
+`provider` option and maps it to the matching sensor's rolling statistic ID.
+It requires a unique sensor for that provider. The published local date and
+expiry prevent a previous day's or stale curve from being displayed. The
+integration keeps its rolling archive independently of the card.
 
-The forecast card's calendar and every hour label use `hass.config.time_zone`,
-falling back to the browser only for an absent or invalid zone. Calendar-day
-bounds are resolved as UTC instants rather than by adding 24 hours. Changing
-the zone or day invalidates cached panels and discards an in-flight response
-for the old question.
+The calendar and every label use `hass.config.time_zone`, with the browser
+as a fallback. The x-axis uses elapsed time between local midnights so clock
+changes and data gaps retain their actual width. Labels keep local minutes and
+show offsets for repeated clock times.
 
 **Editors** wrap Home Assistant's `<ha-form>`: a device picker filtered to the integration,
 and a provider picker read from `recorder/list_statistic_ids`.
@@ -589,7 +585,7 @@ Vitest under happy-dom, tests beside the code. They cover:
 - discovery through the registry and the headline cases;
 - the chart geometry, and that every chart element is in the SVG namespace;
 - every card state, and the legacy tag;
-- the forecast card's latch, half-hourly refresh and midnight roll;
+- forecast evidence and expiry, missing points and local clock transitions;
 - editor events escaping the shadow root.
 
 `bundle.smoke.test.ts` loads the built file and checks the registered tags, the picker
@@ -830,10 +826,12 @@ ID and scenario and polls only while What if is visible. Destinations are
 
 The reminder reuses the planner's frozen inputs and UTC elapsed duration.
 Projection publication and a one-shot UTC timer wake the reminder. The
-scheduled-time check requires a valid corrected provider outlook and a complete
-run above reserve over the full projection. A missing forecast or unsuitable
-run can wait for a new outlook until the finish deadline minus the run duration.
-Expiry has no notification.
+scheduled-time check uses the current corrected Forecast.Solar outlook, with a
+confirmed upstream update. Planning is available for other providers, and its
+response and Setup report which actions are eligible. Rescheduling searches
+the time available inside the current horizon and the saved deadline. A
+missing forecast, unsupported fallback or unsuitable run can wait until the
+deadline minus the run duration. Expiry has no notification.
 
 A separate versioned private Store per entry retains the most recent reminder
 and its status. The runner serializes changes and verifies its attempt marker

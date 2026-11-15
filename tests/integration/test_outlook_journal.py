@@ -45,6 +45,39 @@ async def test_startup_verification_waits_for_core_and_unload_cancels_it(
         assert verify.called is not cancel
 
 
+@pytest.mark.parametrize("failed", ["latest", "dayahead"])
+async def test_partial_archive_never_replaces_full_read_back(
+    hass, enable_custom_integrations, entry_data, failed
+):
+    """A missing required series must not advance the last confirmed timestamp."""
+    _, journal = await _journal(hass, entry_data)
+    last_verified = (NOW - timedelta(hours=1)).isoformat()
+    key = "provider"
+    latest = "solar_sanity:forecast_synthetic"
+    ahead = "solar_sanity:dayahead_synthetic"
+    expected = {latest: [(NOW, 1.0)], ahead: [(NOW, 1.5)]}
+    journal.health[key] = {"verified_at": last_verified}
+    with (
+        patch.object(journal, "_queue_verification"),
+        patch(
+            "custom_components.solar_sanity.journal.async_forecast_series",
+            new=AsyncMock(
+                side_effect=[
+                    {} if failed == "latest" else {NOW: 1.0},
+                    None if failed == "dayahead" else {NOW: 1.5},
+                ]
+            ),
+        ),
+    ):
+        await journal.captured(key, {NOW: 1.0}, {ahead: expected[ahead]}, expected=expected)
+        await journal._verify_archive(key, journal.archive_expectations(key), delays=(0,))
+    health = journal.health[key]
+    assert health["verification"] == "unverified"
+    assert health["archive_series"][failed] == "unverified"
+    assert health["verified_at"] == last_verified
+    assert journal.archive_expectations(key) == expected
+
+
 async def test_evening_checkpoint_freezes_interval_evidence_and_expires_public_limits(
     hass, enable_custom_integrations, entry_data
 ):

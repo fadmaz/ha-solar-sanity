@@ -17,9 +17,11 @@ const labels = {
 
 const reasons: Record<string, string> = {
   forecast_unavailable: "Waiting for a current corrected solar forecast.",
+  provider_unsupported_for_actions: "The current forecast provider supports planning only.",
+  provider_update_unverified: "Waiting for a confirmed forecast provider update.",
   outlook_unavailable: "Waiting for a valid battery outlook.",
   window_too_short: "The load no longer fits before the deadline.",
-  beyond_horizon: "The deadline is beyond the current outlook.",
+  beyond_horizon: "The full run must fit inside the current outlook.",
   baseline_reaches_reserve: "The battery is expected to reach reserve without the extra load.",
   all_times_reach_reserve: "The load would bring the battery to reserve at every tested start.",
   destination_unavailable: "Waiting for the notification destination to become available.",

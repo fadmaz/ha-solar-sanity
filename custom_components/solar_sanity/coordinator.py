@@ -20,6 +20,7 @@ the next restart.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from collections.abc import Callable, Sequence
@@ -68,9 +69,11 @@ from .const import (
     STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
 )
-from .journal import OutlookJournal
+from .journal import ARCHIVE_PROOF_REVISION, OutlookJournal
 from .reminders import LoadReminders
 from .statistics_source import (
+    ArchiveExpectations,
+    ArchiveRows,
     async_forecast_series,
     async_get_solar_forecasts,
     async_record_forecast,
@@ -198,6 +201,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         #: stopped is not projected from forever.
         self.forecast_captured_at: datetime | None = None
         self._forecast_captures: dict[str, datetime] = {}
+        self._forecast_capture_lock = asyncio.Lock()
         self._latest_forecast_batch: frozenset[str] | None = None
         self._forecast_listeners: dict[str, tuple[DataUpdateCoordinator, Callable[[], None]]] = {}
         self._provider_updates: dict[str, datetime] = {}
@@ -788,6 +792,23 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             and forecast_is_fresh(datetime.fromisoformat(updated), now, FORECAST_MAX_AGE)
         )
 
+    def forecast_action_problem(
+        self, source: ForecastSelection | None, now: datetime
+    ) -> str | None:
+        if source is None or source.provider_id is None:
+            return "forecast_unavailable"
+        current = self.select_forecast("battery", now)
+        if (current.provider_id, current.captured_at) != (source.provider_id, source.captured_at):
+            return "forecast_unavailable"
+        entry = self.hass.config_entries.async_get_entry(source.provider_id)
+        if entry is None or entry.state is not ConfigEntryState.LOADED:
+            return "forecast_unavailable"
+        if entry.domain != "forecast_solar":
+            return "provider_unsupported_for_actions"
+        if not self.forecast_ready_for_actions(current, now):
+            return "provider_update_unverified"
+        return None
+
     def forecast_source_is_fresh(
         self, provider: str, captured: datetime | None, now: datetime
     ) -> bool:
@@ -799,6 +820,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         return forecast_is_fresh(captured, now, FORECAST_MAX_AGE)
 
     async def async_capture_forecasts(self) -> int:
+        async with self._forecast_capture_lock:
+            return await self._async_capture_forecasts()
+
+    async def _async_capture_forecasts(self) -> int:
         """Record each selected provider's day-ahead forecast.
 
         This runs from the moment the integration is installed, before anything
@@ -871,18 +896,35 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 tomorrow_kwh = self._sum_for_tomorrow(wh_hours)
                 if tomorrow_kwh is not None:
                     tomorrow_provider = entry_id
-            if previous_capture is not None and not new_update:
-                if health.get("reason_code") in ("provider_update_failed", "capture_unavailable"):
-                    health["reason_code"] = None
+            if health.get("reason_code") in ("provider_update_failed", "capture_unavailable"):
+                health["reason_code"] = None
+            same_capture = previous_capture is not None and not new_update
+            if same_capture and (
+                self.journal.archive_pending(entry_id)
+                or (
+                    health.get("verification") == "verified"
+                    and health.get("archive_proof_revision") == ARCHIVE_PROOF_REVISION
+                )
+            ):
                 continue
-            submitted: dict[str, list[tuple[datetime, float]]] = {}
+            submitted: dict[str, ArchiveRows] = {}
+            expected: ArchiveExpectations = {
+                forecast_statistic_id(entry_id): list(points[entry_id].items()),
+                dayahead_statistic_id(entry_id): None,
+            }
+            previous = self.journal.archive_expectations(entry_id) if same_capture else {}
             try:
-                if self._owns_archive(entry_id) and await async_record_forecast(
+                owns_archive = self._owns_archive(entry_id)
+                if await async_record_forecast(
                     self.hass,
                     entry_id,
                     await self._provider_name(provider),
                     wh_hours,
+                    now=captures[entry_id],
                     submitted=submitted,
+                    expected=expected,
+                    previous=previous,
+                    write=owns_archive,
                 ):
                     written += 1
             except Exception:
@@ -892,6 +934,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 points[entry_id],
                 submitted,
                 captured_at=captures[entry_id],
+                expected=expected,
             )
 
         for provider, reason in failures.items():
@@ -1418,6 +1461,15 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 if zone
                 else now.date() + timedelta(days=1)
             )
+            attrs["forecast_for_date"] = tomorrow.isoformat()
+            if selected.captured_at is not None:
+                updated = self.journal.health.get(provider, {}).get("provider_updated_at")
+                oldest = (
+                    min(selected.captured_at, datetime.fromisoformat(updated))
+                    if updated
+                    else selected.captured_at
+                )
+                attrs["forecast_valid_until"] = (oldest + FORECAST_MAX_AGE).isoformat()
             hours = corrected_hours(
                 self.forecast_points.get(provider, {}),
                 day_of=lambda when: when.astimezone(zone).date() if zone else when.date(),
