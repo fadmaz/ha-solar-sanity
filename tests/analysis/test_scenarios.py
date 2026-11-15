@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from analysis.outlook import BatterySettings, Step, project
-from analysis.scenarios import compare_load, find_best_time
+from analysis.scenarios import compare_load, find_best_time, time_load_now
 
 START = datetime(2026, 11, 10, 20, tzinfo=UTC)
 BATTERY = BatterySettings(10_000, 20, 100, charge_efficiency=1, discharge_efficiency=1)
@@ -50,6 +50,23 @@ def test_only_the_future_part_of_a_started_scenario_is_applied():
     result = run(at=START - timedelta(minutes=30))
     assert result.additional_wh == 500
     assert result.applied_start == START
+
+
+def test_decision_does_not_credit_sunshine_before_the_measured_charge():
+    """A 36% battery hits its 35% reserve after the sun drops during the load."""
+    battery = BatterySettings(10_000, 35, 100)
+    series = (Step(START, 1, 3000, 0, 3000), Step(START + timedelta(hours=1), 1, 0, 0, 0))
+    now = START + timedelta(minutes=9)
+    inputs = {"power_w": 3000, "duration_minutes": 60, "now": now}
+    timing = time_load_now(36, battery, series, **inputs)
+    comparison = compare_load(36, battery, series, start_at=now, forecast_used=True, **inputs)
+    plan = find_best_time(36, battery, series, earliest_start=now, finish_by=timing.end, **inputs)
+    assert timing.minimum_soc_pct == 35
+    assert timing.reserve_at is not None
+    assert timing == plan.run_now
+    assert plan.recommendation is None
+    assert comparison.baseline.trajectory[0] == (now, 36)
+    assert comparison.scenario.horizon_reserve_at == timing.reserve_at
 
 
 def test_splitting_sunny_steps_preserves_original_solar_and_consumption():

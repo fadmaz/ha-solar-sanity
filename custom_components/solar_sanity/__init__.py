@@ -124,6 +124,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     await coordinator.journal.async_restore()
     await coordinator.reminders.async_restore()
     entry.async_on_unload(coordinator.journal.cancel)
+    entry.async_on_unload(coordinator.async_stop_forecast_updates)
     entry.async_on_unload(coordinator.reminders.async_stop)
 
     await _async_backfill(hass, coordinator)

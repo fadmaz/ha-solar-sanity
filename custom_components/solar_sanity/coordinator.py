@@ -25,6 +25,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
+from hashlib import sha256
 from typing import Any, Final
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
@@ -196,6 +197,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         self.forecast_captured_at: datetime | None = None
         self._forecast_captures: dict[str, datetime] = {}
         self._latest_forecast_batch: frozenset[str] | None = None
+        self._forecast_listeners: dict[str, tuple[DataUpdateCoordinator, Callable[[], None]]] = {}
+        self._provider_updates: dict[str, datetime] = {}
+        self._forecast_failures: dict[str, str] = {}
         #: Entity ids the recorder holds no statistics for. Their sensors
         #: carry no state_class, so no history exists to backfill from.
         self.unrecorded_entities: tuple[str, ...] = ()
@@ -704,6 +708,56 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
 
     # -- forecast capture ---------------------------------------------------
 
+    def _watch_forecast_updates(self, entry: ConfigEntry) -> None:
+        """Forecast.Solar's energy platform reads this upstream coordinator's cache."""
+        upstream = entry.runtime_data if hasattr(entry, "runtime_data") else None
+        if entry.domain != "forecast_solar" or not isinstance(upstream, DataUpdateCoordinator):
+            return
+        previous = self._forecast_listeners.get(entry.entry_id)
+        if previous is not None:
+            if previous[0] is upstream:
+                return
+            previous[1]()
+            self._provider_updates.pop(entry.entry_id, None)
+
+        @callback
+        def updated() -> None:
+            if upstream.last_update_success:
+                self._provider_updates[entry.entry_id] = dt_util.utcnow()
+
+        self._forecast_listeners[entry.entry_id] = upstream, upstream.async_add_listener(updated)
+
+    @callback
+    def async_stop_forecast_updates(self) -> None:
+        for _, unsubscribe in self._forecast_listeners.values():
+            unsubscribe()
+        self._forecast_listeners.clear()
+
+    def _provider_failed(self, provider: str) -> bool:
+        listener = self._forecast_listeners.get(provider)
+        return listener is not None and not listener[0].last_update_success
+
+    def forecast_ready_for_actions(self, selection: ForecastSelection, now: datetime) -> bool:
+        provider = selection.provider_id
+        if provider is None or provider not in (self._latest_forecast_batch or ()):
+            return False
+        updated = self.journal.health.get(provider, {}).get("provider_updated_at")
+        return (
+            updated is not None
+            and not self._provider_failed(provider)
+            and forecast_is_fresh(datetime.fromisoformat(updated), now, FORECAST_MAX_AGE)
+        )
+
+    def forecast_source_is_fresh(
+        self, provider: str, captured: datetime | None, now: datetime
+    ) -> bool:
+        updated = self.journal.health.get(provider, {}).get("provider_updated_at")
+        if updated is not None and not forecast_is_fresh(
+            datetime.fromisoformat(updated), now, FORECAST_MAX_AGE
+        ):
+            return False
+        return forecast_is_fresh(captured, now, FORECAST_MAX_AGE)
+
     async def async_capture_forecasts(self) -> int:
         """Record each selected provider's day-ahead forecast.
 
@@ -718,9 +772,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
 
         attempted = dt_util.utcnow().isoformat()
         for entry_id in entry_ids:
-            self.journal.health.setdefault(entry_id, {}).update(
-                attempted_at=attempted, reason_code="capture_unavailable"
-            )
+            self.journal.health.setdefault(entry_id, {})["attempted_at"] = attempted
+            if (provider := self.hass.config_entries.async_get_entry(entry_id)) is not None:
+                self._watch_forecast_updates(provider)
         captured: dict[str, datetime] = {}
         forecasts = await async_get_solar_forecasts(self.hass, entry_ids, captured_at=captured)
         captured_at = dt_util.utcnow()
@@ -728,9 +782,16 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         tomorrow_kwh: float | None = None
         tomorrow_provider: str | None = None
         points: dict[str, dict[datetime, float]] = {}
+        captures: dict[str, datetime] = {}
+        failures = {
+            entry_id: "provider_update_failed"
+            if self._provider_failed(entry_id)
+            else "capture_unavailable"
+            for entry_id in entry_ids
+        }
         for entry_id, payload in forecasts.items():
             provider = self.hass.config_entries.async_get_entry(entry_id)
-            if provider is None:
+            if provider is None or failures.get(entry_id) == "provider_update_failed":
                 continue
             wh_hours = payload.get("wh_hours") if isinstance(payload, dict) else None
             if not isinstance(wh_hours, dict):
@@ -745,6 +806,34 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 math.isfinite(value) and value >= 0 for value in points[entry_id].values()
             ):
                 del points[entry_id]
+                continue
+            failures.pop(entry_id)
+            health = self.journal.health[entry_id]
+            fingerprint = sha256(repr(sorted(points[entry_id].items())).encode()).hexdigest()
+            observed_update = self._provider_updates.get(entry_id)
+            same_snapshot = health.get("source_fingerprint") == fingerprint
+            previous_update = health.get("provider_updated_at") if same_snapshot else None
+            new_update = observed_update is not None and (
+                previous_update is None or observed_update > datetime.fromisoformat(previous_update)
+            )
+            if observed_update is not None:
+                health["provider_updated_at"] = observed_update.isoformat()
+            elif not same_snapshot:
+                health.pop("provider_updated_at", None)
+            health["source_fingerprint"] = fingerprint
+            previous_capture = health.get("captured_at") if same_snapshot else None
+            captures[entry_id] = (
+                datetime.fromisoformat(previous_capture)
+                if previous_capture is not None and not new_update
+                else captured.get(entry_id, captured_at)
+            )
+            if tomorrow_kwh is None:
+                tomorrow_kwh = self._sum_for_tomorrow(wh_hours)
+                if tomorrow_kwh is not None:
+                    tomorrow_provider = entry_id
+            if previous_capture is not None and not new_update:
+                if health.get("reason_code") in ("provider_update_failed", "capture_unavailable"):
+                    health["reason_code"] = None
                 continue
             submitted: dict[str, list[tuple[datetime, float]]] = {}
             try:
@@ -762,25 +851,19 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 entry_id,
                 points[entry_id],
                 submitted,
-                captured_at=captured.get(entry_id, captured_at),
+                captured_at=captures[entry_id],
             )
 
-            # Surface the first provider's figure. Once accuracy scoring exists
-            # this should prefer whichever provider has been most accurate here.
-            if tomorrow_kwh is None:
-                tomorrow_kwh = self._sum_for_tomorrow(wh_hours)
-                if tomorrow_kwh is not None:
-                    tomorrow_provider = entry_id
-
+        for provider, reason in failures.items():
+            self.journal.health[provider]["reason_code"] = reason
         self._expected_tomorrow_kwh = tomorrow_kwh
         self._expected_tomorrow_provider = tomorrow_provider
         self._latest_forecast_batch = frozenset(points)
+        self._forecast_failures = failures
         if points:
             self.forecast_points = points
-            self.forecast_captured_at = captured_at
-            self._forecast_captures = {
-                provider: captured.get(provider, captured_at) for provider in points
-            }
+            self.forecast_captured_at = max(captures.values())
+            self._forecast_captures = captures
         await self.journal.async_save()
         return written
 
@@ -809,8 +892,8 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         if self._latest_forecast_batch is None:
             return "waiting_for_capture"
         if provider not in self._latest_forecast_batch:
-            return "capture_unavailable"
-        if not forecast_is_fresh(self.forecast_capture_time(provider), now, FORECAST_MAX_AGE):
+            return self._forecast_failures.get(provider, "capture_unavailable")
+        if not self.forecast_source_is_fresh(provider, self.forecast_capture_time(provider), now):
             return "forecast_stale"
         points = self.forecast_points[provider]
         if horizon == "battery":
@@ -856,7 +939,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             if horizon != "tomorrow" and not points:
                 continue
             captured = self.forecast_capture_time(provider)
-            if not forecast_is_fresh(captured, now, FORECAST_MAX_AGE):
+            if not self.forecast_source_is_fresh(provider, captured, now):
                 if captured is not None:
                     reason = "forecast_stale"
                 continue

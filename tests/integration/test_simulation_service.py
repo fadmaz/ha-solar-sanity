@@ -11,13 +11,14 @@ from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.solar_sanity.analysis.outlook import BatterySettings, Step, project
 from custom_components.solar_sanity.battery_outlook import OutlookState
-from custom_components.solar_sanity.const import DOMAIN
+from custom_components.solar_sanity.const import DOMAIN, OPT_BATTERY_SOC
 from tests.integration.test_outlook_journal import NOW, _journal
 from tests.integration.test_tools_services import device
 
 
 async def setup(hass, entry_data):
     entry, journal = await _journal(hass, entry_data)
+    hass.states.async_set(entry.options[OPT_BATTERY_SOC], "80")
     settings = BatterySettings(10_000, 20, 100)
     series = [Step(NOW + timedelta(hours=i), 1, 0, 200, 0) for i in range(12)]
     state = OutlookState(

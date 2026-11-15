@@ -722,6 +722,11 @@ Auto follows the existing capture and provider order, including retention of
 the last usable batch for the live outlook when a whole capture fails.
 
 Archive ownership, submission and read-back are independent of selection.
+Forecast.Solar reports update success through its coordinator. A repeated
+energy-platform response keeps the original capture time unless a successful
+upstream update was observed. The journal keeps that evidence independently of
+archive verification. A provider without update evidence can supply a display
+forecast during its freshness window; load actions wait for a verified update.
 Each battery projection freezes its provider and capture time for journal
 issues and simulations. Accuracy and interval calibration group observations
 by source and setup. Automatic fallback does not change the setup identity or
@@ -836,6 +841,10 @@ Check now applies one complete run starting now to the current corrected
 outlook. It shares the load splitting and reserve calculation with Find best
 time, and validates the live charge reading against the projection's starting
 charge. The result carries the projection revision for a subsequent request.
+The simulation begins at the check instant with measured charge and prorates
+the remaining part of the first forecast step. The reserve signal and the
+load calculations use the full horizon. The main outlook and issued night
+grades use the saved night window.
 
 A reminder may bind one script by entity registry entry ID. The response-only
 start action accepts a reminder ID and projection revision and resolves the

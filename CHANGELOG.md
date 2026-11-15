@@ -2,6 +2,18 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.51.1] - 2026-11-15
+
+### Fixed
+
+- Load simulations, reminders, and linked script requests start from the measured
+  battery level at the time of the check. They no longer count elapsed forecast energy.
+- Reserve risk checks the full warning window, including periods after solar
+  takes over. It is unavailable when there is not enough forecast coverage.
+- Forecast.Solar update failures cannot renew cached forecasts. Setup distinguishes
+  successful provider updates from archive verification. Reminders and script
+  requests require a confirmed provider update.
+
 ## [0.51.0] - 2026-11-15
 
 ### Added

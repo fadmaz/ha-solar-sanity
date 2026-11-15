@@ -55,6 +55,7 @@ COLLECTION_REASONS = {
     "waiting_for_checkpoint": "Waiting for the first scheduled prediction.",
     "forecast_stale": "The forecast has not been captured within three hours.",
     "capture_unavailable": "The latest forecast capture did not return usable data.",
+    "provider_update_failed": "The forecast provider's latest update failed.",
     "archive_not_submitted": "The recorder did not accept an archive batch for submission.",
     "archive_pending": "The archive batch is waiting for read-back verification.",
     "archive_unverified": "The latest archive batch could not be verified by reading it back.",

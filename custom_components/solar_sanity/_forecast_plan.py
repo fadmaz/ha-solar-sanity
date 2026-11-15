@@ -25,6 +25,7 @@ type ForecastHorizon = Literal["battery", "today", "tomorrow"]
 
 FORECAST_SOURCE_REASONS = {
     "provider_unavailable": "The forecast provider is unavailable.",
+    "provider_update_failed": "The forecast provider's latest update failed.",
     "capture_unavailable": "The latest forecast capture did not return usable data.",
     "forecast_stale": "The solar forecast has not been refreshed within three hours.",
     "forecast_horizon_missing": "The forecast does not cover this period.",

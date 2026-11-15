@@ -124,18 +124,23 @@ def _provider(coordinator: SolarSanityCoordinator, entry_id: str, now: datetime)
         check = _check(ATTENTION, COLLECTION_REASONS[code])
     elif code == "capture_unavailable":
         check = _check(WAITING, COLLECTION_REASONS[code])
+    elif code == "provider_update_failed":
+        check = _check(ATTENTION, FORECAST_SOURCE_REASONS[code])
     elif not capture:
         check = _check(WAITING, COLLECTION_REASONS["waiting_for_capture"])
     elif verification != "verified":
         check = _check(
             WAITING, None if verification == "pending" else COLLECTION_REASONS["archive_pending"]
         )
+    elif not health.get("provider_updated_at"):
+        check = _check(WAITING, "The provider's last successful update could not be verified.")
     else:
         check = _check(READY)
     return {
         **check,
         "integration": entry.domain if entry is not None else None,
         "captured_at": capture,
+        "provider_updated_at": health.get("provider_updated_at"),
         "verified_at": health.get("verified_at"),
         "verification": verification,
     }

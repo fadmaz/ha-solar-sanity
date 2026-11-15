@@ -54,9 +54,11 @@ def _start_time(value):
 
 def _projection_view(outlook, uncovered_wh):
     return {
-        "lowest_pct": outlook.lowest_pct if outlook.takeover_at is not None else None,
+        "lowest_pct": min(soc for _, soc in outlook.trajectory),
         "full_at": outlook.full_at.isoformat() if outlook.full_at else None,
-        "reserve_at": outlook.reserve_at.isoformat() if outlook.reserve_at else None,
+        "reserve_at": outlook.horizon_reserve_at.isoformat()
+        if outlook.horizon_reserve_at
+        else None,
         "uncovered_energy_kwh": uncovered_wh / 1000,
         "trajectory": [{"at": t.isoformat(), "soc": value} for t, value in outlook.trajectory],
     }
@@ -66,6 +68,13 @@ def _current_projection(coordinator, now: datetime) -> OutlookState:
     if problem := coordinator.battery.projection_problem(now):
         raise ServiceValidationError(problem)
     return coordinator.battery.state
+
+
+def _current_load_projection(coordinator, now: datetime) -> OutlookState:
+    state = _current_projection(coordinator, now)
+    if coordinator.battery.projection_soc_problem(state, now):
+        raise ServiceValidationError("Wait for an outlook based on the current battery charge.")
+    return state
 
 
 def _projection_basis(state: OutlookState, settings: BatterySettings, time_zone: str) -> dict:
@@ -246,7 +255,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
     async def simulate_load(call: ServiceCall):
         coordinator = await coordinator_for(hass, call)
         now = dt_util.utcnow()
-        state = _current_projection(coordinator, now)
+        state = _current_load_projection(coordinator, now)
         try:
             settings, steps = frozen_inputs(state)
             comparison = compare_load(
@@ -288,7 +297,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
     async def plan_load(call: ServiceCall):
         coordinator = await coordinator_for(hass, call)
         now = dt_util.utcnow()
-        state = _current_projection(coordinator, now)
+        state = _current_load_projection(coordinator, now)
         try:
             settings, steps = frozen_inputs(state)
             result = find_best_time(

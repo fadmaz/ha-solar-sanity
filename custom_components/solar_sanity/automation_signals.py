@@ -90,20 +90,22 @@ class AutomationSignals:
         settings = battery.settings
         if settings is None:
             return None
-        state = battery.state
         attrs = {"lead_minutes": self.lead_minutes, "reserve_pct": settings.reserve_pct}
-        if not state.soc_readable or state.soc_pct is None:
+        soc, _, _ = battery._read_soc(settings, now)
+        if soc is None:
             return Signal(None, "No valid battery charge reading.", attrs)
-        if state.soc_pct <= settings.reserve_pct:
+        if soc <= settings.reserve_pct:
             return Signal(
                 True, "Battery is already at or below reserve.", {**attrs, "at_reserve": True}
             )
         if problem := battery.projection_problem(now):
             return Signal(None, problem, attrs)
-        outlook = state.outlook
+        outlook = battery.state.outlook
         assert outlook is not None
+        if soc != battery.state.soc_pct:
+            return Signal(None, "The battery charge changed. Waiting for a new outlook.", attrs)
         deadline = now + timedelta(minutes=self.lead_minutes)
-        when = outlook.reserve_at
+        when = outlook.horizon_reserve_at
         if when is not None and when < now:
             return Signal(
                 None, "The projected reserve time has passed. Waiting for a new outlook.", attrs
@@ -114,7 +116,7 @@ class AutomationSignals:
                 "The battery is projected to reach reserve within the warning lead time.",
                 {**attrs, "reserve_at": when.isoformat(), "at_reserve": False},
             )
-        if outlook.horizon_end < deadline and outlook.takeover_at is None:
+        if outlook.horizon_end < deadline:
             return Signal(None, "The outlook does not cover the warning lead time.", attrs)
         return Signal(False, "No reserve risk within the warning lead time.", attrs)
 

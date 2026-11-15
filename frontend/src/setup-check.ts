@@ -13,6 +13,7 @@ interface Provider extends Check {
   name?: string;
   integration: string | null;
   captured_at: string | null;
+  provider_updated_at?: string | null;
   verified_at: string | null;
   verification: "pending" | "verified" | "unverified" | null;
 }
@@ -216,7 +217,8 @@ export class SolarSanitySetupCheck extends LitElement {
           const verification = provider.verification === "pending" ? "Verification pending"
             : provider.verification === "unverified" ? "Latest batch unverified" : null;
           return html`<li><header><h4>${label}</h4>${this._status(provider.status)}</header>
-            <dl><div><dt>Last valid capture</dt><dd>${this._time(provider.captured_at)}</dd></div>
+            <dl><div><dt>Last successful provider update</dt><dd>${this._time(provider.provider_updated_at ?? null)}</dd></div>
+              <div><dt>Last valid capture</dt><dd>${this._time(provider.captured_at)}</dd></div>
               <div><dt>Last verified archive read-back</dt><dd>${this._time(provider.verified_at)}</dd></div></dl>
             ${verification ? html`<p>${verification}</p>` : nothing}
             ${this._details(provider)}</li>`;
