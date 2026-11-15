@@ -125,11 +125,14 @@ async def coordinator_for(hass: HomeAssistant, call: ServiceCall):
     device = dr.async_get(hass).async_get(call.data["device_id"])
     if device is None:
         raise ServiceValidationError("Select a Solar Sanity installation.")
+    # Core 2026.11 has a single config entry per device. Older versions
+    # still expose a set even for our explicitly owned devices.
+    entry_id = getattr(device, "config_entry_id", None)
+    device_entries = {entry_id} if entry_id is not None else device.config_entries
     entries = [
         entry
         for entry in hass.config_entries.async_entries(DOMAIN)
-        if entry.entry_id in device.config_entries
-        and (DOMAIN, entry.entry_id) in device.identifiers
+        if entry.entry_id in device_entries and (DOMAIN, entry.entry_id) in device.identifiers
     ]
     if len(entries) != 1:
         raise ServiceValidationError("Select one Solar Sanity installation.")

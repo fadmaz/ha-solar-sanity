@@ -2,6 +2,17 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.51.3] - 2026-11-15
+
+### Fixed
+
+- Morning History displays the saved fill deadline and keeps the selected days
+  when the journal refreshes.
+- The History and What if layouts respond to the card width, including narrow
+  desktop columns.
+- Native actions use the current Home Assistant device ownership interface when
+  available and retain compatibility with older versions.
+
 ## [0.51.1] - 2026-11-15
 
 ### Fixed

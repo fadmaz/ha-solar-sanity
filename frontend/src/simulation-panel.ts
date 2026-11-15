@@ -227,7 +227,7 @@ export class SolarSanitySimulation extends LitElement {
         </solar-sanity-load-reminder>`:nothing}
       ${r?html`<p>Based on ${this._time(r.basis.computed_at)} · ${r.basis.forecast_used?"Solar forecast":"Production history"}</p>${this._graph(r)}
         <table><thead><tr><th>Result</th><th>Baseline</th><th>Extra load</th></tr></thead><tbody>
-        <tr><th>Night minimum</th><td>${r.baseline.lowest_pct===null?"—":`${r.baseline.lowest_pct.toFixed(1)}%`}</td><td>${r.scenario.lowest_pct===null?"—":`${r.scenario.lowest_pct.toFixed(1)}%`}</td></tr>
+        <tr><th>Lowest charge</th><td>${r.baseline.lowest_pct===null?"—":`${r.baseline.lowest_pct.toFixed(1)}%`}</td><td>${r.scenario.lowest_pct===null?"—":`${r.scenario.lowest_pct.toFixed(1)}%`}</td></tr>
         <tr><th>Reserve at</th><td>${this._time(r.baseline.reserve_at)}</td><td>${this._time(r.scenario.reserve_at)}</td></tr>
         <tr><th>Full at</th><td>${this._time(r.baseline.full_at)}</td><td>${this._time(r.scenario.full_at)}</td></tr>
         <tr><th>Uncovered energy</th><td>${r.baseline.uncovered_energy_kwh.toFixed(2)} kWh</td><td>${r.scenario.uncovered_energy_kwh.toFixed(2)} kWh</td></tr></tbody></table>
@@ -235,12 +235,12 @@ export class SolarSanitySimulation extends LitElement {
       </section>`;
   }
   public static styles=css`
-    :host{display:block} p{line-height:1.6} .muted,figcaption{color:var(--secondary-text-color);font-size:.875rem} .muted[role=status]{margin-inline-start:12px}
+    :host{display:block;container-type:inline-size} p{line-height:1.6} .muted,figcaption{color:var(--secondary-text-color);font-size:.875rem} .muted[role=status]{margin-inline-start:12px}
     .form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}label{display:grid;gap:6px;font-size:.875rem}
     input,select,button{box-sizing:border-box;width:100%;font:inherit;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:10px;min-width:0}
     button{width:auto;cursor:pointer}button:disabled{opacity:.6;cursor:default}button:hover{background:var(--secondary-background-color)}input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--primary-color);outline-offset:3px}
     figure{margin:24px 0}svg{width:100%;display:block;overflow:visible}polyline{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.baseline{stroke:var(--primary-text-color)}.scenario{stroke:var(--primary-color);stroke-dasharray:7 4}.reserve{stroke:var(--divider-color);stroke-dasharray:3 3}.axis{display:flex;justify-content:space-between;gap:12px;color:var(--secondary-text-color);font-size:.875rem;font-variant-numeric:tabular-nums}
     table{width:100%;border-collapse:collapse;font-size:.875rem;table-layout:fixed}td,th{text-align:left;padding:10px 4px;border-bottom:1px solid var(--divider-color);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}th{font-weight:500}tbody th{color:var(--secondary-text-color)}
-    @media(max-width:420px){.form{grid-template-columns:1fr}}
+    @container(max-width:420px){.form{grid-template-columns:1fr}}
   `;
 }
