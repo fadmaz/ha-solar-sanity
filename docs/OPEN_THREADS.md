@@ -3,10 +3,14 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated for 0.51.4, 2026-11-15.
+Last updated for 0.52.0, 2026-11-15.
 
 ## Latest delivery and operational acceptance
 
+- 0.52.0 adds manual battery charge limits and solar-only estimates in What if.
+  Local and CI test data cover the solar-only path without a grid import
+  meter. Reference Home Assistant deployment and independent solar-only field
+  acceptance are pending.
 - 0.51.4 requires proof across the latest and day-ahead archives, retries an
   incomplete batch after a restart, and recovers from longer outages when a
   preceding total is known. Load actions report eligibility for the actual

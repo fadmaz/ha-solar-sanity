@@ -74,6 +74,21 @@ simulate_load:
     start_at:
       selector:
         text:
+    minimum_soc_pct:
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: any
+          mode: box
+          unit_of_measurement: "%"
+    max_extra_grid_kwh:
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+          unit_of_measurement: kWh
 find_best_time:
   fields:
     device_id:
@@ -105,6 +120,21 @@ find_best_time:
       required: true
       selector:
         text:
+    minimum_soc_pct:
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: any
+          mode: box
+          unit_of_measurement: "%"
+    max_extra_grid_kwh:
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+          unit_of_measurement: kWh
 schedule_load_reminder:
   fields:
     device_id:

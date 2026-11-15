@@ -29,6 +29,7 @@ from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOf
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
+from homeassistant.util import dt as dt_util
 
 from .battery_controls import control_view
 from .battery_outlook import REASONS, OutlookState
@@ -36,6 +37,7 @@ from .const import CONF_FORECAST_ENTRIES
 from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .entity import SolarSanityEntity
 from .journal import COLLECTION_REASONS, MODEL_REVISION
+from .load_planning import planning_metadata
 from .statistics_source import forecast_statistic_id
 
 
@@ -192,6 +194,7 @@ COLLECTION_SENSOR = SolarSanitySensorDescription(
         "reason_code": c.journal.status()[1],
         "reason": COLLECTION_REASONS.get(c.journal.status()[1]),
         "battery_outlook_configured": c.battery.configured,
+        "load_planning": planning_metadata(c, dt_util.utcnow()),
     },
 )
 
@@ -463,7 +466,7 @@ class SolarSanitySensor(SolarSanityEntity, SensorEntity):
     """One sensor, driven entirely by its description."""
 
     entity_description: SolarSanitySensorDescription
-    _unrecorded_attributes = frozenset({"corrected_hours"})
+    _unrecorded_attributes = frozenset({"corrected_hours", "load_planning"})
 
     def __init__(
         self,

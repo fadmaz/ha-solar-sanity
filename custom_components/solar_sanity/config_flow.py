@@ -21,6 +21,7 @@ of 2026.6 and an error from 2026.12, so this takes the listener-free path.
 
 from __future__ import annotations
 
+from math import isfinite
 from typing import Any
 
 import voluptuous as vol
@@ -59,11 +60,15 @@ from .const import (
     OPT_BATTERY_TARGET_PCT,
     OPT_LOAD_PROFILE_ALTERNATE_DAYS,
     OPT_MINIMUM_SURPLUS_W,
+    OPT_PLANNING_MAX_GRID_KWH,
+    OPT_PLANNING_MIN_SOC_PCT,
     OPT_PREFERRED_FORECAST_PROVIDER,
     OPT_RESERVE_WARNING_MINUTES,
+    OPT_SOLAR_ONLY_PLANNING,
     OPT_SURPLUS_HOLD_MINUTES,
 )
 from .discovery import Discovery, async_discover
+from .load_planning import has_battery_channels
 from .statistics_source import async_forecast_providers
 
 #: Roles offered at setup, in the order they appear.
@@ -546,6 +551,34 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
             errors[OPT_LOAD_PROFILE_ALTERNATE_DAYS] = "all_schedule_days"
 
         if user_input is not None:
+            if OPT_PLANNING_MIN_SOC_PCT in fields and (
+                (raw := user_input.get(OPT_PLANNING_MIN_SOC_PCT)) not in (None, "")
+            ):
+                try:
+                    minimum = power_override(raw, positive=False)
+                    selected_reserve = user_input.get(OPT_BATTERY_RESERVE_PCT)
+                    reserve = float(
+                        DEFAULT_RESERVE_PCT if selected_reserve in (None, "") else selected_reserve
+                    )
+                    if not reserve <= minimum <= 100:
+                        raise ValueError
+                    manual[OPT_PLANNING_MIN_SOC_PCT] = minimum
+                except (TypeError, ValueError):
+                    errors[OPT_PLANNING_MIN_SOC_PCT] = "invalid_planning_minimum"
+            if OPT_PLANNING_MAX_GRID_KWH in fields and (
+                (raw := user_input.get(OPT_PLANNING_MAX_GRID_KWH)) not in (None, "")
+            ):
+                try:
+                    maximum = power_override(raw, positive=False)
+                    if not isfinite(maximum * 1000):
+                        raise ValueError
+                    manual[OPT_PLANNING_MAX_GRID_KWH] = maximum
+                except ValueError:
+                    errors[OPT_PLANNING_MAX_GRID_KWH] = "invalid_planning_grid_limit"
+            if user_input.get(OPT_SOLAR_ONLY_PLANNING) and has_battery_channels(
+                self.config_entry.data, {**self.config_entry.options, **user_input}
+            ):
+                errors[OPT_SOLAR_ONLY_PLANNING] = "battery_present_for_planning"
             for key, maximum in (
                 (OPT_RESERVE_WARNING_MINUTES, 1440),
                 (OPT_SURPLUS_HOLD_MINUTES, 60),
@@ -626,6 +659,15 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
         fields[vol.Optional(OPT_BATTERY_RESERVE_PCT)] = _percent_selector(0, 95)
         fields[vol.Optional(OPT_BATTERY_TARGET_PCT)] = _percent_selector(10, 100)
         if battery_settings(dict(self.config_entry.options)) is not None:
+            fields[vol.Optional(OPT_PLANNING_MIN_SOC_PCT)] = _FiniteNumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=100,
+                    step="any",
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="%",
+                )
+            )
             for key in CONTROL_KEYS:
                 fields[vol.Optional(key)] = _FiniteNumberSelector(
                     selector.NumberSelectorConfig(
@@ -643,6 +685,18 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
                     step=1,
                     mode=selector.NumberSelectorMode.BOX,
                     unit_of_measurement="min",
+                )
+            )
+        elif not has_battery_channels(self.config_entry.data, self.config_entry.options):
+            fields[vol.Optional(OPT_SOLAR_ONLY_PLANNING, default=False)] = (
+                selector.BooleanSelector()
+            )
+            fields[vol.Optional(OPT_PLANNING_MAX_GRID_KWH)] = _FiniteNumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    step="any",
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="kWh",
                 )
             )
         fields[vol.Optional(OPT_MINIMUM_SURPLUS_W, default=DEFAULT_MINIMUM_SURPLUS_W)] = (

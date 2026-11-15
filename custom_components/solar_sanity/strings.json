@@ -105,7 +105,10 @@
           "preferred_forecast_provider": "Preferred forecast provider",
           "reserve_warning_minutes": "Reserve warning lead time",
           "minimum_surplus_w": "Minimum measured surplus",
-          "surplus_hold_minutes": "Surplus hold time"
+          "surplus_hold_minutes": "Surplus hold time",
+          "planning_min_soc_pct": "Minimum planned battery charge",
+          "solar_only_planning": "Grid-connected solar without a battery",
+          "planning_max_grid_kwh": "Maximum estimated additional grid energy"
         },
         "data_description": {
           "battery_soc_entity": "Optional. Your battery's state of charge, as a percentage. With the capacity below, it is what the battery outlook projects from.",
@@ -120,7 +123,10 @@
           "preferred_forecast_provider": "Choose which provider to try first. Solar Sanity uses the next eligible provider when the preferred forecast cannot serve a result.",
           "reserve_warning_minutes": "Warn this many minutes before the battery is projected to reach its configured reserve (1–1440).",
           "minimum_surplus_w": "Minimum surplus power in watts. Also applies to estimated alerts if you opt in through the notification blueprint.",
-          "surplus_hold_minutes": "How many whole minutes the surplus must stay at or above the threshold (1–60)."
+          "surplus_hold_minutes": "How many whole minutes the surplus must stay at or above the threshold (1–60).",
+          "planning_min_soc_pct": "Optional default for manual planning in What if. Enter a percentage at or above the reserve. Leave blank to use the reserve.",
+          "solar_only_planning": "Enable manual grid energy estimates in What if for a grid-connected installation with no battery. Uses the corrected solar forecast and measured house consumption history.",
+          "planning_max_grid_kwh": "Optional default for planning without a battery. Enter the maximum additional grid energy in kWh. Enter zero for a run with no estimated additional grid energy, or leave blank to clear the limit."
         }
       }
     },
@@ -129,7 +135,10 @@
       "all_schedule_days": "Choose at most six days. Leave the list empty to use one schedule for the whole week.",
       "invalid_charge_limit": "Enter a finite charge power limit above zero.",
       "invalid_standby": "Enter a finite standby draw of zero or more.",
-      "invalid_signal_threshold": "Enter a finite value in range. Enter durations in whole minutes."
+      "invalid_signal_threshold": "Enter a finite value in range. Enter durations in whole minutes.",
+      "invalid_planning_minimum": "Enter a finite percentage from the battery reserve to 100%.",
+      "invalid_planning_grid_limit": "Enter a finite non-negative grid energy limit.",
+      "battery_present_for_planning": "Turn off solar-only planning when configuring a battery."
     }
   },
   "entity": {
@@ -275,11 +284,11 @@
     },
     "find_best_time": {
       "name": "Find best time",
-      "description": "Find a time to run one extra load within a deadline and above the battery reserve in the current outlook.",
+      "description": "Find a complete run of one extra load within a deadline and the supplied planning limits.",
       "fields": {
         "device_id": {
           "name": "Installation",
-          "description": "The Solar Sanity battery installation to use."
+          "description": "The Solar Sanity installation to use."
         },
         "power_w": {
           "name": "Extra power",
@@ -296,6 +305,14 @@
         "finish_by": {
           "name": "Finish by",
           "description": "ISO8601 deadline with a UTC offset, within the current outlook."
+        },
+        "minimum_soc_pct": {
+          "name": "Minimum planned battery charge",
+          "description": "Optional manual battery planning limit from the configured reserve to 100%. Omit to use the reserve."
+        },
+        "max_extra_grid_kwh": {
+          "name": "Maximum estimated additional grid energy",
+          "description": "Optional manual solar-only limit in kWh. Zero permits no modeled additional grid energy. Omit for no limit."
         }
       }
     },
@@ -395,11 +412,11 @@
     },
     "simulate_load": {
       "name": "Simulate additional load",
-      "description": "Compare one extra load against the current frozen battery projection without changing published predictions.",
+      "description": "Compare one extra load with a frozen battery projection or estimate its additional grid energy in a grid-connected installation without a battery.",
       "fields": {
         "device_id": {
           "name": "Installation",
-          "description": "The Solar Sanity battery installation to simulate."
+          "description": "The Solar Sanity installation to use."
         },
         "power_w": {
           "name": "Extra power",
@@ -412,6 +429,14 @@
         "start_at": {
           "name": "Start time",
           "description": "Optional ISO8601 timestamp with a UTC offset. Omit to start now. Only the future portion of a started run is simulated."
+        },
+        "minimum_soc_pct": {
+          "name": "Minimum planned battery charge",
+          "description": "Optional manual battery planning limit from the configured reserve to 100%. Omit to use the reserve."
+        },
+        "max_extra_grid_kwh": {
+          "name": "Maximum estimated additional grid energy",
+          "description": "Optional manual solar-only limit in kWh. Zero permits no modeled additional grid energy. Omit for no limit."
         }
       }
     }

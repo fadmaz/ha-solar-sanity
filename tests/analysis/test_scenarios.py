@@ -5,10 +5,85 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from analysis.outlook import BatterySettings, Step, project
-from analysis.scenarios import compare_load, find_best_time, time_load_now
+from analysis.scenarios import (
+    compare_load,
+    compare_solar_load,
+    find_best_time,
+    find_solar_load_time,
+    time_load_now,
+)
 
 START = datetime(2026, 11, 10, 20, tzinfo=UTC)
 BATTERY = BatterySettings(10_000, 20, 100, charge_efficiency=1, discharge_efficiency=1)
+
+
+def test_manual_battery_limit_accepts_equality_but_preserves_the_reserve_rule():
+    """An extra planning minimum uses the lowest charge across the whole projection."""
+    inputs = {
+        "power_w": 1000,
+        "duration_minutes": 60,
+        "earliest_start": START,
+        "finish_by": START + timedelta(hours=3),
+        "now": START,
+    }
+    legacy = find_best_time(80, BATTERY, steps(), **inputs)
+    assert legacy.recommendation is not None
+    minimum = legacy.recommendation.minimum_soc_pct
+    assert find_best_time(80, BATTERY, steps(), minimum_soc_pct=minimum, **inputs) == legacy
+    higher = find_best_time(80, BATTERY, steps(), minimum_soc_pct=minimum + 1, **inputs)
+    assert higher.reason_code == "planning_minimum_not_met"
+    assert higher.highest_minimum_soc_pct == minimum
+    assert higher.recommendation is None
+    blocked = find_best_time(80, BATTERY, steps(), minimum_soc_pct=100, **inputs)
+    assert blocked.reason_code == "baseline_below_planning_minimum"
+
+
+def test_solar_cap_applies_only_to_incremental_grid_draw():
+    """Partial hours add up separately before taking the modeled grid energy difference."""
+    series = (
+        Step(START, 1, 0, 400, 0),
+        Step(START + timedelta(hours=1), 1, 2000, 400, 2000),
+    )
+    comparison = compare_solar_load(
+        series,
+        power_w=1000,
+        duration_minutes=60,
+        start_at=START + timedelta(minutes=30),
+        now=START,
+    )
+    assert comparison.baseline_grid_wh == comparison.scenario_grid_wh - 500 == 200
+    assert comparison.additional_grid_wh == 500
+    plan = find_solar_load_time(
+        series,
+        power_w=1000,
+        duration_minutes=60,
+        earliest_start=START,
+        finish_by=START + timedelta(hours=2),
+        now=START,
+        max_grid_wh=0,
+    )
+    assert plan.recommendation.start == START + timedelta(hours=1)
+    assert plan.recommendation.additional_grid_wh == 0
+    assert plan.run_now.additional_grid_wh == 1000
+
+
+@pytest.mark.parametrize("day", [(2026, 3, 8), (2026, 11, 1)])
+def test_solar_planning_treats_minutes_as_elapsed_time_on_clock_changes(day):
+    """A two-hour run can cross a missing or repeated wall-clock hour."""
+    local = datetime(*day, 0, 30, tzinfo=ZoneInfo("America/New_York"))
+    start = local.astimezone(UTC)
+    plan = find_solar_load_time(
+        steps(start),
+        power_w=500,
+        duration_minutes=120,
+        earliest_start=local,
+        finish_by=start + timedelta(hours=3),
+        now=start,
+        max_grid_wh=0,
+    )
+    assert plan.reason_code == "grid_limit_not_met"
+    assert plan.lowest_extra_grid_wh == 1000
+    assert plan.run_now.end - plan.run_now.start == timedelta(hours=2)
 
 
 def steps(start=START):

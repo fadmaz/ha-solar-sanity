@@ -271,24 +271,28 @@ export class SolarSanityToolsCard extends LitElement {
     const source = installation?.outlook.battery_lowest_before_sunrise;
     const attrs = source ? this.hass?.states[source]?.attributes : undefined;
     const withOutlook = installation && hasBatterySetup(installation);
-    const selected = withOutlook ? this._tab : "setup";
-    const tabs = withOutlook ? TOOLS_TABS : TOOLS_TABS.filter(tab => tab.value === "setup");
-    const projectionId = Array.isArray(attrs?.trajectory) && attrs.trajectory.length ? String(attrs.projection_id ?? "") : "";
+    const planning = installation?.planning;
+    const solarOnly = planning?.mode === "solar_only";
+    const tabs = TOOLS_TABS.filter(tab => withOutlook || tab.value === "setup" || (solarOnly && tab.value === "what_if"));
+    const selected = tabs.some(tab => tab.value === this._tab) ? this._tab : "setup";
+    const projectionId = solarOnly ? planning.revision :
+      Array.isArray(attrs?.trajectory) && attrs.trajectory.length ? String(attrs.projection_id ?? "") : "";
     const note = !this.hass ? "Waiting for Home Assistant." : this.hass.config.state !== "RUNNING" ? "Home Assistant is still starting."
       : !installation ? "Choose an installation in the card editor." : null;
     return html`<ha-card><div class="root" lang="en" dir="ltr"><h2>Solar Sanity tools</h2>
       ${note ? html`<p>${note}</p>` : html`<div role="tablist" aria-label="Solar Sanity tools">${tabs.map(({value, label}) => html`
         <button role="tab" id=${`tab-${value}`} aria-selected=${selected === value} aria-controls=${`panel-${value}`} tabindex=${selected === value ? 0 : -1}
           @click=${() => {this._tab = value;}} @keydown=${(e: KeyboardEvent) => this._onTabKey(e, tabs.map(tab => tab.value), selected)}>${label}</button>`)}</div>
-        ${withOutlook ? html`
-          <div role="tabpanel" id="panel-history" aria-labelledby="tab-history" ?hidden=${selected !== "history"}>${this._historyPanel()}</div>
-          <div role="tabpanel" id="panel-what_if" aria-labelledby="tab-what_if" ?hidden=${selected !== "what_if"}>
-            <solar-sanity-simulation .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""} .projectionId=${projectionId} .active=${selected === "what_if"}></solar-sanity-simulation>
-            <solar-sanity-battery-settings-preview .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""}
-              .projectionId=${projectionId} .controls=${attrs?.projection_controls as BatteryControls | undefined}
-              .active=${selected === "what_if"}></solar-sanity-battery-settings-preview>
-          </div>
+        ${withOutlook ? html`<div role="tabpanel" id="panel-history" aria-labelledby="tab-history" ?hidden=${selected !== "history"}>${this._historyPanel()}</div>
           <div role="tabpanel" id="panel-changes" tabindex="0" aria-labelledby="tab-changes" ?hidden=${selected !== "changes"}>${changesPanel(attrs?.outlook_changes, this.hass?.config.time_zone)}</div>` : nothing}
+        ${withOutlook || solarOnly ? html`
+          <div role="tabpanel" id="panel-what_if" aria-labelledby="tab-what_if" ?hidden=${selected !== "what_if"}>
+            <solar-sanity-simulation .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""} .projectionId=${projectionId}
+              .planning=${planning} .active=${selected === "what_if"}></solar-sanity-simulation>
+            ${withOutlook ? html`<solar-sanity-battery-settings-preview .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""}
+              .projectionId=${projectionId} .controls=${attrs?.projection_controls as BatteryControls | undefined}
+              .active=${selected === "what_if"}></solar-sanity-battery-settings-preview>` : nothing}
+          </div>` : nothing}
         <div role="tabpanel" id="panel-setup" aria-labelledby="tab-setup" ?hidden=${selected !== "setup"}>
           <solar-sanity-setup-check .hass=${this.hass} .deviceId=${installation?.deviceId ?? ""} .active=${selected === "setup"}></solar-sanity-setup-check>
         </div>`}</div></ha-card>`;

@@ -38,6 +38,27 @@ class LoadPlan:
     recommendation: LoadTiming | None = None
     run_now: LoadTiming | None = None
     reason_code: str | None = None
+    highest_minimum_soc_pct: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SolarLoadTiming:
+    start: datetime
+    end: datetime
+    baseline_grid_wh: float
+    scenario_grid_wh: float
+
+    @property
+    def additional_grid_wh(self) -> float:
+        return max(0.0, self.scenario_grid_wh - self.baseline_grid_wh)
+
+
+@dataclass(frozen=True, slots=True)
+class SolarLoadPlan:
+    recommendation: SolarLoadTiming | None = None
+    run_now: SolarLoadTiming | None = None
+    reason_code: str | None = None
+    lowest_extra_grid_wh: float | None = None
 
 
 def _duration(power_w: float, duration_minutes: int) -> timedelta:
@@ -204,6 +225,7 @@ def find_best_time(
     earliest_start: datetime,
     finish_by: datetime,
     now: datetime,
+    minimum_soc_pct: float | None = None,
 ) -> LoadPlan:
     """Rank complete runs against one frozen outlook and its reserve."""
     duration = _duration(power_w, duration_minutes)
@@ -224,6 +246,7 @@ def find_best_time(
     baseline_grid_wh = sum(baseline.shortfall_wh)
     candidates = []
     run_now = None
+    highest_minimum = None
     for start in _start_options(first, deadline - duration):
         end = start + duration
         run = simulate(soc_pct, battery, _with_load(steps, power_w, start, end))
@@ -232,13 +255,100 @@ def find_best_time(
             if start == now:
                 run_now = timing
             if run.reserve_at is None:
-                candidates.append(timing)
+                minimum = timing.minimum_soc_pct
+                if highest_minimum is None or minimum > highest_minimum:
+                    highest_minimum = minimum
+                if minimum_soc_pct is None or minimum >= minimum_soc_pct:
+                    candidates.append(timing)
     if not candidates:
-        reason = "baseline_reaches_reserve" if baseline.reserve_at else "all_times_reach_reserve"
-        return LoadPlan(run_now=run_now, reason_code=reason)
+        if highest_minimum is not None:
+            reason = (
+                "baseline_below_planning_minimum"
+                if minimum_soc_pct is not None and min(baseline.soc) < minimum_soc_pct
+                else "planning_minimum_not_met"
+            )
+        else:
+            reason = (
+                "baseline_reaches_reserve" if baseline.reserve_at else "all_times_reach_reserve"
+            )
+        return LoadPlan(
+            run_now=run_now, reason_code=reason, highest_minimum_soc_pct=highest_minimum
+        )
     # Disregard floating-point noise from splitting an otherwise identical step.
     best = min(
         candidates,
         key=lambda t: (round(t.additional_grid_wh, 6), -round(t.minimum_soc_pct, 6), t.start),
     )
     return LoadPlan(best, run_now)
+
+
+def solar_load_timing(
+    steps: Sequence[Step], *, power_w: float, start: datetime, end: datetime
+) -> SolarLoadTiming:
+    """Compare grid deficits during exactly the part of the run being considered."""
+    if not steps or end <= start or start < steps[0].start or end > steps[-1].end:
+        raise ValueError("The load must fit within the current forecast.")
+    baseline, scenario = 0.0, 0.0
+    covered_until = start
+    for step in steps:
+        begin, finish = max(start, step.start), min(end, step.end)
+        if begin >= finish:
+            continue
+        if begin != covered_until:
+            raise ValueError("The load crosses an hour without complete planning data.")
+        covered_until = finish
+        hours = (finish - begin).total_seconds() / 3600
+        net = (step.load_wh - step.pv_wh) * (hours / step.hours)
+        baseline += max(0.0, net)
+        scenario += max(0.0, net + power_w * hours)
+    if covered_until != end or not math.isfinite(scenario):
+        raise ValueError("The load crosses an hour without complete planning data.")
+    return SolarLoadTiming(start, end, baseline, scenario)
+
+
+def compare_solar_load(
+    steps: Sequence[Step],
+    *,
+    power_w: float,
+    duration_minutes: int,
+    start_at: datetime,
+    now: datetime,
+) -> SolarLoadTiming:
+    duration = _duration(power_w, duration_minutes)
+    start = start_at.astimezone(UTC)
+    return solar_load_timing(
+        steps, power_w=power_w, start=max(start, now.astimezone(UTC)), end=start + duration
+    )
+
+
+def find_solar_load_time(
+    steps: Sequence[Step],
+    *,
+    power_w: float,
+    duration_minutes: int,
+    earliest_start: datetime,
+    finish_by: datetime,
+    now: datetime,
+    max_grid_wh: float | None,
+) -> SolarLoadPlan:
+    duration = _duration(power_w, duration_minutes)
+    now = now.astimezone(UTC)
+    first, deadline = max(earliest_start.astimezone(UTC), now), finish_by.astimezone(UTC)
+    if deadline - first < duration:
+        return SolarLoadPlan(reason_code="window_too_short")
+    timings = [
+        solar_load_timing(steps, power_w=power_w, start=start, end=start + duration)
+        for start in _start_options(first, deadline - duration)
+    ]
+    best = min(timings, key=lambda item: (round(item.additional_grid_wh, 6), item.start))
+    run_now = timings[0] if first == now else None
+    lowest = best.additional_grid_wh
+    if not meets_grid_limit(lowest, max_grid_wh):
+        return SolarLoadPlan(
+            run_now=run_now, reason_code="grid_limit_not_met", lowest_extra_grid_wh=lowest
+        )
+    return SolarLoadPlan(best, run_now)
+
+
+def meets_grid_limit(additional_grid_wh: float, max_grid_wh: float | None) -> bool:
+    return max_grid_wh is None or round(additional_grid_wh, 6) <= round(max_grid_wh, 6)

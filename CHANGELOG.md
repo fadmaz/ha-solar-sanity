@@ -2,6 +2,17 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.52.0] - 2026-11-15
+
+### Added
+
+- Set a per-installation minimum battery charge for manual load planning in
+  What if. Leave it blank to plan using the existing battery reserve.
+- Enable What if on grid-connected solar installations without a battery.
+  Compare estimated grid energy with and without an extra load, and optionally
+  limit the additional grid energy when finding a time to run it.
+- Setup shows load planning readiness and each installation's default limit.
+
 ## [0.51.4] - 2026-11-15
 
 ### Fixed
