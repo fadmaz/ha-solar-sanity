@@ -96,6 +96,8 @@ class TestConfigFlowSchemas:
 
         from custom_components.solar_sanity.config_flow import SolarSanityOptionsFlow
         from custom_components.solar_sanity.const import (
+            CONF_CHANNELS,
+            CONF_ROLE,
             OPT_BATTERY_CAPACITY_KWH,
             OPT_BATTERY_POWER,
             OPT_BATTERY_POWER_CHARGING_POSITIVE,
@@ -104,6 +106,9 @@ class TestConfigFlowSchemas:
             OPT_BATTERY_TARGET_PCT,
             OPT_LOAD_PROFILE_ALTERNATE_DAYS,
             OPT_MINIMUM_SURPLUS_W,
+            OPT_PLANNING_MAX_GRID_KWH,
+            OPT_PLANNING_MIN_SOC_PCT,
+            OPT_SOLAR_ONLY_PLANNING,
             OPT_SURPLUS_HOLD_MINUTES,
         )
 
@@ -122,8 +127,26 @@ class TestConfigFlowSchemas:
             OPT_LOAD_PROFILE_ALTERNATE_DAYS,
             OPT_MINIMUM_SURPLUS_W,
             OPT_SURPLUS_HOLD_MINUTES,
+            OPT_SOLAR_ONLY_PLANNING,
+            OPT_PLANNING_MAX_GRID_KWH,
         }
         assert schema({})[OPT_LOAD_PROFILE_ALTERNATE_DAYS] == []
+        assert schema({})[OPT_SOLAR_ONLY_PLANNING] is False
+
+        stub.config_entry.data = {CONF_CHANNELS: [{CONF_ROLE: "battery_charge"}]}
+        incomplete = _schema_keys(vol.Schema(SolarSanityOptionsFlow._fields(stub)))
+        assert OPT_SOLAR_ONLY_PLANNING not in incomplete
+        assert OPT_PLANNING_MAX_GRID_KWH not in incomplete
+        assert OPT_PLANNING_MIN_SOC_PCT not in incomplete
+
+        stub.config_entry.options = {
+            OPT_BATTERY_SOC: "sensor.synthetic_soc",
+            OPT_BATTERY_CAPACITY_KWH: 10,
+        }
+        battery = _schema_keys(vol.Schema(SolarSanityOptionsFlow._fields(stub)))
+        assert OPT_PLANNING_MIN_SOC_PCT in battery
+        assert OPT_SOLAR_ONLY_PLANNING not in battery
+        assert OPT_PLANNING_MAX_GRID_KWH not in battery
 
 
 class TestIntegrationImports:

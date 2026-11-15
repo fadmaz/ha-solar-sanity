@@ -9,9 +9,35 @@ interface ProjectionBasis {
 }
 
 export interface SimulationResponse {
+  planning_mode?: "battery";
   basis: ProjectionBasis;
   applied_start: string; applied_end: string; additional_energy_kwh: number;
   baseline: SimulationProjection; scenario: SimulationProjection;
+  minimum_soc_pct?: number | null;
+  meets_limit?: boolean | null;
+}
+
+export type LoadPlanning =
+  | {mode: "battery"; reserve_pct: number; minimum_soc_pct: number | null}
+  | {mode: "solar_only"; max_extra_grid_kwh: number | null; revision: string}
+  | {mode: null};
+
+interface SolarBasis {
+  projection_id: string; computed_at: string; horizon_end: string; time_zone: string;
+  provider: string; forecast_captured_at: string;
+}
+
+export interface SolarGridTiming {
+  start_at: string; end_at: string;
+  baseline_grid_kwh: number; scenario_grid_kwh: number; additional_grid_kwh: number;
+  meets_limit: boolean;
+}
+
+export interface SolarSimulationResponse {
+  planning_mode: "solar_only";
+  basis: SolarBasis;
+  grid: SolarGridTiming;
+  max_extra_grid_kwh: number | null;
 }
 
 export interface LoadTiming {
@@ -23,13 +49,26 @@ export interface LoadTiming {
 }
 
 export interface LoadPlanResponse {
+  planning_mode?: "battery";
   basis: ProjectionBasis;
   solar_corrected?: boolean;
   load_actions?: LoadActionAvailability;
   recommendation: LoadTiming | null;
   run_now: LoadTiming | null;
+  highest_minimum_soc_pct?: number | null;
+  minimum_soc_pct?: number | null;
   reason_code: "window_too_short" | "beyond_horizon" | "baseline_reaches_reserve" |
-    "all_times_reach_reserve" | null;
+    "all_times_reach_reserve" | "baseline_below_planning_minimum" | "planning_minimum_not_met" | null;
+}
+
+export interface SolarPlanResponse {
+  planning_mode: "solar_only";
+  basis: SolarBasis;
+  recommendation: SolarGridTiming | null;
+  run_now: SolarGridTiming | null;
+  lowest_extra_grid_kwh: number | null;
+  max_extra_grid_kwh: number | null;
+  reason_code: "grid_limit_not_met" | "window_too_short" | "beyond_horizon" | null;
 }
 
 export interface LoadActionAvailability {

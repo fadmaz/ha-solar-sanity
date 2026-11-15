@@ -809,6 +809,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             return "provider_update_unverified"
         return None
 
+    def forecast_available_for_planning(self, provider: str) -> bool:
+        """Manual solar-only plans use successful captures from the latest cycle."""
+        return provider in (self._latest_forecast_batch or ()) and not self._provider_failed(
+            provider
+        )
+
     def forecast_source_is_fresh(
         self, provider: str, captured: datetime | None, now: datetime
     ) -> bool:

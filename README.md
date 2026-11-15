@@ -250,6 +250,22 @@ then an earlier start. Use the suggested time to run the appliance manually.
 Calculate again when the outlook changes. The same read-only calculation is
 available as `solar_sanity.find_best_time`.
 
+Set **Minimum planned battery charge** in **Configure** to start each manual plan
+with your preferred minimum. What if lets you change or clear it for a single
+comparison. A planned run must stay above the reserve and at or above this
+minimum over the complete battery outlook. Leave the minimum blank to use the
+reserve for planning and access the installation's existing load actions.
+
+For an installation with no battery, turn on **Grid-connected solar without a
+battery** in Configure to enable What if. Set **Maximum estimated additional
+grid energy** to a number of kWh or leave it blank for no limit. Zero allows
+only runs that add no modeled grid draw. The comparison can still show
+estimated grid draw for the house itself. It uses measured consumption history
+and a fresh, corrected solar forecast that covers every hour in the requested
+window. The installation can work without a grid import meter. The tool ranks
+starts by least additional grid energy and then by earliest start. These
+results are estimates for manual planning.
+
 Home Assistant administrators can choose **Remind me** under a current
 recommendation based on corrected Forecast.Solar data. Other providers still
 support planning. The card and **Setup** show when the selected forecast

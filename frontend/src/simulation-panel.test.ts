@@ -34,6 +34,34 @@ async function start(c:SolarSanitySimulation){c.shadowRoot!.querySelector<HTMLBu
 beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(new Date("2026-11-10T10:00:00Z"));vi.spyOn(document,"hidden","get").mockReturnValue(false);});
 afterEach(()=>{document.body.innerHTML="";vi.useRealTimers();});
 
+it("uses zero as a solar planning limit, keeps a temporary clear, and renders no battery controls", async () => {
+  const {c, call}=await make(vi.fn().mockImplementation(async ({service_data}) => ({response:{
+    planning_mode:"solar_only",
+    basis:{...response().response.basis,projection_id:c.projectionId,provider:"Roof forecast",
+      forecast_captured_at:"2026-11-10T08:15:00Z"},
+    grid:{start_at:"2026-11-10T10:00:00Z",end_at:"2026-11-10T11:00:00Z",
+      baseline_grid_kwh:0.2,scenario_grid_kwh:0.8,additional_grid_kwh:0.6,
+      meets_limit:service_data.max_extra_grid_kwh===null},
+    max_extra_grid_kwh:service_data.max_extra_grid_kwh,
+  }})));
+  c.hass={...c.hass!,user:{is_admin:true}} as HomeAssistant;
+  c.planning={mode:"solar_only",max_extra_grid_kwh:0,revision:"one"};
+  await settle(c);
+  await start(c);
+  expect(call.mock.lastCall![0].service_data.max_extra_grid_kwh).toBe(0);
+  expect(c.shadowRoot!.textContent).toContain("Over limit");
+  expect(c.shadowRoot!.textContent).toContain("0.60 kWh");
+  expect(c.shadowRoot!.querySelector("svg,solar-sanity-load-reminder")).toBeNull();
+  await input(c,"[name=planning_limit]","");
+  c.planning={mode:"solar_only",max_extra_grid_kwh:0,revision:"two"};
+  c.projectionId="two";
+  await settle(c);
+  await vi.advanceTimersByTimeAsync(500);
+  await settle(c);
+  expect(call.mock.lastCall![0].service_data.max_extra_grid_kwh).toBeNull();
+  expect(c.shadowRoot!.textContent).toContain("Roof forecast");
+});
+
 describe("live load exploration",()=>{
   it("waits for Calculate then debounces valid edits against the same native action",async()=>{
     const {c,call}=await make();expect(call).not.toHaveBeenCalled();await start(c);

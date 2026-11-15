@@ -23,6 +23,7 @@ from .coordinator import (
     read_channel,
 )
 from .journal import COLLECTION_REASONS
+from .load_planning import planning_status
 
 READY = "ready"
 WAITING = "waiting_for_data"
@@ -374,6 +375,7 @@ def setup_check(coordinator: SolarSanityCoordinator, now: datetime) -> dict[str,
         "forecast": _forecast(coordinator, now),
         "battery": _battery(coordinator, now),
         "history": _history(coordinator, now),
+        "planning": planning_status(coordinator, now),
         "automation": {
             "reserve_risk": reserve.view() if reserve is not None else None,
             "solar_surplus_ready": signals.measured.view(),

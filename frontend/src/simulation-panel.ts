@@ -2,7 +2,8 @@
 import {LitElement, css, html, svg, nothing, type PropertyValues, type TemplateResult} from "lit";
 import {customElement,property,state} from "lit/decorators.js";
 import {safeTimeZone} from "./forecast-data";
-import {localInstants,type LoadPlanRequest,type LoadPlanResponse,type SimulationProjection,type SimulationResponse} from "./simulation";
+import {localInstants,type LoadPlanning,type LoadPlanRequest,type LoadPlanResponse,type SimulationProjection,type SimulationResponse,
+  type SolarGridTiming,type SolarPlanResponse,type SolarSimulationResponse} from "./simulation";
 import type {HomeAssistant} from "./types/hass";
 import "./load-reminder-panel";
 
@@ -11,6 +12,14 @@ const planReasons: Record<NonNullable<LoadPlanResponse["reason_code"]>, string> 
   beyond_horizon: "The deadline is beyond the current outlook. Choose an earlier deadline.",
   baseline_reaches_reserve: "The battery is expected to reach reserve even without the extra load.",
   all_times_reach_reserve: "The battery is expected to reach reserve with this load at every tested time.",
+  baseline_below_planning_minimum: "The battery is expected to fall below the planned minimum even without the extra load.",
+  planning_minimum_not_met: "None of the tested start times keeps the battery at or above the planned minimum.",
+};
+
+const configuredLimit = (planning?: LoadPlanning): number | null => {
+  if (planning?.mode === "battery") return planning.minimum_soc_pct;
+  if (planning?.mode === "solar_only") return planning.max_extra_grid_kwh;
+  return null;
 };
 
 @customElement("solar-sanity-simulation")
@@ -18,6 +27,7 @@ export class SolarSanitySimulation extends LitElement {
   @property({attribute:false}) public hass?:HomeAssistant;
   @property() public deviceId="";
   @property() public projectionId="";
+  @property({attribute:false}) public planning?:LoadPlanning;
   @property({type:Boolean}) public active=false;
   @state() protected _power="1000";
   @state() protected _minutes="60";
@@ -26,11 +36,12 @@ export class SolarSanitySimulation extends LitElement {
   @state() protected _fold="";
   @state() private _deadline="";
   @state() private _deadlineFold="";
+  @state() private _planningLimit="";
   @state() protected _started=false;
   @state() protected _loading=false;
   @state() protected _error="";
-  @state() protected _result?:SimulationResponse;
-  @state() private _plan?:{response:LoadPlanResponse; request:LoadPlanRequest};
+  @state() protected _result?:SimulationResponse|SolarSimulationResponse;
+  @state() private _plan?:{response:LoadPlanResponse|SolarPlanResponse; request:LoadPlanRequest};
   @state() private _planning=false;
   private _timer?:ReturnType<typeof setTimeout>;
   private _endTimer?:ReturnType<typeof setTimeout>;
@@ -49,10 +60,25 @@ export class SolarSanitySimulation extends LitElement {
       this._plan=undefined;this._error="The time zone changed. Choose the times again.";
     }
     this._zone=zone;
+    const previous=changed.get("planning") as LoadPlanning|undefined;
+    const defaultsChanged=changed.has("planning") && (previous?.mode!==this.planning?.mode ||
+      configuredLimit(previous)!==configuredLimit(this.planning) ||
+      (previous?.mode==="battery" && this.planning?.mode==="battery" && previous.reserve_pct!==this.planning.reserve_pct));
+    if(changed.has("deviceId")||defaultsChanged) {
+      const limit=configuredLimit(this.planning);
+      this._planningLimit=limit===null?"":String(limit);
+      this._plan=undefined;
+    }
     if(changed.has("deviceId") && changed.get("deviceId")) {
       this._started=false;this._result=undefined;this._plan=undefined;this._error="";
     }
-    if(zoneChanged||changed.has("projectionId")||changed.has("deviceId")||changed.has("active")) this._schedule();
+    if(zoneChanged||defaultsChanged||changed.has("projectionId")||changed.has("deviceId")||changed.has("active")) this._schedule();
+  }
+  private _limits():Record<string, number|null> {
+    const limit=this._planningLimit===""?null:Number(this._planningLimit);
+    if(this.planning?.mode==="battery") return {minimum_soc_pct:limit};
+    if(this.planning?.mode==="solar_only") return {max_extra_grid_kwh:limit};
+    return {};
   }
   private _candidates(local = this._local):string[] {
     return this._mode==="now"?[]:localInstants(local,safeTimeZone(this.hass?.config.time_zone));
@@ -61,6 +87,11 @@ export class SolarSanitySimulation extends LitElement {
     const power=Number(this._power), minutes=Number(this._minutes);
     if(this._power.trim()===""||!Number.isFinite(power)||power<0) return "Enter a finite non-negative power.";
     if(!Number.isInteger(minutes)||minutes<1||minutes>1440) return "Enter whole minutes from 1 to 1440.";
+    const limit=Number(this._planningLimit);
+    if(this._planningLimit!=="" && this.planning?.mode==="battery" &&
+      (!Number.isFinite(limit)||limit<this.planning.reserve_pct||limit>100)) return `Enter a planned minimum from ${this.planning.reserve_pct}% to 100%.`;
+    if(this._planningLimit!=="" && this.planning?.mode==="solar_only" &&
+      (!Number.isFinite(limit*1000)||limit<0)) return "Enter a finite non-negative grid energy limit.";
     if(this._mode==="scheduled" && !this._local) return "Choose a start date and time.";
     if(this._mode!=="now" && this._local) {
       const candidates=this._candidates();
@@ -100,12 +131,13 @@ export class SolarSanitySimulation extends LitElement {
     if(this._running){this._queued=true;return;}
     const generation=this._generation;
     this._running=true;this._loading=true;this._error="";
-    const data:Record<string,unknown>={device_id:this.deviceId,power_w:Number(this._power),duration_minutes:Number(this._minutes)};
+    const data:Record<string,unknown>={device_id:this.deviceId,power_w:Number(this._power),duration_minutes:Number(this._minutes),...this._limits()};
     if(this._mode==="scheduled")data.start_at=this._candidates()[this._fold===""?0:Number(this._fold)];
     try {
-      const reply=await this.hass!.callWS<{response:SimulationResponse}>({type:"call_service",domain:"solar_sanity",service:"simulate_load",service_data:data,return_response:true});
+      const reply=await this.hass!.callWS<{response:SimulationResponse|SolarSimulationResponse}>({type:"call_service",domain:"solar_sanity",service:"simulate_load",service_data:data,return_response:true});
       if(generation!==this._generation||!this.active||!this.isConnected)return;
-      if(!reply.response?.basis || !Array.isArray(reply.response.scenario?.trajectory))throw new Error("The simulation response is unavailable.");
+      if(!reply.response?.basis || (reply.response.planning_mode==="solar_only"?!reply.response.grid:
+        !Array.isArray(reply.response.scenario?.trajectory)))throw new Error("The simulation response is unavailable.");
       if(reply.response.basis.projection_id!==this.projectionId){this._error="Waiting for the latest projection. The simulation will update with it.";return;}
       this._result=reply.response;
     } catch(error) {
@@ -131,8 +163,8 @@ export class SolarSanitySimulation extends LitElement {
     this._planning=true;
     this._error="";
     try {
-      const {response}=await this.hass.callWS<{response:LoadPlanResponse}>({
-        type:"call_service",domain:"solar_sanity",service:"find_best_time",service_data:data,return_response:true,
+      const {response}=await this.hass.callWS<{response:LoadPlanResponse|SolarPlanResponse}>({
+        type:"call_service",domain:"solar_sanity",service:"find_best_time",service_data:{...data,...this._limits()},return_response:true,
       });
       if(generation!==this._generation||!this.active||!this.isConnected) return;
       if(!response?.basis) throw new Error("The timing response is unavailable.");
@@ -151,7 +183,7 @@ export class SolarSanitySimulation extends LitElement {
     }
   }
 
-  private _input(key:"_power"|"_minutes"|"_local"|"_fold"|"_mode"|"_deadline"|"_deadlineFold",event:Event):void {
+  private _input(key:"_power"|"_minutes"|"_local"|"_fold"|"_mode"|"_deadline"|"_deadlineFold"|"_planningLimit",event:Event):void {
     this[key]=(event.target as HTMLInputElement).value;
     if(key==="_local"||key==="_mode")this._fold="";
     if(key==="_deadline")this._deadlineFold="";
@@ -175,6 +207,8 @@ export class SolarSanitySimulation extends LitElement {
     return html`
       ${plan.basis.projection_id!==this.projectionId?html`<p role="status">Outlook changed. Find the best time again.</p>`:nothing}
       ${plan.reason_code?html`<p role="status">${planReasons[plan.reason_code]}</p>`:nothing}
+      ${plan.highest_minimum_soc_pct!=null?html`<p>Highest minimum charge across tested starts above reserve
+        ${plan.highest_minimum_soc_pct.toFixed(1)}%.</p>`:nothing}
       <p class="muted">Based on ${this._time(plan.basis.computed_at,true)} · ${plan.basis.forecast_used?"Solar forecast":"Production history"}.
         Evaluated through ${this._time(plan.basis.horizon_end,true)}.</p>
       ${options.length?html`<table>
@@ -183,10 +217,43 @@ export class SolarSanitySimulation extends LitElement {
           <tr><th scope="row">Start</th>${options.map(o=>html`<td>${this._time(o.timing.start_at,true)}</td>`)}</tr>
           <tr><th scope="row">Finish</th>${options.map(o=>html`<td>${this._time(o.timing.end_at,true)}</td>`)}</tr>
           <tr><th scope="row">Minimum charge</th>${options.map(o=>html`<td>${o.timing.minimum_soc_pct.toFixed(1)}%</td>`)}</tr>
+          ${plan.minimum_soc_pct!=null?html`<tr><th scope="row">Planned minimum (${plan.minimum_soc_pct}%)</th>
+            ${options.map(({timing})=>html`<td>${!timing.reserve_at && timing.minimum_soc_pct>=plan.minimum_soc_pct!?"Met":"Below limit"}</td>`)}</tr>`:nothing}
           <tr><th scope="row">Estimated additional grid energy</th>${options.map(o=>html`<td>${o.timing.additional_grid_kwh.toFixed(2)} kWh</td>`)}</tr>
           ${now?.reserve_at?html`<tr><th scope="row">Reserve at</th>${options.map(o=>html`<td>${this._time(o.timing.reserve_at,true)}</td>`)}</tr>`:nothing}
         </tbody>
       </table>`:nothing}`;
+  }
+  private _gridTable(options:{name:string;timing:SolarGridTiming}[],limit:number|null):TemplateResult {
+    return html`<table>
+      <thead><tr><th scope="col">Result</th>${options.map(({name})=>html`<th scope="col">${name}</th>`)}</tr></thead>
+      <tbody>
+        <tr><th scope="row">Start</th>${options.map(({timing})=>html`<td>${this._time(timing.start_at,true)}</td>`)}</tr>
+        <tr><th scope="row">Finish</th>${options.map(({timing})=>html`<td>${this._time(timing.end_at,true)}</td>`)}</tr>
+        <tr><th scope="row">Estimated grid energy without load</th>${options.map(({timing})=>html`<td>${timing.baseline_grid_kwh.toFixed(2)} kWh</td>`)}</tr>
+        <tr><th scope="row">Estimated grid energy with load</th>${options.map(({timing})=>html`<td>${timing.scenario_grid_kwh.toFixed(2)} kWh</td>`)}</tr>
+        <tr><th scope="row">Estimated additional grid energy</th>${options.map(({timing})=>html`<td>${timing.additional_grid_kwh.toFixed(2)} kWh</td>`)}</tr>
+        ${limit!=null?html`<tr><th scope="row">Additional grid limit (${limit} kWh)</th>
+          ${options.map(({timing})=>html`<td>${timing.meets_limit?"Within limit":"Over limit"}</td>`)}</tr>`:nothing}
+      </tbody>
+    </table>`;
+  }
+  private _solarPlan(plan:SolarPlanResponse):TemplateResult {
+    const best=plan.recommendation, now=plan.run_now;
+    const sameStart=best && now && best.start_at===now.start_at;
+    const options=[
+      ...(best?[{name:sameStart?"Recommended · Run now":"Recommended",timing:best}]:[]),
+      ...(now && !sameStart?[{name:"Run now",timing:now}]:[]),
+    ];
+    return html`
+      ${plan.basis.projection_id!==this.projectionId?html`<p role="status">Outlook changed. Find the best time again.</p>`:nothing}
+      ${plan.reason_code==="grid_limit_not_met"?html`<p role="status">No tested start stays within the additional grid limit.
+        ${plan.lowest_extra_grid_kwh!=null?html`Lowest estimated additional grid energy ${plan.lowest_extra_grid_kwh.toFixed(2)} kWh.`:nothing}</p>`:nothing}
+      <p class="muted">${this._solarSource(plan.basis)}</p>
+      ${options.length?this._gridTable(options,plan.max_extra_grid_kwh):nothing}`;
+  }
+  private _solarSource(basis:SolarPlanResponse["basis"]):string {
+    return `Corrected forecast from ${basis.provider}, captured ${this._time(basis.forecast_captured_at,true)}.`;
   }
   private _graph(result:SimulationResponse):TemplateResult {
     const a=Date.parse(result.basis.computed_at),b=Date.parse(result.basis.horizon_end),span=b-a;
@@ -201,11 +268,19 @@ export class SolarSanitySimulation extends LitElement {
     const planning=this._mode==="best_time",deadlineCandidates=planning?this._candidates(this._deadline):[];
     const plan=this._plan?.response;
     const currentPlan=plan?.basis.projection_id===this.projectionId && !!plan.recommendation;
-    const actions=plan?.load_actions;
-    const canRemind=actions ? actions.status==="ready" || actions.status==="waiting_for_update" : plan?.solar_corrected;
-    return html`<section lang="en" dir="ltr"><p>Compare one extra load with the current projection. Calculated times can differ from the main card's settled times.</p>
+    const batteryPlan=plan?.planning_mode!=="solar_only"?plan:undefined;
+    const actions=batteryPlan?.load_actions;
+    const canRemind=batteryPlan?.minimum_soc_pct==null &&
+      (actions ? actions.status==="ready" || actions.status==="waiting_for_update" : batteryPlan?.solar_corrected);
+    const solar=this.planning?.mode==="solar_only";
+    return html`<section lang="en" dir="ltr"><p>${solar?
+      "Estimate how much grid energy a load would add, using the corrected solar forecast and measured house consumption history.":
+      "Compare one extra load with the current projection. Calculated times can differ from the main card's settled times."}</p>
       <div class="form"><label>Extra power (W)<input type="number" min="0" step="any" .value=${this._power} @input=${(e:Event)=>this._input("_power",e)}></label>
       <label>Duration (minutes)<input type="number" min="1" max="1440" step="1" .value=${this._minutes} @input=${(e:Event)=>this._input("_minutes",e)}></label>
+      ${this.planning?.mode==="battery" || solar?html`<label>${solar?"Maximum estimated additional grid energy (kWh)":"Minimum planned battery charge (%)"}
+        <input name="planning_limit" type="number" step="any" min=${this.planning?.mode==="battery"?this.planning.reserve_pct:0}
+          placeholder=${solar?"No limit":"Use reserve"} .value=${this._planningLimit} @input=${(e:Event)=>this._input("_planningLimit",e)}></label>`:nothing}
       <label>Start<select .value=${this._mode} @change=${(e:Event)=>this._input("_mode",e)}><option value="now">Now</option><option value="scheduled">Scheduled</option><option value="best_time">Find best time</option></select></label>
       ${this._mode!=="now"?html`<label>${planning?"Earliest start (optional)":"Start date and time"}<input type="datetime-local" name=${planning?"earliest_start":"start_at"} .value=${this._local} @input=${(e:Event)=>this._input("_local",e)}></label>
       ${candidates.length>1?html`<label>Repeated time<select .value=${this._fold} @change=${(e:Event)=>this._input("_fold",e)}><option value="">Choose occurrence</option>${candidates.map((v,i)=>html`<option value=${i}>${i===0?"First":"Second"}: ${v}</option>`)}</select></label>`:nothing}`:nothing}
@@ -220,14 +295,17 @@ export class SolarSanitySimulation extends LitElement {
       ${this._started?html`<span class="muted" role="status">${this._loading?"Updating…":"Updates automatically with the outlook"}</span>`:nothing}
       ${validation||this._error?html`<p role="alert">${validation??this._error}</p>`:nothing}
       ${!this.projectionId?html`<p>Waiting for a valid current projection.</p>`:nothing}
-      ${planning && plan?this._planView(plan):nothing}
-      ${this.hass?.user?.is_admin?html`
+      ${planning && plan?(plan.planning_mode==="solar_only"?this._solarPlan(plan):this._planView(plan)):nothing}
+      ${!solar && this.hass?.user?.is_admin?html`
         ${planning && currentPlan && (actions?.reason || !canRemind)?html`<p role="status">${actions?.reason ?? "Reminders require a current corrected solar forecast."}</p>`:nothing}
         <solar-sanity-load-reminder .hass=${this.hass} .deviceId=${this.deviceId}
           .active=${this.active} .projectionId=${this.projectionId}
           .request=${planning && currentPlan && canRemind?this._plan?.request:undefined}>
         </solar-sanity-load-reminder>`:nothing}
-      ${r?html`<p>Based on ${this._time(r.basis.computed_at)} · ${r.basis.forecast_used?"Solar forecast":"Production history"}</p>${this._graph(r)}
+      ${r?.planning_mode==="solar_only"?html`<p class="muted">${this._solarSource(r.basis)}</p>
+        ${this._gridTable([{name:"Extra load",timing:r.grid}],r.max_extra_grid_kwh)}`:nothing}
+      ${r && r.planning_mode!=="solar_only"?html`<p>Based on ${this._time(r.basis.computed_at)} · ${r.basis.forecast_used?"Solar forecast":"Production history"}</p>${this._graph(r)}
+        ${r.minimum_soc_pct!=null?html`<p role="status">Planned minimum (${r.minimum_soc_pct}%) ${r.meets_limit?"met":"missed"} with the extra load.</p>`:nothing}
         <table><thead><tr><th>Result</th><th>Baseline</th><th>Extra load</th></tr></thead><tbody>
         <tr><th>Lowest charge</th><td>${r.baseline.lowest_pct===null?"—":`${r.baseline.lowest_pct.toFixed(1)}%`}</td><td>${r.scenario.lowest_pct===null?"—":`${r.scenario.lowest_pct.toFixed(1)}%`}</td></tr>
         <tr><th>Reserve at</th><td>${this._time(r.baseline.reserve_at)}</td><td>${this._time(r.scenario.reserve_at)}</td></tr>

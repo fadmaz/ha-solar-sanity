@@ -11,6 +11,7 @@
 
 import type { HassEntity, HomeAssistant } from "./types/hass";
 import { tomorrow } from "./forecast-data";
+import type { LoadPlanning } from "./simulation";
 
 export const PLATFORM = "solar_sanity";
 
@@ -31,6 +32,7 @@ export type OutlookKey = (typeof OUTLOOK_KEYS)[number];
 export interface Installation {
   deviceId: string;
   batteryConfigured?: boolean;
+  planning?: LoadPlanning;
   /** Entity ids by key. Empty when the battery outlook is not set up there. */
   outlook: Partial<Record<OutlookKey, string>>;
 }
@@ -54,8 +56,10 @@ export function findInstallations(hass: HomeAssistant | undefined): Installation
     }
     const key = entry.translation_key;
     if (key === "collection_status") {
-      const configured = hass?.states[entry.entity_id]?.attributes.battery_outlook_configured;
+      const attributes = hass?.states[entry.entity_id]?.attributes;
+      const configured = attributes?.battery_outlook_configured;
       if (typeof configured === "boolean") found.batteryConfigured = configured;
+      if (attributes?.load_planning) found.planning = attributes.load_planning as LoadPlanning;
     }
     if (key && (OUTLOOK_KEYS as readonly string[]).includes(key)) {
       found.outlook[key as OutlookKey] = entry.entity_id;

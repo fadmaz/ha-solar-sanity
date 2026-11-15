@@ -4,7 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { safeTimeZone } from "./forecast-data";
 import { powerControlLabel, type BatteryControls } from "./battery-controls";
 import type { HomeAssistant } from "./types/hass";
-import type { LoadActionAvailability } from "./simulation";
+import type { LoadActionAvailability, LoadPlanning } from "./simulation";
 
 type Status = "ready" | "waiting_for_data" | "needs_attention" | "not_configured";
 type Action = "configure" | "reconfigure";
@@ -33,6 +33,7 @@ interface AutomationSignal {
 }
 export interface SetupCheckResponse {
   time_zone: string;
+  planning?: Check & LoadPlanning;
   measurements: Check & {channels: Channel[]};
   forecast: Check & {
     providers: Provider[];
@@ -128,7 +129,7 @@ export class SolarSanitySetupCheck extends LitElement {
         }
         return [e.entity_id, state?.state, state?.attributes.reason_code, state?.attributes.verification,
           state?.attributes.reason, state?.attributes.lead_minutes, state?.attributes.minimum_w,
-          state?.attributes.hold_minutes];
+          state?.attributes.hold_minutes, state?.attributes.load_planning];
       });
     const key = JSON.stringify([device, hass.config.time_zone, health]);
     if (this._key === key) return;
@@ -283,10 +284,21 @@ export class SolarSanitySetupCheck extends LitElement {
     </section>`;
   }
 
+  private _planning(data: NonNullable<SetupCheckResponse["planning"]>): TemplateResult {
+    return this._group("Load planning", data, data.mode === "battery" ? html`
+      <dl><div><dt>Mode</dt><dd>Battery</dd></div>
+        <div><dt>Minimum planned battery charge</dt><dd>${data.minimum_soc_pct == null ?
+          `Use reserve (${numbers.format(data.reserve_pct)}%)` : `${numbers.format(data.minimum_soc_pct)}%`}</dd></div></dl>`
+      : data.mode === "solar_only" ? html`
+      <dl><div><dt>Mode</dt><dd>Grid-connected solar without a battery</dd></div>
+        <div><dt>Maximum estimated additional grid energy</dt><dd>${data.max_extra_grid_kwh == null ?
+          "No limit" : `${numbers.format(data.max_extra_grid_kwh)} kWh`}</dd></div></dl>` : nothing);
+  }
+
   protected override render(): TemplateResult {
     const data = this._data;
     const needsSettings = data && [
-      data.battery, data.battery.charge_level, data.forecast,
+      data.battery, data.battery.charge_level, data.forecast, data.planning,
       ...data.forecast.providers, ...data.measurements.channels,
     ].some(check => check?.action);
     return html`<div class="toolbar">
@@ -298,6 +310,7 @@ export class SolarSanitySetupCheck extends LitElement {
         ${this._measurements(data.measurements)}
         ${this._forecast(data.forecast)}
         ${this._battery(data.battery)}
+        ${data.planning ? this._planning(data.planning) : nothing}
         ${data.automation ? this._automation(data.automation) : nothing}
         ${this._history(data.history)}
       </div>` : nothing}

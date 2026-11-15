@@ -16,7 +16,15 @@ from homeassistant.util import dt as dt_util
 
 from .analysis.history import history_rows
 from .analysis.outlook import BatterySettings, Outlook, project
-from .analysis.scenarios import LoadTiming, compare_load, find_best_time
+from .analysis.scenarios import (
+    LoadTiming,
+    SolarLoadTiming,
+    compare_load,
+    compare_solar_load,
+    find_best_time,
+    find_solar_load_time,
+    meets_grid_limit,
+)
 from .battery_controls import control_view, power_override
 from .battery_outlook import OutlookState, frozen_inputs
 from .const import (
@@ -25,6 +33,12 @@ from .const import (
     OPT_INVERTER_STANDBY_W,
 )
 from .journal import MODEL_REVISION
+from .load_planning import (
+    MANUAL_PLANNING_REASON,
+    PlanningUnavailableError,
+    SolarPlanningBasis,
+    solar_planning_basis,
+)
 from .setup_check import setup_check
 
 
@@ -102,6 +116,31 @@ def _timing_view(timing: LoadTiming | None) -> dict | None:
     }
 
 
+def _solar_basis_view(basis: SolarPlanningBasis, time_zone: str) -> dict:
+    return {
+        "projection_id": basis.projection_id,
+        "computed_at": basis.computed_at.isoformat(),
+        "horizon_end": basis.steps[-1].end.isoformat(),
+        "forecast_used": True,
+        "provider": basis.provider,
+        "forecast_captured_at": basis.captured_at.isoformat(),
+        "time_zone": time_zone,
+    }
+
+
+def _solar_timing_view(timing: SolarLoadTiming | None, limit_wh: float | None) -> dict | None:
+    if timing is None:
+        return None
+    return {
+        "start_at": timing.start.isoformat(),
+        "end_at": timing.end.isoformat(),
+        "baseline_grid_kwh": timing.baseline_grid_wh / 1000,
+        "scenario_grid_kwh": timing.scenario_grid_wh / 1000,
+        "additional_grid_kwh": timing.additional_grid_wh / 1000,
+        "meets_limit": meets_grid_limit(timing.additional_grid_wh, limit_wh),
+    }
+
+
 def _preview_power(value: object, *, positive: bool) -> float | None:
     if value is None:
         return None
@@ -109,6 +148,37 @@ def _preview_power(value: object, *, positive: bool) -> float | None:
         return power_override(value, positive=positive)
     except ValueError as error:
         raise vol.Invalid(str(error)) from error
+
+
+def _minimum_soc(value: object) -> float | None:
+    limit = _preview_power(value, positive=False)
+    if limit is not None and limit > 100:
+        raise vol.Invalid("Minimum planned battery charge must be between 0 and 100%.")
+    return limit
+
+
+_PLANNING_FIELDS = {
+    vol.Optional("minimum_soc_pct"): _minimum_soc,
+    vol.Optional("max_extra_grid_kwh"): lambda value: _preview_power(value, positive=False),
+}
+
+
+def _battery_limit(call: ServiceCall, settings: BatterySettings) -> float | None:
+    if call.data.get("max_extra_grid_kwh") is not None:
+        raise ServiceValidationError("A grid limit is available for solar-only planning.")
+    minimum = call.data.get("minimum_soc_pct")
+    if minimum is not None and minimum < settings.reserve_pct:
+        raise ServiceValidationError("The planned minimum must be at least the battery reserve.")
+    return minimum
+
+
+def _solar_limit(call: ServiceCall) -> float | None:
+    if call.data.get("minimum_soc_pct") is not None:
+        raise ServiceValidationError("A battery minimum requires a configured battery.")
+    limit = call.data.get("max_extra_grid_kwh")
+    if limit is not None and not math.isfinite(limit * 1000):
+        raise ServiceValidationError("The grid limit is outside the supported numeric range.")
+    return None if limit is None else limit * 1000
 
 
 def _preview_result(outlook: Outlook) -> dict:
@@ -258,9 +328,33 @@ def async_setup_tools(hass: HomeAssistant) -> None:
     async def simulate_load(call: ServiceCall):
         coordinator = await coordinator_for(hass, call)
         now = dt_util.utcnow()
+        if not coordinator.battery.configured:
+            limit = _solar_limit(call)
+            start = call.data.get("start_at", now).astimezone(UTC)
+            try:
+                end = start + timedelta(minutes=call.data["duration_minutes"])
+                if end <= now:
+                    raise ValueError("This scenario has finished.")
+                basis = solar_planning_basis(coordinator, now, max(start, now), end)
+                timing = compare_solar_load(
+                    basis.steps,
+                    power_w=call.data["power_w"],
+                    duration_minutes=call.data["duration_minutes"],
+                    start_at=start,
+                    now=now,
+                )
+            except (ValueError, OverflowError) as err:
+                raise ServiceValidationError(str(err)) from err
+            return {
+                "planning_mode": "solar_only",
+                "basis": _solar_basis_view(basis, hass.config.time_zone),
+                "grid": _solar_timing_view(timing, limit),
+                "max_extra_grid_kwh": call.data.get("max_extra_grid_kwh"),
+            }
         state = _current_load_projection(coordinator, now)
         try:
             settings, steps = frozen_inputs(state)
+            minimum = _battery_limit(call, settings)
             comparison = compare_load(
                 state.soc_pct,
                 settings,
@@ -274,12 +368,20 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         except (ValueError, KeyError, TypeError) as err:
             raise ServiceValidationError(str(err)) from err
         return {
+            "planning_mode": "battery",
             "basis": _projection_basis(state, settings, hass.config.time_zone),
             "applied_start": comparison.applied_start.isoformat(),
             "applied_end": comparison.applied_end.isoformat(),
             "additional_energy_kwh": comparison.additional_wh / 1000,
             "baseline": _projection_view(comparison.baseline, comparison.baseline_uncovered_wh),
             "scenario": _projection_view(comparison.scenario, comparison.scenario_uncovered_wh),
+            "minimum_soc_pct": minimum,
+            "meets_limit": (
+                comparison.scenario.horizon_reserve_at is None
+                and min(soc for _, soc in comparison.scenario.trajectory) >= minimum
+            )
+            if minimum is not None
+            else None,
         }
 
     hass.services.async_register(
@@ -292,6 +394,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
                 vol.Required("power_w"): _power,
                 vol.Required("duration_minutes"): _duration,
                 vol.Optional("start_at"): _start_time,
+                **_PLANNING_FIELDS,
             }
         ),
         supports_response=SupportsResponse.ONLY,
@@ -300,9 +403,40 @@ def async_setup_tools(hass: HomeAssistant) -> None:
     async def plan_load(call: ServiceCall):
         coordinator = await coordinator_for(hass, call)
         now = dt_util.utcnow()
+        if not coordinator.battery.configured:
+            limit = _solar_limit(call)
+            first = max(now, call.data.get("earliest_start", now).astimezone(UTC))
+            deadline = call.data["finish_by"].astimezone(UTC)
+            try:
+                if deadline - first < timedelta(minutes=call.data["duration_minutes"]):
+                    raise PlanningUnavailableError("window_too_short")
+                basis = solar_planning_basis(coordinator, now, first, deadline)
+                result = find_solar_load_time(
+                    basis.steps,
+                    power_w=call.data["power_w"],
+                    duration_minutes=call.data["duration_minutes"],
+                    earliest_start=first,
+                    finish_by=deadline,
+                    now=now,
+                    max_grid_wh=limit,
+                )
+            except (ValueError, OverflowError) as err:
+                raise ServiceValidationError(str(err)) from err
+            return {
+                "planning_mode": "solar_only",
+                "basis": _solar_basis_view(basis, hass.config.time_zone),
+                "recommendation": _solar_timing_view(result.recommendation, limit),
+                "run_now": _solar_timing_view(result.run_now, limit),
+                "reason_code": result.reason_code,
+                "max_extra_grid_kwh": call.data.get("max_extra_grid_kwh"),
+                "lowest_extra_grid_kwh": None
+                if result.lowest_extra_grid_wh is None
+                else result.lowest_extra_grid_wh / 1000,
+            }
         state = _current_load_projection(coordinator, now)
         try:
             settings, steps = frozen_inputs(state)
+            minimum = _battery_limit(call, settings)
             result = find_best_time(
                 state.soc_pct,
                 settings,
@@ -312,16 +446,26 @@ def async_setup_tools(hass: HomeAssistant) -> None:
                 earliest_start=call.data.get("earliest_start", now),
                 finish_by=call.data["finish_by"],
                 now=now,
+                minimum_soc_pct=minimum,
             )
         except (ValueError, KeyError, TypeError, OverflowError) as err:
             raise ServiceValidationError(str(err)) from err
         return {
+            "planning_mode": "battery",
             "basis": _projection_basis(state, settings, hass.config.time_zone),
             "solar_corrected": state.outlook.forecast_used and state.scale is not None,
-            "load_actions": coordinator.reminders.forecast_action_status(state, now),
+            "load_actions": coordinator.reminders.forecast_action_status(state, now)
+            if minimum is None
+            else {
+                "status": "unsupported",
+                "reason_code": "manual_only",
+                "reason": MANUAL_PLANNING_REASON,
+            },
             "recommendation": _timing_view(result.recommendation),
             "run_now": _timing_view(result.run_now),
             "reason_code": result.reason_code,
+            "minimum_soc_pct": minimum,
+            "highest_minimum_soc_pct": result.highest_minimum_soc_pct,
         }
 
     hass.services.async_register(
@@ -335,6 +479,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
                 vol.Required("duration_minutes"): _duration,
                 vol.Optional("earliest_start"): _start_time,
                 vol.Required("finish_by"): _start_time,
+                **_PLANNING_FIELDS,
             }
         ),
         supports_response=SupportsResponse.ONLY,

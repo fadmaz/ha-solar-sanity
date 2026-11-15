@@ -816,6 +816,25 @@ run-now comparison if it fits, the projection basis and a reason when no
 recommendation is available. The card calculates on request and marks a
 displayed plan outdated when its projection changes.
 
+### Installation load planning (0.52.0)
+
+The optional manual battery minimum uses the same frozen steps and preserves
+the strict reserve rule across the horizon. It is independent of the outlook,
+its journal and its reminder engine. Native clients can omit the planning
+fields to retain the existing reserve rule.
+
+Solar-only planning requires an explicit option and no mapped battery channels.
+`load_planning.py` combines completed consumption history with one successful,
+fresh, corrected provider across the requested window, up to 36 hours. A
+missing solar hour is treated as dark only when the provider supplied data for
+the same local date and Home Assistant's sunrise and sunset place the entire
+hour outside daylight. UTC elapsed time drives normalization and the search.
+`analysis/scenarios.py` sums each interval's positive load minus generation
+with and without the proposed load. The grid limit applies to the difference.
+The collection sensor provides a Recorder-excluded update token and the saved
+defaults. Setup checks the same planning inputs and shows a reason when they
+are unavailable.
+
 ### Load reminders (0.50.0)
 
 `reminders.py` owns one active manual-run notification per battery entry. The
