@@ -202,7 +202,7 @@ class LoadReminders:
         result["latest_start"] = record.latest_start.isoformat()
         return {"reminder": result, "storage_error": False}
 
-    def _projection(self, now: datetime) -> OutlookState | None:
+    def _projection(self, now: datetime, *, require_verified: bool = True) -> OutlookState | None:
         battery = self.coordinator.battery
         state = battery.state
         if (
@@ -219,7 +219,7 @@ class LoadReminders:
                 state.forecast_source.captured_at,
             ):
                 return None
-            if not self.coordinator.forecast_ready_for_actions(current, now):
+            if require_verified and not self.coordinator.forecast_ready_for_actions(current, now):
                 return None
         return state
 
@@ -304,7 +304,7 @@ class LoadReminders:
                     "Cancel the active reminder before scheduling another."
                 )
             now = dt_util.utcnow()
-            state = self._projection(now)
+            state = self._projection(now, require_verified=False)
             if state is None:
                 raise ServiceValidationError("Wait for a current corrected solar forecast.")
             if state.projection_id != data["projection_id"]:

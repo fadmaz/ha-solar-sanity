@@ -20,7 +20,7 @@ from homeassistant.util import dt as dt_util
 from .analysis.calibration import interval_view, issue_interval
 from .analysis.daylight_shape import SHAPE_REVISION
 from .analysis.experiment import shape_gate
-from .analysis.grading import grade, summarize
+from .analysis.grading import flow_coverage, flow_screening_windows, grade, summarize
 from .analysis.load_schedule import LOAD_REVISION, WEEKDAYS
 from .analysis.observations import observation_hours
 from .analysis.solar_coverage import coverage_day, observe_coverage
@@ -37,7 +37,12 @@ from .const import (
     OPT_BATTERY_TARGET_PCT,
 )
 from .load_trial import LoadTrial, valid_control
-from .statistics_source import async_forecast_series, async_observed_full_at, async_read_grading_soc
+from .statistics_source import (
+    async_forecast_series,
+    async_observed_full_at,
+    async_read_boundary_flows,
+    async_read_grading_soc,
+)
 
 if TYPE_CHECKING:
     from .coordinator import SolarSanityCoordinator
@@ -46,6 +51,7 @@ _LOGGER = logging.getLogger(__name__)
 JOURNAL_KEY = f"{DOMAIN}.outlook_journal"
 JOURNAL_VERSION = 1
 MODEL_REVISION = "baseline-0.34.2"
+GRADING_REVISION = "verified-flows-0.51.2"
 COLLECTION_REASONS = {
     "journal_restore_failed": "The journal could not be read; its file was left untouched.",
     "journal_write_failed": "The issued prediction could not be saved.",
@@ -81,10 +87,14 @@ class OutlookJournal:
         self.last_checked_at = self.started_at
         self._task: asyncio.Task | None = None
         self._next_grade: datetime | None = None
+        self._save_lock = asyncio.Lock()
         self._verification: dict[str, asyncio.Task] = {}
         self._startup_verification: dict[str, Callable[[], None]] = {}
         self._store = Store(
-            self.hass, JOURNAL_VERSION, f"{JOURNAL_KEY}.{coordinator.entry.entry_id}"
+            self.hass,
+            JOURNAL_VERSION,
+            f"{JOURNAL_KEY}.{coordinator.entry.entry_id}",
+            atomic_writes=True,
         )
         self.version = "unknown"
         self.load_trial = LoadTrial(self)
@@ -161,6 +171,10 @@ class OutlookJournal:
     async def async_save(self) -> None:
         if not self.writable:
             return
+        async with self._save_lock:
+            await self._async_save_locked()
+
+    async def _async_save_locked(self) -> None:
         try:
             payload = {
                 "records": self.records,
@@ -170,7 +184,16 @@ class OutlookJournal:
             }
             if self.load_trial.control:
                 payload["load_trial"] = self.load_trial.control
-            await self._store.async_save(json.loads(json.dumps(payload)))
+            payload = json.loads(json.dumps(payload))
+            await self._store.async_save(payload)
+            if self.hass.state is CoreState.stopping:
+                # Store defers shutdown writes until the final-write event.
+                return
+            # A completed Store write invalidates the preload cache. Use a
+            # separate reader with no pending writes to verify the durable copy.
+            reader = Store(self.hass, JOURNAL_VERSION, self._store.key)
+            if await reader.async_load() != payload:
+                raise OSError("The journal write could not be verified.")
             if self.error == "journal_write_failed":
                 self.error = None
         except Exception:
@@ -223,7 +246,6 @@ class OutlookJournal:
             self._queue_verification(
                 provider, {forecast_statistic_id(provider): list(points.items())}
             )
-        await self.async_save()
 
     @callback
     def _queue_verification(self, provider, expected):
@@ -298,7 +320,7 @@ class OutlookJournal:
             retained = retained[-MAX_RECORDS:]
             changed = changed or len(retained) != len(self.records)
             self.records = retained
-            if changed:
+            if changed or self.error == "journal_write_failed":
                 if self.error == "journal_update_failed":
                     self.error = None
                 await self.async_save()
@@ -356,6 +378,7 @@ class OutlookJournal:
                             "checkpoint": kind,
                             "issued_at": scheduled.isoformat(),
                             "context": self.context(),
+                            "issued_grading_revision": GRADING_REVISION,
                             "result": {"status": "missed", "reason_code": reason},
                         }
                     )
@@ -388,6 +411,7 @@ class OutlookJournal:
             "time_zone": self.hass.config.time_zone,
             "version": self.version,
             "model_revision": MODEL_REVISION,
+            "issued_grading_revision": GRADING_REVISION,
             "context": self.context(),
             "soc_entity": self.coordinator.entry.options.get(OPT_BATTERY_SOC),
             "soc_pct": state.soc_pct,
@@ -465,7 +489,15 @@ class OutlookJournal:
             record["load_shadow"] = candidate
         if kind == "evening":
             group = self._forecast_group(record, record["context"])
-            candidates = self._records_for_forecast(group, record["context"]) if group else []
+            candidates = (
+                [
+                    prior
+                    for prior in self._records_for_forecast(group, record["context"])
+                    if prior.get("issued_grading_revision") == GRADING_REVISION
+                ]
+                if group
+                else []
+            )
             record["interval"] = issue_interval(candidates, record)
         return record
 
@@ -483,7 +515,9 @@ class OutlookJournal:
             end = datetime.fromisoformat(record["until"]).astimezone(UTC)
             # A partial last hour still needs a closed flow bucket and time for
             # Recorder to settle, just as an hour-aligned observation does.
-            if now < observation_hours(start, end)[-1] + timedelta(hours=1, minutes=15):
+            required_hours = observation_hours(start, end)
+            closed = required_hours[-1] + timedelta(hours=1)
+            if now < closed + timedelta(minutes=15):
                 continue
             context = self.load_trial.context() if is_load else self.context()
             if record["context"] != context or (
@@ -497,6 +531,9 @@ class OutlookJournal:
                         continue
                     result = {"status": "excluded", "reason_code": "history_read_failed"}
                 else:
+                    flow_read_failed = not flow_coverage(
+                        self.coordinator.buckets, start, end, verified=True
+                    ) and not await self.coordinator.async_recover_hours(required_hours[0], closed)
                     observed = None
                     if record["checkpoint"] == "morning":
                         observed = await async_observed_full_at(
@@ -506,21 +543,45 @@ class OutlookJournal:
                             end,
                             record["settings"]["target_pct"] - 1.0,
                         )
+                    flows = await self._read_boundary_flows(record, soc, observed)
                     result = grade(
                         record,
                         soc,
                         self.coordinator.buckets,
                         full_observed_at=observed,
+                        boundary_flows=flows,
                     )
+                    if flow_read_failed and result.get("reason_code") == "flow_incomplete":
+                        result["reason_code"] = "flow_read_failed"
                     if result.get("reason_code") in (
                         "soc_incomplete",
                         "flow_incomplete",
+                        "flow_read_failed",
+                        "grid_charge_uncertain",
                     ) and now < end + timedelta(days=1):
                         continue
                 record["result"] = result
+            record["grading_revision"] = GRADING_REVISION
             record["graded_at"] = now.isoformat()
             changed = True
         return changed
+
+    async def _read_boundary_flows(self, record, soc, observed) -> dict:
+        sensors = {spec.key: spec.entity_id for spec in self.coordinator.specs}
+        keys = ("pv", "load", "battery_charge")
+        if any(key not in sensors for key in keys):
+            return {}
+        entities = (sensors["pv"], sensors["load"], sensors["battery_charge"])
+        hour_length = timedelta(hours=1)
+        flows = {}
+        for start, end in flow_screening_windows(record, soc, observed):
+            for hour in observation_hours(start, end):
+                begin, finish = max(start, hour), min(end, hour + hour_length)
+                if (begin, finish) == (hour, hour + hour_length):
+                    continue
+                if flow := await async_read_boundary_flows(self.hass, entities, begin, finish):
+                    flows[begin, finish] = flow
+        return flows
 
     async def _update_solar_coverage(self, now: datetime) -> bool:
         zone = self.coordinator.time_zone
@@ -677,7 +738,11 @@ class OutlookJournal:
     def active_forecast_records(self) -> list[dict]:
         """Use the published source's samples, or the latest issue during startup."""
         context = self.context()
-        return self._records_for_forecast(self._active_forecast_group(context), context)
+        return [
+            row
+            for row in self._records_for_forecast(self._active_forecast_group(context), context)
+            if row.get("issued_grading_revision") == GRADING_REVISION
+        ]
 
     def summary(self, days: int = 28, now: datetime | None = None) -> dict[str, Any]:
         now = now or dt_util.utcnow()
@@ -687,13 +752,23 @@ class OutlookJournal:
         context = self.context()
         group = self._active_forecast_group(context)
         records = self._records_for_forecast(group, context, include_missed=True)
+        current = [
+            row
+            for row in records
+            if GRADING_REVISION in (row.get("issued_grading_revision"), row.get("grading_revision"))
+        ]
+        revision = GRADING_REVISION if current else "legacy"
         source = None
         if group == "history":
             source = "Production history"
         elif group is not None:
             provider = self.hass.config_entries.async_get_entry(group.removeprefix("provider:"))
             source = provider.title if provider is not None else None
-        return {**summarize(records, context, since), "forecast_source": source}
+        return {
+            **summarize(current or records, context, since),
+            "forecast_source": source,
+            "grading_revision": revision,
+        }
 
     def interval(self, now: datetime | None = None) -> dict[str, Any]:
         selected = [
@@ -701,6 +776,7 @@ class OutlookJournal:
             for r in self.records
             if r.get("context") == self.context()
             and r.get("model_revision") == MODEL_REVISION
+            and r.get("issued_grading_revision") == GRADING_REVISION
             and r.get("checkpoint") == "evening"
         ]
         latest = max(selected, key=lambda r: r["issued_at"]) if selected else None

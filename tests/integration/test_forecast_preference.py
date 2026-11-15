@@ -12,7 +12,6 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.solar_sanity._forecast_plan import ForecastSelection
 from custom_components.solar_sanity.analysis.forecast import Correction
@@ -25,6 +24,7 @@ from custom_components.solar_sanity.const import (
     FORECAST_CAPTURE_INTERVAL,
     OPT_PREFERRED_FORECAST_PROVIDER,
 )
+from tests.integration.ha_harness import MockConfigEntry, async_fire_time_changed
 from tests.integration.test_battery_outlook import BATTERY, SOC, _loaded, _week_of_history
 from tests.integration.test_outlook_journal import NOW, _journal
 from tests.integration.test_setup_check import check
@@ -111,9 +111,10 @@ async def test_cached_provider_failure_and_confirmed_identical_refresh(
 
 
 async def test_preferred_capture_fails_and_recovers_on_the_normal_timer(
-    hass, enable_custom_integrations, entry_data, providers
+    hass, enable_custom_integrations, entry_data, providers, freezer
 ):
     """A fresh previous capture cannot keep a failed preferred provider in use."""
+    freezer.move_to(NOW)
     await hass.config.async_set_time_zone("UTC")
     first, preferred, third = providers
     now = dt_util.utcnow()

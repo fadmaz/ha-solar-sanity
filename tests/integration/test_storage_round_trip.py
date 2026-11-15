@@ -17,19 +17,22 @@ entry into it before setup: the envelope Home Assistant itself writes, with
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.solar_sanity.analysis.model import BucketSource
 from custom_components.solar_sanity.const import (
     DOMAIN,
-    STORAGE_KEY_STATE,
+    STORAGE_KEY_MEASUREMENTS,
     STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
 )
+from tests.integration.conftest import CHANNELS
+from tests.integration.ha_harness import MockConfigEntry
 
 KEYS = ["pv", "load", "grid_import", "battery_charge", "battery_discharge"]
 
@@ -59,7 +62,10 @@ def _envelope(key: str, window: dict, *, version: int = STORAGE_VERSION) -> dict
         "version": version,
         "minor_version": STORAGE_MINOR_VERSION,
         "key": key,
-        "data": {"window": window},
+        "data": {
+            "window": window,
+            "sources": {channel["role"]: [channel["entity_id"], None] for channel in CHANNELS},
+        },
     }
 
 
@@ -75,7 +81,7 @@ async def test_a_saved_window_is_read_back_at_setup(
 ) -> None:
     """The affirmative case, so the refusal cases below mean something."""
     entry.add_to_hass(hass)
-    key = f"{STORAGE_KEY_STATE}.{entry.entry_id}"
+    key = f"{STORAGE_KEY_MEASUREMENTS}.{entry.entry_id}"
     hass_storage[key] = _envelope(key, _window(612.5))
 
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -99,7 +105,7 @@ async def test_a_storage_file_the_code_cannot_migrate_does_not_kill_setup(
     ones already having a bad day.
     """
     entry.add_to_hass(hass)
-    key = f"{STORAGE_KEY_STATE}.{entry.entry_id}"
+    key = f"{STORAGE_KEY_MEASUREMENTS}.{entry.entry_id}"
     hass_storage[key] = _envelope(key, _window(612.5), version=STORAGE_VERSION + 1)
 
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -119,7 +125,7 @@ async def test_a_damaged_window_costs_the_window_and_nothing_else(
     window is refused, because a partly restored one would launder guesses into
     the one place this integration treats as measurement."""
     entry.add_to_hass(hass)
-    key = f"{STORAGE_KEY_STATE}.{entry.entry_id}"
+    key = f"{STORAGE_KEY_MEASUREMENTS}.{entry.entry_id}"
     hass_storage[key] = _envelope(key, _window(612.5, quality="OOZOO"))
 
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -142,10 +148,50 @@ async def test_two_installations_do_not_share_one_window(
     second = MockConfigEntry(domain=DOMAIN, data=entry_data, title="Barn")
     for config_entry, load_wh in ((first, 400.0), (second, 900.0)):
         config_entry.add_to_hass(hass)
-        key = f"{STORAGE_KEY_STATE}.{config_entry.entry_id}"
+        key = f"{STORAGE_KEY_MEASUREMENTS}.{config_entry.entry_id}"
         hass_storage[key] = _envelope(key, _window(load_wh))
         assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
 
     assert _loads(first) == [400.0, 400.0, 400.0]
     assert _loads(second) == [900.0, 900.0, 900.0]
+
+
+async def test_changing_the_solar_sensor_only_invalidates_its_history(
+    hass, enable_custom_integrations, entry_data, hass_storage
+):
+    """A role match cannot prove the old meter is measuring the replacement channel."""
+    entry_data["channels"][0]["entity_id"] = "sensor.replacement_solar"
+    entry = MockConfigEntry(domain=DOMAIN, data=entry_data)
+    entry.add_to_hass(hass)
+    key = f"{STORAGE_KEY_MEASUREMENTS}.{entry.entry_id}"
+    hass_storage[key] = _envelope(key, _window(612.5))
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    assert _loads(entry) == [612.5, 612.5, 612.5]
+    assert all(bucket.value("pv") is None for bucket in entry.runtime_data.coordinator.buckets)
+
+
+async def test_a_complete_recovery_replaces_partial_hours_and_preserves_other_channels(
+    hass, enable_custom_integrations, entry, hass_storage
+):
+    """A weak mean cannot certify a partial hour, and a complete one is applied once."""
+    entry.add_to_hass(hass)
+    key = f"{STORAGE_KEY_MEASUREMENTS}.{entry.entry_id}"
+    hass_storage[key] = _envelope(key, _window(610))
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    coordinator = entry.runtime_data.coordinator
+    first, second, _ = coordinator.buckets
+    coordinator._buckets[0] = replace(first, seconds=1800)
+    entity = CHANNELS[0]["entity_id"]
+    series = {entity: [(first.start_utc, 250, True), (second.start_utc, 450, True)]}
+    coordinator.ingest_backfill(series)
+    assert coordinator.buckets[0].seconds == 1800
+    coordinator.ingest_backfill(series, complete_means=True)
+    saved = coordinator.buckets
+    assert saved[0].seconds == 3600
+    assert saved[0].value("pv") == 250
+    assert saved[0].source["pv"] is BucketSource.COMPLETE_SHORT_TERM_MEAN
+    assert saved[0].value("load") is None
+    assert saved[1] == second
+    coordinator.ingest_backfill(series, complete_means=True)
+    assert coordinator.buckets == saved

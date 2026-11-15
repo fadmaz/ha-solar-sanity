@@ -19,7 +19,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.analysis.profile import ForecastScale, ScaleDay
@@ -36,6 +35,7 @@ from custom_components.solar_sanity.const import (
     OPT_BATTERY_TARGET_PCT,
 )
 from custom_components.solar_sanity.diagnostics import async_get_config_entry_diagnostics
+from tests.integration.ha_harness import MockConfigEntry, async_fire_time_changed
 
 SOC = "sensor.battery_level"
 OUTLOOK_KEYS = (

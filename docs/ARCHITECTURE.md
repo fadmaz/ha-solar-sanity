@@ -600,6 +600,12 @@ entries and the absence of dynamic imports. It skips when no bundle is built.
 
 ## 7. Build, test, lint, release
 
+CI runs the integration suite on the declared floor and on Core 2026.2.3 with
+the existing harness. Core 2026.11.1 uses Python 3.14 and the matching official
+`pytest-homeassistant` release in its own environment. A test-only import
+bridge shares fixtures across both harnesses. GitHub requires the Validate
+checks on `main` before merging a pull request.
+
 ### 7.1 Test tiers
 
 | Tier | Where | Needs Home Assistant |
@@ -853,6 +859,19 @@ window, reserve and script again after recording a durable attempt. The same
 per-entry lock serializes starts, cancels and notification delivery. The
 optional start status survives restart. An interrupted or unconfirmed attempt
 never dispatches again and also stops pending reminder notifications.
+
+### Measurement provenance and journal durability (0.51.2)
+
+The per-entry measurements store records the mapping and measurement type of
+each channel. A surviving channel is restored independently. The old role-only
+store stays available to earlier releases. Recorder seeds missing history and
+can complete a partial hour using a reset-compensated energy change or all
+twelve five-minute power means. An opaque hourly mean can inform profiles but
+does not certify a live grade. The journal checks recorded flows clipped to
+its observation bounds and leaves ambiguous external-charging timing pending
+until the retry window closes. A separate grading revision labels new outcomes
+and gates trials on the new issue cohort. Save acknowledgement compares a
+serialized batch with the store file on disk.
 
 ### Input changes (0.42.0)
 

@@ -11,6 +11,11 @@ Last updated for 0.51.3, 2026-11-15.
   the full warning window, and separates upstream update evidence from recorder
   verification. The reference provider is Forecast.Solar. Field evidence for
   provider failover on another installation remains open.
+- 0.51.2 binds saved measurements to their sources, recovers recent partial
+  hours, and confirms writes from disk. Old settled grades stay available in
+  History. Prospective experiment gates use issues from the new grading
+  revision. The private November 11 replay and the real restart remain
+  separate operational acceptance checks.
 - 0.51.3 retains the visible History page across refreshes and renders
   the morning fill decision against the saved deadline. Native actions use
   the modern device ownership field when available. Authenticated dashboard

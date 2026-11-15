@@ -6,7 +6,9 @@ from typing import Any
 OBSERVATION_REASONS = {
     "soc_incomplete": "Battery charge observations are incomplete.",
     "flow_incomplete": "Energy flow observations are incomplete.",
+    "flow_read_failed": "Recorder energy flow history could not be read.",
     "grid_charging": "Grid charging prevents a solar-only comparison.",
+    "grid_charge_uncertain": "The history cannot place grid charging inside this window.",
     "already_full": "The battery was already full at issue time.",
     "context_changed": "The setup changed during the observation window.",
     "history_read_failed": "The observation history could not be read.",

@@ -11,7 +11,6 @@ import pytest
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.analysis.observations import observation_hours
@@ -19,6 +18,7 @@ from custom_components.solar_sanity.analysis.outlook import BatterySettings, Ste
 from custom_components.solar_sanity.battery_outlook import OutlookState
 from custom_components.solar_sanity.const import DOMAIN, OPT_BATTERY_CAPACITY_KWH
 from custom_components.solar_sanity.journal import JOURNAL_KEY
+from tests.integration.ha_harness import MockConfigEntry, async_fire_time_changed
 from tests.integration.test_battery_outlook import BATTERY, _loaded
 
 NOW = datetime(2026, 11, 10, 20, 1, tzinfo=UTC)
@@ -369,6 +369,29 @@ async def test_the_journal_retries_missing_evidence_but_excludes_grid_charge(
         assert await journal._grade_pending(end + timedelta(days=1))
         reason = "history_read_failed" if problem == "query_failure" else "soc_incomplete"
         assert record["result"] == {"status": "excluded", "reason_code": reason}
+
+
+async def test_a_reported_disk_write_failure_remains_visible_until_retry(
+    hass, enable_custom_integrations, entry_data
+):
+    """Core logs a write failure without propagating it to the caller."""
+    from homeassistant.util.file import WriteError
+
+    _, journal = await _journal(hass, entry_data)
+    assert journal.capture(NOW)
+    await journal.async_save()
+    journal.last_checked_at = NOW + timedelta(minutes=1)
+    with patch.object(journal._store, "_async_write_data", new=AsyncMock(side_effect=WriteError)):
+        await journal.async_save()
+    assert journal.error == "journal_write_failed"
+    assert (await journal._store.async_load())[
+        "last_checked_at"
+    ] != journal.last_checked_at.isoformat()
+    await journal.async_save()
+    assert journal.error is None
+    assert (await journal._store.async_load())[
+        "last_checked_at"
+    ] == journal.last_checked_at.isoformat()
 
 
 async def test_an_uncommitted_batch_is_not_a_verified_archive(

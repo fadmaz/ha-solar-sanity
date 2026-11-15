@@ -129,6 +129,39 @@ def test_grid_charging_cannot_make_a_solar_fill_call_correct():
     assert outcome["reason_code"] == "grid_charging"
 
 
+def test_grid_charging_in_a_partial_first_hour_uses_the_clipped_interval():
+    """Recorded energy before issue or after fill cannot explain the scored crossing."""
+    prediction = record("morning")
+    issue, full = START + timedelta(seconds=30), START + timedelta(minutes=40)
+    prediction["issued_at"] = issue.isoformat()
+    soc = observations((100, 100, 100), maximum=True)
+    flow = buckets()
+    flow[0].wh["battery_charge"] = 1500
+    assert (
+        grade(prediction, soc, flow, full_observed_at=full, boundary_flows={})["reason_code"]
+        == "grid_charge_uncertain"
+    )
+    assert (
+        grade(
+            prediction,
+            soc,
+            flow,
+            full_observed_at=full,
+            boundary_flows={(issue, full): (0, 500, 1200)},
+        )["reason_code"]
+        == "grid_charging"
+    )
+    result = grade(
+        prediction,
+        soc,
+        flow,
+        full_observed_at=full,
+        boundary_flows={(issue, full): (0, 500, 0)},
+    )
+    assert result["status"] == "graded"
+    assert result["actual_filled"] is True
+
+
 def test_an_empty_summary_is_unknown_and_contexts_stay_separate():
     """No samples and old settings must not produce an accuracy of zero or one hundred."""
     prediction = record()

@@ -13,6 +13,18 @@ All notable changes are documented here. This project follows Semantic Versionin
 - Native actions use the current Home Assistant device ownership interface when
   available and retain compatibility with older versions.
 
+## [0.51.2] - 2026-11-15
+
+### Fixed
+
+- Stored measurements identify their channel sources so reconfiguring a
+  sensor does not carry its predecessor's data into the new setup.
+- Closed Recorder statistics can recover partial measurement hours. Issued
+  predictions screen grid charging even in an hour clipped by the grading
+  window, and distinguish uncertain timing from a confirmed charge.
+- The journal confirms saves from disk and retries a failed write in the
+  background.
+
 ## [0.51.1] - 2026-11-15
 
 ### Fixed

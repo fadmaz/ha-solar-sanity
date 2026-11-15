@@ -16,6 +16,7 @@ indexed, never purged, visible in Developer Tools, and it costs no boot time.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -73,8 +74,48 @@ async def async_hourly_series(
     Mean-derived values are flagged, because an hourly mean cannot say whether
     its hour was complete.
     """
+    return await _async_energy_series(hass, power_ids, energy_ids, start, end, period="hour") or {}
+
+
+async def async_recovery_series(
+    hass: HomeAssistant, power_ids: set[str], energy_ids: set[str], start: datetime, end: datetime
+) -> dict[str, list[tuple[datetime, float, bool]]] | None:
+    """Use complete groups of twelve five-minute means for the requested hours."""
+    hourly = await _async_energy_series(hass, set(), energy_ids, start, end, period="hour")
+    short = await _async_energy_series(hass, power_ids, set(), start, end, period="5minute")
+    if hourly is None or short is None:
+        return None
+    five_minutes = timedelta(minutes=5)
+    for entity, rows in short.items():
+        grouped: dict[datetime, dict[datetime, float]] = {}
+        for when, watts, _ in rows:
+            hour = when.replace(minute=0, second=0, microsecond=0)
+            grouped.setdefault(hour, {})[when] = watts
+        recovered = []
+        for hour, periods in grouped.items():
+            if (
+                start <= hour
+                and hour + timedelta(hours=1) <= end
+                and all(hour + i * five_minutes in periods for i in range(12))
+            ):
+                recovered.append(
+                    (hour, sum(periods[hour + i * five_minutes] for i in range(12)) / 12, True)
+                )
+        hourly[entity] = recovered
+    return hourly
+
+
+async def _async_energy_series(
+    hass: HomeAssistant,
+    power_ids: set[str],
+    energy_ids: set[str],
+    start: datetime,
+    end: datetime,
+    *,
+    period: str,
+) -> dict[str, list[tuple[datetime, float, bool]]] | None:
     if not recorder_available(hass):
-        return {}
+        return None
 
     from homeassistant.components.recorder import get_instance
     from homeassistant.components.recorder.statistics import statistics_during_period
@@ -86,19 +127,21 @@ async def async_hourly_series(
             return {}
         try:
             return await get_instance(hass).async_add_executor_job(
-                statistics_during_period, hass, start, end, ids, "hour", units, types
+                statistics_during_period, hass, start, end, ids, period, units, types
             )
         except Exception:
             _LOGGER.debug("statistics_during_period failed for %s", types, exc_info=True)
-            return {}
+            return None
 
     energy_raw = await _fetch(energy_ids, {"change"}, {"energy": "kWh"})
+    if energy_raw is None:
+        return None
     for statistic_id, rows in (energy_raw or {}).items():
         series: list[tuple[datetime, float, bool]] = []
         for row in rows:
             change = row.get("change")
             started = row.get("start")
-            if change is None or started is None:
+            if change is None or started is None or not math.isfinite(change) or change < 0:
                 # A gap is a gap. It is not zero.
                 continue
             series.append(
@@ -108,12 +151,14 @@ async def async_hourly_series(
             out[statistic_id] = series
 
     power_raw = await _fetch(power_ids, {"mean"}, {"power": "W"})
+    if power_raw is None:
+        return None
     for statistic_id, rows in (power_raw or {}).items():
         series = []
         for row in rows:
             mean = row.get("mean")
             started = row.get("start")
-            if mean is None or started is None:
+            if mean is None or started is None or not math.isfinite(mean):
                 continue
             # Mean watts over an hour is watt-hours.
             series.append((dt_util.utc_from_timestamp(float(started)), float(mean), True))
@@ -750,3 +795,66 @@ async def async_observed_full_at(
         ),
         None,
     )
+
+
+async def async_read_boundary_flows(
+    hass: HomeAssistant, entity_ids: tuple[str, str, str], start: datetime, end: datetime
+) -> tuple[float, float, float] | None:
+    """Integrate only recorded states in a clipped hour, keeping gaps unknown."""
+    if not recorder_available(hass):
+        return None
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.history import get_significant_states
+
+    def read():
+        return get_significant_states(
+            hass,
+            start,
+            end,
+            list(entity_ids),
+            include_start_time_state=True,
+            significant_changes_only=False,
+            minimal_response=False,
+            no_attributes=False,
+        )
+
+    try:
+        rows = await get_instance(hass).async_add_executor_job(read)
+    except Exception:
+        _LOGGER.debug("Could not read the flow history at the grading boundary", exc_info=True)
+        return None
+    pv, load, charge = (_recorded_energy(rows.get(entity, ()), start, end) for entity in entity_ids)
+    if pv is None or load is None or charge is None:
+        return None
+    return pv, load, charge
+
+
+def _recorded_energy(states, start: datetime, end: datetime) -> float | None:
+    from .coordinator import KIND_ENERGY, energy_is_cumulative, read_channel
+
+    if not states or states[0].last_updated > start:
+        return None
+    previous, kind = read_channel(states[0])
+    if previous is None or kind is None or previous < 0:
+        return None
+    if kind == KIND_ENERGY and not energy_is_cumulative(states[0]):
+        return None
+    total = 0.0
+    cursor = start
+    for state in states[1:]:
+        when = state.last_updated
+        if when >= end:
+            break
+        value, observed_kind = read_channel(state)
+        if value is None or observed_kind != kind or value < 0 or when < cursor:
+            return None
+        if kind == KIND_ENERGY:
+            if value < previous or not energy_is_cumulative(state):
+                return None
+            total += value - previous
+        else:
+            total += previous * (when - cursor).total_seconds() / 3600
+        cursor, previous = when, value
+    if kind != KIND_ENERGY:
+        total += previous * (end - cursor).total_seconds() / 3600
+    return total

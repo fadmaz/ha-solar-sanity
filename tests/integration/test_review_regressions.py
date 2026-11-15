@@ -4,11 +4,11 @@ from datetime import timedelta
 
 import pytest
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.analysis.profile import ForecastScale
 from custom_components.solar_sanity.const import DOMAIN
+from tests.integration.ha_harness import MockConfigEntry
 from tests.integration.test_battery_outlook import BATTERY, SOC, _loaded
 
 

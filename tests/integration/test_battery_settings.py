@@ -12,7 +12,6 @@ from __future__ import annotations
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.const import (
     CONF_CHANNELS,
@@ -24,6 +23,7 @@ from custom_components.solar_sanity.const import (
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
 )
+from tests.integration.ha_harness import MockConfigEntry
 
 SOC = "sensor.battery_level"
 

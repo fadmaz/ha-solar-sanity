@@ -15,6 +15,7 @@ the listener-free path throughout.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -34,6 +35,7 @@ from .const import (
     LIVE_INTERVAL,
     PLATFORMS,
     SERVICE_RESCORE_FORECASTS,
+    STORAGE_KEY_MEASUREMENTS,
     STORAGE_KEY_STATE,
     STORAGE_VERSION,
 )
@@ -120,7 +122,6 @@ def _remove_retired_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) -> bool:
     """Set up one monitored installation."""
     coordinator = SolarSanityCoordinator(hass, entry)
-    await coordinator.async_restore()
     await coordinator.journal.async_restore()
     await coordinator.reminders.async_restore()
     entry.async_on_unload(coordinator.journal.cancel)
@@ -223,11 +224,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     Home Assistant preloads at every boot.
     """
     remove_energy_issues(hass, entry)
-    store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY_STATE}.{entry.entry_id}")
-    try:
-        await store.async_remove()
-    except Exception:
-        _LOGGER.debug("could not remove state for %s", entry.entry_id, exc_info=True)
+    for key in (STORAGE_KEY_STATE, STORAGE_KEY_MEASUREMENTS):
+        try:
+            await Store(hass, STORAGE_VERSION, f"{key}.{entry.entry_id}").async_remove()
+        except Exception:
+            _LOGGER.debug("could not remove state for %s", entry.entry_id, exc_info=True)
     await Store(hass, JOURNAL_VERSION, f"{JOURNAL_KEY}.{entry.entry_id}").async_remove()
     await reminder_store(hass, entry.entry_id).async_remove()
 
@@ -259,6 +260,7 @@ async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinat
         | dict.fromkeys(mean_backed, "mean")
         | dict.fromkeys(absent, "absent")
     )
+    await coordinator.async_restore()
 
     if absent:
         # Not our bug to fix, but the user cannot act on what they cannot see.
@@ -274,6 +276,9 @@ async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinat
         return
 
     start, end = utc_day_bounds(dt_util.utcnow(), BACKFILL_DAYS)
+    # Short-term evidence is queried only for the recent window pending grades can use.
+    recent_end = min(end, dt_util.utcnow().replace(minute=0, second=0, microsecond=0))
+    await coordinator.async_recover_hours(recent_end - timedelta(days=2), recent_end)
     series = await async_hourly_series(hass, mean_backed, sum_backed, start, end)
     coordinator.backfill_rows = {entity_id: len(rows) for entity_id, rows in series.items()}
     if series:

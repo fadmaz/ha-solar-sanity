@@ -28,10 +28,10 @@ from datetime import UTC, datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.const import STORAGE_KEY_STATE, STORAGE_VERSION
+from tests.integration.ha_harness import MockConfigEntry
 
 KEYS = ("pv", "load", "grid_import", "battery_charge", "battery_discharge")
 
@@ -140,18 +140,13 @@ async def test_a_partial_hour_stays_partial(
     assert restored[0].seconds == 1800
 
 
-async def test_the_window_is_read_back_at_setup(
+async def test_a_legacy_window_without_sources_stays_available_for_rollback(
     hass: HomeAssistant,
     enable_custom_integrations: None,
     entry: MockConfigEntry,
     hass_storage: dict,
 ) -> None:
-    """End to end: a window in the file is a window in the coordinator.
-
-    Seeded rather than round-tripped through a real save, because
-    ``async_delay_save`` writes thirty seconds later and this is a test about
-    reading.
-    """
+    """The legacy role-only window cannot identify the configured sensors."""
     start = datetime(2026, 8, 1, tzinfo=UTC)
     key = f"{STORAGE_KEY_STATE}.{entry.entry_id}"
     rows = [
@@ -173,11 +168,8 @@ async def test_the_window_is_read_back_at_setup(
 
     coordinator = await _coordinator(hass, entry)
 
-    assert len(coordinator._buckets) >= 6
-    ours = [b for b in coordinator._buckets if b.start_utc >= start]
-    assert all(
-        source is BucketSource.OWN_INTEGRAL for b in ours[:6] for source in b.source.values()
-    )
+    assert not coordinator.buckets
+    assert hass_storage[key]["data"]["window"]["rows"] == rows
 
 
 class TestItRefusesRatherThanGuesses:
