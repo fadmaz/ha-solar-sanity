@@ -266,6 +266,23 @@ Use a Home Assistant `notify` entity or a Companion App `notify.mobile_app_*`
 action. The administrator actions are `solar_sanity.schedule_load_reminder`,
 `solar_sanity.get_load_reminder` and `solar_sanity.cancel_load_reminder`.
 
+Select **Check now** on the saved reminder to see whether a complete run still
+fits the deadline and keeps the battery above reserve through the current
+outlook. The check uses a fresh corrected solar forecast and a matching live
+charge reading. If an earliest start was set, the check honours it.
+
+To request a start from the card, choose an optional Home Assistant script
+when saving the reminder. After a ready check, **Start with Home Assistant**
+requests that script following another check on the server. **Start requested**
+means Home Assistant accepted the call. The script handles device readiness
+and the run itself. If the call was interrupted, check the script trace or
+device before requesting another start. A request consumes that reminder and
+ends any pending notification for it.
+
+The administrator actions `solar_sanity.check_load_reminder` and
+`solar_sanity.start_load_reminder` take the current reminder ID. The start
+action also takes the projection ID returned by the check.
+
 Expand **Preview battery settings** in What if to compare the current power
 settings with proposed ones. Both columns use the same starting charge, solar
 forecast and consumption. The times are calculated from the issue shown above

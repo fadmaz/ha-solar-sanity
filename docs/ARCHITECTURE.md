@@ -830,6 +830,21 @@ on disk before sending. It checks the current outlook, deadline, user and
 destination again after the write. An interrupted attempt restores as
 `delivery_unconfirmed`. The runner never retries a notification call.
 
+### Check and start a saved load (0.51.0)
+
+Check now applies one complete run starting now to the current corrected
+outlook. It shares the load splitting and reserve calculation with Find best
+time, and validates the live charge reading against the projection's starting
+charge. The result carries the projection revision for a subsequent request.
+
+A reminder may bind one script by entity registry entry ID. The response-only
+start action accepts a reminder ID and projection revision and resolves the
+stored target under the caller's permissions. It checks the forecast, start
+window, reserve and script again after recording a durable attempt. The same
+per-entry lock serializes starts, cancels and notification delivery. The
+optional start status survives restart. An interrupted or unconfirmed attempt
+never dispatches again and also stops pending reminder notifications.
+
 ### Input changes (0.42.0)
 
 `analysis/changes.py` retains only two valid input snapshots in memory. Their

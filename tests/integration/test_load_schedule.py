@@ -238,9 +238,10 @@ async def test_unknown_trial_metadata_preserves_the_entire_journal(
 
 
 async def test_legacy_journal_without_trial_metadata_remains_readable(
-    hass, enable_custom_integrations, entry_data, hass_storage
+    hass, enable_custom_integrations, entry_data, hass_storage, freezer
 ):
     """The optional extension must not require a migration of existing issues."""
+    freezer.move_to(NOW)
     entry, journal = await _journal(hass, entry_data)
     journal.capture(NOW)
     expected = deepcopy(journal.records)

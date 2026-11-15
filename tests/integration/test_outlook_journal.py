@@ -176,9 +176,10 @@ async def test_checkpoints_follow_calendar_days_across_dst(
 
 
 async def test_a_saved_journal_is_restored_with_its_original_inputs(
-    hass, enable_custom_integrations, entry_data, hass_storage
+    hass, enable_custom_integrations, entry_data, hass_storage, freezer
 ):
     """The old measured-window store is independent of this new envelope."""
+    freezer.move_to(NOW)
     entry, journal = await _journal(hass, entry_data)
     journal.capture(NOW)
     await journal.async_save()

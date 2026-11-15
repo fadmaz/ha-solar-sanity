@@ -315,6 +315,16 @@ class BatteryOutlook:
             return "The solar forecast has not been refreshed within three hours."
         return None
 
+    def projection_soc_problem(self, state: OutlookState, now: datetime) -> str | None:
+        """Reject a live charge reading that can no longer support this projection."""
+        settings = self.settings
+        if settings is None:
+            return "soc_unavailable"
+        soc, _, reason = self._read_soc(settings, now)
+        if soc is None:
+            return reason
+        return "soc_changed" if soc != state.soc_pct else None
+
     def power_controls(
         self, learned_limit_w: float | None = None, learned_standby_w: float | None = None
     ) -> BatteryControls:

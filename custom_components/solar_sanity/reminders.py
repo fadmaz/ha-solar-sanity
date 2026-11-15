@@ -11,18 +11,22 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, STATE_UNAVAILABLE
+from homeassistant.auth.permissions.const import POLICY_CONTROL
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import Context, CoreState, HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .analysis.scenarios import LoadPlan, LoadTiming, find_best_time
+from .analysis.scenarios import LoadPlan, LoadTiming, find_best_time, time_load_now
 from .battery_outlook import OutlookState, frozen_inputs
 from .const import DOMAIN
 
 if TYPE_CHECKING:
+    from homeassistant.auth.models import User
+
     from .coordinator import SolarSanityCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +40,8 @@ _STATUSES = _ACTIVE | {
     "failed",
 }
 _TIMES = ("earliest_start", "finish_by", "scheduled_at")
+_START_STATES = {"requesting", "requested", "unconfirmed"}
+_CHECKABLE = _ACTIVE | {"sent", "delivery_unconfirmed", "failed"}
 
 
 def reminder_store(hass: HomeAssistant, entry_id: str) -> Store[dict]:
@@ -54,6 +60,12 @@ class Reminder:
     scheduled_at: datetime | None = None
     status: str = "scheduled"
     reason_code: str | None = None
+    script_registry_id: str | None = None
+    start_state: str | None = None
+
+    @property
+    def active(self) -> bool:
+        return self.status in _ACTIVE and self.start_state is None
 
     @property
     def latest_start(self) -> datetime:
@@ -64,6 +76,9 @@ class Reminder:
         for key in _TIMES:
             if result[key] is not None:
                 result[key] = result[key].isoformat()
+        for key in ("script_registry_id", "start_state"):
+            if result[key] is None:
+                del result[key]
         return result
 
     @classmethod
@@ -86,8 +101,18 @@ class Reminder:
             or not math.isfinite(record.power_w)
             or record.power_w < 0
             or record.latest_start < record.earliest_start
+            or (
+                record.script_registry_id is not None
+                and not isinstance(record.script_registry_id, str)
+            )
+            or (
+                record.start_state is not None
+                and (record.start_state not in _START_STATES or record.script_registry_id is None)
+            )
         ):
             raise ValueError("Invalid load reminder.")
+        if record.start_state == "requesting":
+            record = replace(record, start_state="unconfirmed")
         if record.status == "dispatching":
             return replace(record, status="delivery_unconfirmed")
         return record
@@ -171,6 +196,9 @@ class LoadReminders:
             return {"reminder": None, "storage_error": False}
         result = record.dump()
         del result["user_id"]
+        if result.pop("script_registry_id", None) is not None:
+            script = self._script(record)
+            result["script_entity_id"] = script.entity_id if script is not None else None
         result["latest_start"] = record.latest_start.isoformat()
         return {"reminder": result, "storage_error": False}
 
@@ -244,10 +272,32 @@ class LoadReminders:
             raise ServiceValidationError("Could not save the load reminder.") from error
         self._record = record
 
-    async def async_schedule(self, user_id: str, data: dict) -> dict:
+    def _script(self, record: Reminder) -> er.RegistryEntry | None:
+        if record.script_registry_id is None:
+            return None
+        script = er.async_get(self.hass).async_get(record.script_registry_id)
+        if script is None or script.domain != "script" or script.platform != "script":
+            return None
+        return script
+
+    def _script_problem(self, script: er.RegistryEntry | None, user: User) -> str | None:
+        if (
+            script is None
+            or script.disabled
+            or not self.hass.services.has_service("script", "turn_on")
+        ):
+            return "script_unavailable"
+        if not user.permissions.check_entity(script.entity_id, POLICY_CONTROL):
+            return "script_permission"
+        state = self.hass.states.get(script.entity_id)
+        if state is None or state.state not in (STATE_OFF, STATE_ON):
+            return "script_unavailable"
+        return "script_running" if state.state == STATE_ON else None
+
+    async def async_schedule(self, user_id: str, user: User, data: dict) -> dict:
         async with self._lock:
             self._require_running()
-            if self._record is not None and self._record.status in _ACTIVE:
+            if self._record is not None and self._record.active:
                 raise ServiceValidationError(
                     "Cancel the active reminder before scheduling another."
                 )
@@ -261,6 +311,17 @@ class LoadReminders:
                 raise ServiceValidationError(
                     "Choose an available Home Assistant notification target."
                 )
+            script_registry_id = None
+            if (script_id := data.get("script_entity_id")) is not None:
+                script = er.async_get(self.hass).async_get(script_id)
+                if script is None or script.domain != "script" or script.platform != "script":
+                    raise ServiceValidationError("Choose a Home Assistant script.")
+                problem = self._script_problem(script, user)
+                if problem == "script_permission":
+                    raise Unauthorized()
+                if problem == "script_unavailable":
+                    raise ServiceValidationError("Choose an available Home Assistant script.")
+                script_registry_id = script.id
             record = Reminder(
                 uuid4().hex,
                 user_id,
@@ -269,6 +330,7 @@ class LoadReminders:
                 data["duration_minutes"],
                 data.get("earliest_start", now).astimezone(UTC),
                 data["finish_by"].astimezone(UTC),
+                script_registry_id=script_registry_id,
             )
             try:
                 plan = self._plan(state, record, now)
@@ -286,10 +348,120 @@ class LoadReminders:
         async with self._lock:
             self._require_running()
             record = self._record
-            if record is None or record.id != reminder_id or record.status not in _ACTIVE:
+            if record is None or record.id != reminder_id or not record.active:
                 raise ServiceValidationError("This reminder is no longer active.")
             await self._commit(replace(record, status="cancelled", scheduled_at=None))
             self._clear_timer()
+            return self.view()
+
+    def _checkable_record(self, reminder_id: str) -> Reminder:
+        self._require_running()
+        record = self._record
+        if record is None or record.id != reminder_id:
+            raise ServiceValidationError("This reminder is no longer current.")
+        if record.start_state is not None or record.status not in _CHECKABLE | {"expired"}:
+            raise ServiceValidationError("This reminder is no longer available to check.")
+        return record
+
+    def _check_now(
+        self, record: Reminder, user: User, expected_projection: str | None = None
+    ) -> dict:
+        now = dt_util.utcnow()
+        end = now + timedelta(minutes=record.duration_minutes)
+        result = {
+            "reminder_id": record.id,
+            "checked_at": now.isoformat(),
+            "finish_at": end.isoformat(),
+            "ready": False,
+        }
+        if record.status == "expired" or now > record.latest_start:
+            return {**result, "reason_code": "window_too_short"}
+        if now < record.earliest_start:
+            return {**result, "reason_code": "before_earliest_start"}
+        state = self._projection(now)
+        if state is None:
+            return {**result, "reason_code": "forecast_unavailable"}
+        if expected_projection is not None and expected_projection != state.projection_id:
+            return {**result, "reason_code": "projection_changed"}
+        if reason := self.coordinator.battery.projection_soc_problem(state, now):
+            return {**result, "reason_code": reason}
+        if end > state.outlook.horizon_end:
+            return {**result, "reason_code": "beyond_horizon"}
+        try:
+            settings, steps = frozen_inputs(state)
+            timing = time_load_now(
+                state.soc_pct,
+                settings,
+                steps,
+                power_w=record.power_w,
+                duration_minutes=record.duration_minutes,
+                now=now,
+            )
+        except (ValueError, KeyError, TypeError, OverflowError):
+            return {**result, "reason_code": "outlook_unavailable"}
+        ready = timing.reserve_at is None and timing.minimum_soc_pct > settings.reserve_pct
+        result.update(
+            ready=ready,
+            reason_code=None if ready else "reaches_reserve",
+            projection_id=state.projection_id,
+            minimum_soc_pct=timing.minimum_soc_pct,
+            reserve_pct=settings.reserve_pct,
+        )
+        if record.script_registry_id is not None:
+            script = self._script(record)
+            problem = self._script_problem(script, user)
+            result["script_reason_code"] = problem
+            if problem is None:
+                script_state = self.hass.states.get(script.entity_id)
+                result.update(script_entity_id=script.entity_id, script_name=script_state.name)
+        return result
+
+    async def async_check_now(self, reminder_id: str, user: User) -> dict:
+        async with self._lock:
+            return self._check_now(self._checkable_record(reminder_id), user)
+
+    async def async_request_start(
+        self, reminder_id: str, projection_id: str, context: Context, user: User
+    ) -> dict:
+        async with self._lock:
+            record = self._checkable_record(reminder_id)
+            if record.script_registry_id is None:
+                raise ServiceValidationError("This reminder has no linked Home Assistant script.")
+            check = self._check_now(record, user, projection_id)
+            if not check["ready"] or not check.get("script_entity_id"):
+                return {**self.view(), "check": check}
+
+            # Record the attempt before handing control to Home Assistant. A
+            # restart after this write cannot tell whether the call happened.
+            await self._commit(replace(record, start_state="requesting"))
+            user = await self.hass.auth.async_get_user(context.user_id)
+            if self.hass.state is not CoreState.running:
+                return self.view()
+            if not self._started or user is None or not user.is_active or not user.is_admin:
+                await self._commit(record)
+                self._schedule_timer()
+                self._require_running()
+                raise Unauthorized()
+            check = self._check_now(record, user, projection_id)
+            if not check["ready"] or not (script_id := check.get("script_entity_id")):
+                await self._commit(record)
+                self._schedule_timer()
+                return {**self.view(), "check": check}
+            self._clear_timer()
+            try:
+                await self.hass.services.async_call(
+                    "script",
+                    "turn_on",
+                    {"entity_id": script_id},
+                    blocking=True,
+                    context=context,
+                )
+            except Exception:
+                _LOGGER.exception("Could not confirm the load start request")
+                start_state = "unconfirmed"
+            else:
+                start_state = "requested"
+            await self._commit(replace(record, start_state=start_state))
             return self.view()
 
     @callback
@@ -302,7 +474,7 @@ class LoadReminders:
     def _schedule_timer(self) -> None:
         self._clear_timer()
         record = self._record
-        if self._started and record is not None and record.status in _ACTIVE:
+        if self._started and record is not None and record.active:
             when = record.scheduled_at or record.latest_start + timedelta(microseconds=1)
             self._timer = async_track_point_in_utc_time(self.hass, self._on_timer, when)
 
@@ -319,7 +491,7 @@ class LoadReminders:
             or self.hass.state is not CoreState.running
             or self._storage_error
             or record is None
-            or record.status not in _ACTIVE
+            or not record.active
             or (self._task is not None and not self._task.done())
         ):
             return
@@ -374,7 +546,7 @@ class LoadReminders:
         try:
             async with self._lock:
                 record = self._record
-                if record is None or record.status not in _ACTIVE:
+                if record is None or not record.active:
                     return
                 self._require_running()
                 now = dt_util.utcnow()

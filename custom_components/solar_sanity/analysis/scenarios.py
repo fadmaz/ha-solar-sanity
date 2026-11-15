@@ -146,6 +146,29 @@ def _timing(start: datetime, end: datetime, run: Run, baseline_grid_wh: float) -
     return LoadTiming(start, end, min(run.soc), max(0.0, additional_grid_wh), run.reserve_at)
 
 
+def time_load_now(
+    soc_pct: float,
+    battery: BatterySettings,
+    steps: Sequence[Step],
+    *,
+    power_w: float,
+    duration_minutes: int,
+    now: datetime,
+) -> LoadTiming:
+    """Simulate a whole run through the forecast horizon, including later reserve crossings."""
+    end = now + _duration(power_w, duration_minutes)
+    if (
+        not steps
+        or steps[0].start > now
+        or end > steps[-1].end
+        or not math.isfinite(power_w * (duration_minutes / 60))
+    ):
+        raise ValueError("The complete load must fit inside a current outlook.")
+    baseline = simulate(soc_pct, battery, steps)
+    run = simulate(soc_pct, battery, _with_load(steps, power_w, now, end))
+    return _timing(now, end, run, sum(baseline.shortfall_wh))
+
+
 def find_best_time(
     soc_pct: float,
     battery: BatterySettings,

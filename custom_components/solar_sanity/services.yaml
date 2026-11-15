@@ -120,6 +120,11 @@ schedule_load_reminder:
       required: true
       selector:
         text:
+    script_entity_id:
+      selector:
+        entity:
+          filter:
+            domain: script
     power_w:
       required: true
       default: 1000
@@ -160,6 +165,32 @@ cancel_load_reminder:
         device:
           integration: solar_sanity
     reminder_id:
+      required: true
+      selector:
+        text:
+check_load_reminder:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
+    reminder_id:
+      required: true
+      selector:
+        text:
+start_load_reminder:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
+    reminder_id:
+      required: true
+      selector:
+        text:
+    projection_id:
       required: true
       selector:
         text:

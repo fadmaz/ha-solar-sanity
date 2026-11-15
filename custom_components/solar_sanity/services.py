@@ -332,18 +332,29 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         user = await hass.auth.async_get_user(user_id) if user_id is not None else None
         if user is None or not user.is_active or not user.is_admin:
             raise Unauthorized()
-        return (await coordinator_for(hass, call)).reminders
+        return (await coordinator_for(hass, call)).reminders, user
 
     async def schedule_load_reminder(call: ServiceCall):
-        reminders = await reminders_for(call)
-        return await reminders.async_schedule(call.context.user_id, call.data)
+        reminders, user = await reminders_for(call)
+        return await reminders.async_schedule(call.context.user_id, user, call.data)
 
     async def get_load_reminder(call: ServiceCall):
-        return (await reminders_for(call)).view()
+        reminders, _ = await reminders_for(call)
+        return reminders.view()
 
     async def cancel_load_reminder(call: ServiceCall):
-        reminders = await reminders_for(call)
+        reminders, _ = await reminders_for(call)
         return await reminders.async_cancel(call.data["reminder_id"])
+
+    async def check_load_reminder(call: ServiceCall):
+        reminders, user = await reminders_for(call)
+        return await reminders.async_check_now(call.data["reminder_id"], user)
+
+    async def start_load_reminder(call: ServiceCall):
+        reminders, user = await reminders_for(call)
+        return await reminders.async_request_start(
+            call.data["reminder_id"], call.data["projection_id"], call.context, user
+        )
 
     hass.services.async_register(
         DOMAIN,
@@ -354,6 +365,7 @@ def async_setup_tools(hass: HomeAssistant) -> None:
                 vol.Required("device_id"): cv.string,
                 vol.Required("projection_id"): cv.string,
                 vol.Required("destination"): cv.string,
+                vol.Optional("script_entity_id"): cv.entity_id,
                 vol.Required("power_w"): _power,
                 vol.Required("duration_minutes"): _duration,
                 vol.Optional("earliest_start"): _start_time,
@@ -369,12 +381,18 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         schema=vol.Schema({vol.Required("device_id"): cv.string}),
         supports_response=SupportsResponse.ONLY,
     )
-    hass.services.async_register(
-        DOMAIN,
-        "cancel_load_reminder",
-        cancel_load_reminder,
-        schema=vol.Schema(
-            {vol.Required("device_id"): cv.string, vol.Required("reminder_id"): cv.string}
-        ),
-        supports_response=SupportsResponse.ONLY,
-    )
+    reminder_target = {
+        vol.Required("device_id"): cv.string,
+        vol.Required("reminder_id"): cv.string,
+    }
+    for name, handler in (
+        ("cancel_load_reminder", cancel_load_reminder),
+        ("check_load_reminder", check_load_reminder),
+        ("start_load_reminder", start_load_reminder),
+    ):
+        schema = vol.Schema(reminder_target)
+        if name == "start_load_reminder":
+            schema = schema.extend({vol.Required("projection_id"): cv.string})
+        hass.services.async_register(
+            DOMAIN, name, handler, schema=schema, supports_response=SupportsResponse.ONLY
+        )

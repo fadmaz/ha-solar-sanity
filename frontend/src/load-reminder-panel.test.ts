@@ -34,6 +34,7 @@ async function mount(call = vi.fn().mockResolvedValue(empty)) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-11-10T10:00:00Z"));
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);
 });
 afterEach(() => {
@@ -94,4 +95,79 @@ it("polls only while What if is visible and ignores replies from another install
   card.active = true;
   await settle(card);
   expect(call).toHaveBeenCalledTimes(visibleCalls + 1);
+});
+
+function button(card: SolarSanityLoadReminder, label: string) {
+  return [...card.shadowRoot!.querySelectorAll("button")].find(item => item.textContent?.trim() === label);
+}
+
+it("carries the chosen script at scheduling and asks for a separate, current start", async () => {
+  const linkedScript = "script.test_load";
+  let current = empty.response as {reminder: unknown; storage_error: boolean};
+  const call = vi.fn().mockImplementation(async ({service}) => {
+    if (service === "schedule_load_reminder") {
+      current = {reminder: {...scheduled, script_entity_id: linkedScript}, storage_error: false};
+    }
+    if (service === "check_load_reminder") return {response: {
+      reminder_id: scheduled.id, ready: true, reason_code: null, checked_at: "2026-11-10T10:00:00Z",
+      finish_at: "2026-11-10T11:00:00Z", projection_id: "current", minimum_soc_pct: 47,
+      reserve_pct: 35, script_name: "Test load",
+    }};
+    if (service === "start_load_reminder") {
+      current = {reminder: {...scheduled, script_entity_id: linkedScript, start_state: "requested"}, storage_error: false};
+    }
+    return {response: current};
+  });
+  const {card} = await mount(call);
+  card.hass = {
+    ...card.hass!,
+    states: {...card.hass!.states, [linkedScript]: {
+      entity_id: linkedScript, state: "off", last_updated: "2026-11-10T10:00:00Z",
+      attributes: {friendly_name: "Test load"},
+    }},
+  };
+  await settle(card);
+  const [notify, scripts] = card.shadowRoot!.querySelectorAll("select");
+  expect(scripts!.value).toBe("");
+  notify!.value = "notify.phone";
+  notify!.dispatchEvent(new Event("change"));
+  scripts!.value = linkedScript;
+  scripts!.dispatchEvent(new Event("change"));
+  await settle(card);
+  button(card, "Remind me")!.click();
+  await settle(card);
+  expect(call).toHaveBeenCalledWith(expect.objectContaining({
+    service: "schedule_load_reminder", service_data: expect.objectContaining({script_entity_id: linkedScript}),
+  }));
+  expect(button(card, "Start with Home Assistant")).toBeUndefined();
+  button(card, "Check now")!.click();
+  await settle(card);
+  expect(card.shadowRoot!.textContent).toContain("47.0% · Reserve 35%");
+  expect(button(card, "Start with Home Assistant")).toBeDefined();
+  card.projectionId = "later";
+  await settle(card);
+  expect(button(card, "Start with Home Assistant")).toBeUndefined();
+  expect(card.shadowRoot!.textContent).toContain("The outlook changed. Check again.");
+  card.projectionId = "current";
+  await settle(card);
+  button(card, "Start with Home Assistant")!.click();
+  await settle(card);
+  expect(call).toHaveBeenCalledWith(expect.objectContaining({
+    service: "start_load_reminder",
+    service_data: {device_id: "house", reminder_id: scheduled.id, projection_id: "current"},
+  }));
+  expect(card.shadowRoot!.textContent).toContain("Start requested");
+  expect(button(card, "Check now")).toBeUndefined();
+});
+
+it("keeps Check now available after notification and displays a server veto", async () => {
+  const sent = {...scheduled, status: "sent"};
+  const call = vi.fn().mockImplementation(async ({service}) => service === "check_load_reminder"
+    ? {response: {reminder_id: sent.id, ready: false, reason_code: "soc_changed", checked_at: "2026-11-10T10:00:00Z"}}
+    : {response: {reminder: sent, storage_error: false}});
+  const {card} = await mount(call);
+  button(card, "Check now")!.click();
+  await settle(card);
+  expect(card.shadowRoot!.textContent).toContain("Waiting for an outlook that includes the latest battery charge.");
+  expect(button(card, "Start with Home Assistant")).toBeUndefined();
 });
