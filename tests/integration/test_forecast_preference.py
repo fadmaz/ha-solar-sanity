@@ -24,6 +24,11 @@ from custom_components.solar_sanity.const import (
     FORECAST_CAPTURE_INTERVAL,
     OPT_PREFERRED_FORECAST_PROVIDER,
 )
+from custom_components.solar_sanity.journal import ARCHIVE_PROOF_REVISION, OutlookJournal
+from custom_components.solar_sanity.statistics_source import (
+    dayahead_statistic_id,
+    forecast_statistic_id,
+)
 from tests.integration.ha_harness import MockConfigEntry, async_fire_time_changed
 from tests.integration.test_battery_outlook import BATTERY, SOC, _loaded, _week_of_history
 from tests.integration.test_outlook_journal import NOW, _journal
@@ -56,6 +61,96 @@ def forecast(now, power, *, today=True, tomorrow=True):
             for hour in range(24)
         }
     }
+
+
+async def test_same_payload_recovers_an_unverified_archive_after_journal_restore(
+    hass, enable_custom_integrations, entry_data, providers, freezer
+):
+    """An unchanged provider capture still needs a retry if Recorder missed a series."""
+    freezer.move_to(NOW)
+    key = providers[0]
+    _, journal = await _journal(hass, entry_data)
+    coordinator = journal.coordinator
+    hass.config_entries.async_update_entry(
+        coordinator.entry, data={**entry_data, CONF_FORECAST_ENTRIES: [key]}
+    )
+    payloads = {key: forecast(NOW, 1500)}
+    ahead_id = dayahead_statistic_id(key)
+    archived_hour = NOW.replace(minute=0) + timedelta(hours=18)
+    first_ahead = [(archived_hour, 1.25)]
+
+    async def archive(*args, expected, previous, submitted, write, **kwargs):
+        assert write
+        expected[ahead_id] = first_ahead
+        if previous:
+            assert previous[ahead_id] == first_ahead
+            submitted.update(expected)
+            return True
+        return False
+
+    with (
+        patch(
+            "custom_components.solar_sanity.coordinator.async_get_solar_forecasts",
+            new=AsyncMock(return_value=payloads),
+        ),
+        patch(
+            "custom_components.solar_sanity.coordinator.async_record_forecast",
+            new=AsyncMock(side_effect=archive),
+        ) as write,
+        patch.object(OutlookJournal, "_queue_verification"),
+    ):
+        assert await coordinator.async_capture_forecasts() == 0
+        first_capture = journal.health[key]["captured_at"]
+        restored = OutlookJournal(coordinator)
+        await restored.async_restore()
+        coordinator.journal = restored
+        freezer.move_to(NOW + FORECAST_CAPTURE_INTERVAL)
+        assert await coordinator.async_capture_forecasts() == 1
+        assert restored.health[key]["captured_at"] == first_capture
+        assert write.await_args.kwargs["now"] == NOW
+        expected = restored.archive_expectations(key)
+        with patch(
+            "custom_components.solar_sanity.journal.async_forecast_series",
+            new=AsyncMock(
+                side_effect=[dict(expected[forecast_statistic_id(key)]), dict(first_ahead)]
+            ),
+        ):
+            await restored._verify_archive(key, expected, delays=(0,))
+        assert restored.health[key]["archive_proof_revision"] == ARCHIVE_PROOF_REVISION
+        assert restored.health[key]["archive_series"] == {
+            "latest": "verified",
+            "dayahead": "verified",
+        }
+        await coordinator.async_capture_forecasts()
+        assert write.await_count == 2
+
+
+async def test_shared_archive_elects_only_one_writer(
+    hass, enable_custom_integrations, entry_data, providers, freezer
+):
+    """An installation sharing the forecast may verify without writing its own copy."""
+    freezer.move_to(NOW)
+    key = providers[0]
+    _, first = await _journal(hass, entry_data)
+    _, second = await _journal(hass, entry_data)
+    for journal in (first, second):
+        hass.config_entries.async_update_entry(
+            journal.coordinator.entry, data={**entry_data, CONF_FORECAST_ENTRIES: [key]}
+        )
+    with (
+        patch(
+            "custom_components.solar_sanity.coordinator.async_get_solar_forecasts",
+            new=AsyncMock(return_value={key: forecast(NOW, 1500)}),
+        ),
+        patch(
+            "custom_components.solar_sanity.coordinator.async_record_forecast",
+            new=AsyncMock(return_value=False),
+        ) as record,
+        patch.object(OutlookJournal, "_queue_verification"),
+    ):
+        await first.coordinator.async_capture_forecasts()
+        await second.coordinator.async_capture_forecasts()
+    assert sorted(call.kwargs["write"] for call in record.await_args_list) == [False, True]
 
 
 async def test_cached_provider_failure_and_confirmed_identical_refresh(

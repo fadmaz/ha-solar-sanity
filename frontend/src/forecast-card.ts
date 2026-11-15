@@ -1,77 +1,13 @@
-/**
- * Tomorrow as this roof is expected to make it.
- *
- * One curve per provider: its latest forecast for tomorrow, read from the
- * archive the integration rewrites on every capture, the forecast the battery
- * outlook projects with. Until 0.31.0 this card drew the day-ahead archive
- * instead, whose rows for a day two days out are the first ones seen and never
- * revised, and showed 48.2 kWh for a Monday the provider then put at 34.6.
- *
- * When the integration has learned how much of that provider's forecast this
- * roof delivers, the curve and the total are corrected by it, read from the
- * `expected_tomorrow_corrected` sensor's factor, and the forecast for an ideal
- * roof is not shown at all: since 0.33.0, at the reference installation's
- * owner's request, because the provider's own sensors already show it.
- * Multiplied here rather than copied from the sensor's state, so the curve
- * and total use exactly the same corrected hours in Home Assistant's zone.
- * Until there is a factor, the provider's forecast, and a line saying so.
- *
- * What it does not show, and why:
- *
- *  - **A score.** The day-ahead archive is what scoring reads, and the
- *    `<provider> accuracy` sensor carries that figure and its reasons. A
- *    second, shorter version of it here would only disagree with the first.
- *  - **Forecast against actual, as a shortfall.** On a system whose generation
- *    is measured before the inverter, or which exports through a meter nobody
- *    reads, the gap between a forecast and a sensor is not forecast error.
- *  - **Anything in currency.** Never, anywhere in this product.
- */
-
+/** Tomorrow's corrected solar forecast. This card has no currency figures. */
 import { LitElement, css, html, nothing, svg, type SVGTemplateResult, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { qualityPanel, qualityStyles } from "./quality";
-
 import { areaPath, hourLabels, linePath, niceTicks, round, scaleLinear } from "./chart";
 import {
-  loadCurrentForecast,
-  dayKey,
-  hourLabel,
-  safeTimeZone,
-  peak,
-  roofFactor,
-  tomorrow,
-  total,
-  type Hour,
-  type ProviderDay,
-  type RoofFactor,
+  correctedForecasts, hourLabel, localDayBounds, peak, safeTimeZone, tomorrow, total,
+  type CorrectedForecast,
 } from "./forecast-data";
-import type {
-  GridOptions,
-  HomeAssistant,
-  LovelaceCard,
-  LovelaceCardConfig,
-  LovelaceCardEditor,
-} from "./types/hass";
-
-/** Chart geometry, in user units. The viewBox scales it to whatever fits. */
-/**
- * How long a failed read is believed before the card tries again.
- *
- * Long enough that a genuinely disabled recorder is not polled at the rate
- * `hass` is reassigned, short enough that a momentary blip is not treated as
- * the state of the world for the rest of the day.
- */
-const RETRY_AFTER_MS = 5 * 60_000;
-
-/**
- * How long a forecast on screen is kept before it is read again.
- *
- * The integration captures every thirty minutes (`FORECAST_CAPTURE_INTERVAL`)
- * and the provider revises tomorrow through the day. Reading only once a day,
- * as this card did while it drew a series that never changes, would let a wall
- * tablet drift from the sensor beside it by the evening.
- */
-const REFRESH_AFTER_MS = 30 * 60_000;
+import type { GridOptions, HomeAssistant, LovelaceCard, LovelaceCardConfig, LovelaceCardEditor } from "./types/hass";
 
 const WIDTH = 600;
 const HEIGHT = 180;
@@ -84,68 +20,63 @@ interface ForecastCardConfig extends LovelaceCardConfig {
   provider?: string;
 }
 
+
 interface Panel {
-  label: string;
-  /** The archive the hours came from, which the roof figure is matched on. */
-  latestId: string;
-  /** What the hours were corrected by, or nothing while uncorrected. */
-  roof?: RoofFactor;
-  hours: Hour[];
   kwh: number;
   line: string;
   area: string;
+  isolated: (readonly [number, number])[];
   ticks: number[];
   tickY: (value: number) => number;
-  labels: Array<{ x: number; text: string }>;
+  labels: {x: number; text: string}[];
+  times: string[];
 }
 
-/** Everything the card needs to draw one provider's day, corrected when it can be. */
-export function buildPanel(day: ProviderDay, roof?: RoofFactor, timeZone?: string): Panel {
-  const exact = new Map(roof?.hours?.map((hour) => [hour.start.getTime(), hour.kwh]));
-  const complete = exact.size > 0 && day.hours.every((hour) => hour.kwh === 0 || exact.has(hour.start.getTime()));
-  const hours = roof
-    ? day.hours.map((hour) => ({ ...hour, kwh: complete ? (exact.get(hour.start.getTime()) ?? 0) : hour.kwh * roof.factor }))
-    : day.hours;
-  const top = niceTicks(peak(hours)).at(-1) ?? 1;
-
-  const x = scaleLinear([0, Math.max(hours.length - 1, 1)], [PAD_START, WIDTH - PAD_END]);
-  const y = scaleLinear([0, top], [HEIGHT - PAD_BOTTOM, PAD_TOP]);
-  const points = hours.map((hour, index) => [x(index), y(hour.kwh)] as const);
-
+/** The x coordinate is elapsed time, so gaps occupy their actual width. */
+export function buildPanel(forecast: CorrectedForecast, day: Date, zone: string): Panel {
+  const {hours} = forecast;
+  const {start, end} = localDayBounds(day, zone);
+  const x = scaleLinear([start.getTime(), end.getTime()], [PAD_START, WIDTH - PAD_END]);
+  const ticks = niceTicks(peak(hours));
+  const y = scaleLinear([0, ticks.at(-1) ?? 1], [HEIGHT - PAD_BOTTOM, PAD_TOP]);
+  const segments: (readonly [number, number])[][] = [];
+  let segment: (readonly [number, number])[] = [];
+  for (const [index, hour] of hours.entries()) {
+    if (!index || hour.start.getTime() - hours[index - 1]!.start.getTime() !== 3_600_000) {
+      segment = [];
+      segments.push(segment);
+    }
+    segment.push([x(hour.start.getTime()), y(hour.kwh)]);
+  }
+  const wallTimes = hours.map(hour => hourLabel(hour.start, zone));
+  const occurrences = new Map<string, number>();
+  for (const time of wallTimes) occurrences.set(time, (occurrences.get(time) ?? 0) + 1);
+  const times = wallTimes.map((time, index) => (occurrences.get(time) ?? 0) > 1
+    ? hourLabel(hours[index]!.start, zone, true) : time);
+  const stamps = hours.map(hour => hour.start);
+  const marks = hourLabels(stamps, 6, when => hourLabel(when, zone));
   return {
-    label: day.label,
-    latestId: day.latestId,
-    roof,
-    hours,
     kwh: total(hours),
-    line: linePath(points),
-    area: areaPath(points, HEIGHT - PAD_BOTTOM),
-    ticks: niceTicks(peak(hours)),
-    tickY: (value: number) => round(y(value)),
-    labels: hourLabels(hours.map((hour) => hour.start), 6,
-      (when) => hourLabel(when, timeZone)).map((text, index) => ({
-      x: round(x(index)),
-      text,
+    line: segments.filter(points => points.length > 1).map(linePath).join(" "),
+    area: segments.filter(points => points.length > 1)
+      .map(points => areaPath(points, HEIGHT - PAD_BOTTOM)).join(" "),
+    isolated: segments.filter(points => points.length === 1).map(points => points[0]!),
+    ticks,
+    tickY: value => round(y(value)),
+    labels: marks.map((text, index) => ({
+      text: text ? times[index]! : "",
+      x: round(x(hours[index]!.start.getTime())),
     })),
+    times,
   };
 }
 
 @customElement("solar-sanity-forecast-card")
 export class SolarSanityForecastCard extends LitElement implements LovelaceCard {
-  @property({ attribute: false }) public hass?: HomeAssistant;
+  @property({attribute: false}) public hass?: HomeAssistant;
   @state() private _config?: ForecastCardConfig;
-  @state() private _days?: ProviderDay[];
-  @state() private _failed = false;
-  @state() private _day = tomorrow(new Date());
-  private _timeZone = safeTimeZone();
-  /** The lifecycle phase the last failure happened in. */
-  private _failedDuring?: string;
-  /** When the last failure happened, so the latch can expire on its own. */
-  private _failedAt = 0;
-  /** A load in progress, so a burst of hass updates does not start five. */
-  private _inflight?: Promise<void>;
-  /** When what is on screen was read, so it can be read again. */
-  private _loadedAt = 0;
+  private _clock?: ReturnType<typeof setTimeout>;
+  private _wakeAt?: number;
 
   public setConfig(config: ForecastCardConfig): void {
     // Authoring errors only. Anything the data might do at runtime is a
@@ -178,263 +109,98 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
     return { rows: "auto", columns: 12, min_columns: 6 };
   }
 
-  /**
-   * Everything that must settle before this render, rather than after it.
-   *
-   * Setting reactive state from `updated` schedules a second pass over the
-   * whole element; Lit says so out loud. These three are decisions about what
-   * the current render should show, so they belong here, where they fold into
-   * it.
-   */
-  protected willUpdate(changed: Map<string, unknown>): void {
-    if (!changed.has("hass") || !this.hass) return;
 
-    // Two ways out of a failure, because the first one alone never fires.
-    //
-    // A new lifecycle phase deserves another try: the usual way to see the
-    // recorder refuse is a restart. But `_load` is only reachable past the
-    // RUNNING gate below, so every failure is recorded during RUNNING and this
-    // comparison is always "RUNNING" against "RUNNING". Written to release the
-    // latch, it never released it, and the card said "cannot read the record"
-    // until midnight on a recorder that had been fine seconds later.
-    //
-    // So also let it expire. A websocket blip — a laptop waking, wifi roaming,
-    // the recorder reloading — rejects the request in flight and is over before
-    // the next reassignment, of which there are dozens a minute. Nothing about
-    // that deserves to be believed for sixteen hours.
-    const phase = this.hass.config.state;
-    if (phase !== this._failedDuring) {
-      this._failed = false;
-    } else if (this._failed && Date.now() - this._failedAt > RETRY_AFTER_MS) {
-      this._failed = false;
-    }
-    if (phase !== "RUNNING") return;
+  public override connectedCallback(): void {
+    super.connectedCallback();
+    this.requestUpdate();
+  }
 
-    // Midnight moves the question, and what is held answers yesterday's.
+  public override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    clearTimeout(this._clock);
+    this._wakeAt = undefined;
+  }
+
+  private _forecast(now: Date, zone: string) {
+    return correctedForecasts(this.hass!, tomorrow(now, zone), zone, now.getTime(), this._config?.provider);
+  }
+
+  protected override updated(): void {
+    if (!this.isConnected || this.hass?.config.state !== "RUNNING") return;
+    const now = new Date();
     const zone = safeTimeZone(this.hass.config.time_zone);
-    const wanted = tomorrow(new Date(), zone);
-    if (wanted.getTime() !== this._day.getTime() || zone !== this._timeZone) {
-      this._timeZone = zone;
-      this._day = wanted;
-      this._days = undefined;
-      this._failed = false;
-    }
-  }
-
-  public updated(changed: Map<string, unknown>): void {
-    if (!changed.has("hass") || !this.hass) return;
-    // Nothing to ask until the recorder can answer.
-    if (this.hass.config.state !== "RUNNING") return;
-
-    if (this._inflight) return;
-    if (this._days === undefined) {
-      if (!this._failed) void this._load();
-    } else if (Date.now() - this._loadedAt > REFRESH_AFTER_MS) {
-      // What is on screen stays there while it is read again.
-      void this._load();
-    }
-  }
-
-  private async _load(): Promise<void> {
-    if (!this.hass) return;
-    this._inflight = this._loadOnce(this._day, this._timeZone).finally(() => {
-      this._inflight = undefined;
-      // A zone/day change can discard the request while it is in flight.
-      // Load its replacement even if no further entity state changes arrive.
-      if (this._days === undefined && !this._failed && this.hass?.config.state === "RUNNING") {
-        void this._load();
-      }
-    });
-    return this._inflight;
-  }
-
-  private async _loadOnce(day: Date, timeZone: string): Promise<void> {
-    if (!this.hass) return;
-    try {
-      const days = await loadCurrentForecast(this.hass, day, timeZone);
-      // The day may have moved while this was in flight. A request started at
-      // 23:59:59 answers about the day that has just become today, and
-      // publishing it would leave the card showing yesterday's forecast under
-      // the word "Tomorrow" until something else happened to reload it — which,
-      // on a card that only loads when `_days` is undefined, is nothing.
-      if (day.getTime() !== this._day.getTime() || timeZone !== this._timeZone) return;
-      this._days = this._config?.provider
-        ? days.filter((d) => d.statisticId === this._config!.provider)
-        : days;
-      this._loadedAt = Date.now();
-      this._failedDuring = undefined;
-    } catch {
-      if (day.getTime() !== this._day.getTime() || timeZone !== this._timeZone) return;
-      // A failed refresh leaves what is already on screen alone: half an hour
-      // old is still the forecast, and a blip should not replace it with an
-      // apology. It is tried again after the same interval.
-      if (this._days !== undefined) {
-        this._loadedAt = Date.now();
-        return;
-      }
-      // The recorder can be disabled, and a card is not the place to explain a
-      // stack trace. What the reader needs is one sentence and no red box.
-      this._failed = true;
-      this._failedAt = Date.now();
-      this._failedDuring = this.hass.config.state;
-    }
+    const {forecasts} = this._forecast(now, zone);
+    const wakeAt = Math.min(localDayBounds(now, zone).end.getTime(),
+      ...forecasts.map(forecast => forecast.validUntil + 1));
+    if (wakeAt === this._wakeAt) return;
+    clearTimeout(this._clock);
+    this._wakeAt = wakeAt;
+    this._clock = setTimeout(() => {
+      this._wakeAt = undefined;
+      this.requestUpdate();
+    }, Math.max(0, wakeAt - Date.now()));
   }
 
   protected render(): TemplateResult {
     if (!this.hass) return this._note("Connecting", "Waiting for Home Assistant.");
-
     if (this.hass.config.state !== "RUNNING") {
       return this._note("Home Assistant is still starting", "This will fill in by itself.");
     }
-
-    if (this._failed) {
-      return this._note(
-        "Cannot read the record",
-        "Solar Sanity keeps its forecast history in Home Assistant's long-term statistics, and they are not available right now.",
-      );
-    }
-
-    if (this._days === undefined) return this._note("Reading the record", "One moment.");
-
-    if (this._days.length === 0) {
-      return this._note(
-        "No solar forecast to keep",
-        "Add Forecast.Solar, Solcast or Open-Meteo, then pick it in Solar Sanity. It will record what they predict, which Home Assistant otherwise throws away within about ten days.",
-      );
-    }
-
-    const panels = this._days.map((day) =>
-      buildPanel(day, roofFactor(this.hass, day.latestId), this._timeZone));
-    const withData = panels.filter((panel) => panel.hours.length > 1);
-
-    if (withData.length === 0) {
-      return this._note(
-        "No forecast for tomorrow yet",
-        "Solar Sanity records each provider's forecast every half hour, so tomorrow appears with the next one the provider publishes.",
-      );
-    }
-
-    return html`
-      <ha-card>
-        <div class="root" lang="en" dir="ltr">
-          <header>
-            <h2>${this._heading()}</h2>
-            <p class="when">${this._dayLabel()}</p>
-          </header>
-          ${withData.map((panel) => this._panel(panel))}
-          <p class="footnote">
-            The provider's latest forecast, which it revises through the day${withData.some(
-              (panel) => panel.roof,
-            )
-              ? ", corrected for what your roof delivers"
-              : ""}.
-            What was forecast a day ahead is kept separately, to compare with
-            what happens.
-          </p>
-          ${qualityPanel(this.hass, undefined, withData.map((panel) => panel.latestId))}
-        </div>
-      </ha-card>
-    `;
-  }
-
-  /**
-   * What the day is, relative to now rather than to when it was fetched.
-   *
-   * Derived at render rather than stored, so the heading cannot outlive its
-   * own truth. At five past midnight a card loaded the previous evening still
-   * holds the right *data*; calling it "Tomorrow" is the only part that would
-   * have become false, and doing this here means no refresh has to win a race
-   * for the card to stay honest.
-   */
-  private _heading(): string {
     const now = new Date();
-    const key = dayKey(this._day, this._timeZone);
-    if (key === dayKey(tomorrow(now, this._timeZone), this._timeZone)) return "Tomorrow";
-    if (key === dayKey(now, this._timeZone)) return "Today";
-    return "Forecast";
+    const zone = safeTimeZone(this.hass.config.time_zone);
+    const day = tomorrow(now, zone);
+    const {forecasts, reasons} = this._forecast(now, zone);
+    if (!forecasts.length) {
+      return this._note("Waiting for a corrected forecast",
+        reasons.join(" ") || "Connect a forecast provider and wait for Solar Sanity to learn your roof.");
+    }
+    const date = day.toLocaleDateString("en", {weekday: "long", day: "numeric", month: "long", timeZone: zone});
+    return html`
+      <ha-card><div class="root" lang="en" dir="ltr">
+        <header><h2>Tomorrow</h2><p class="when">${date}</p></header>
+        ${forecasts.map(forecast => this._panel(forecast, day, zone))}
+        ${reasons.map(reason => html`<p class="why">${reason}</p>`)}
+        ${qualityPanel(this.hass, undefined, forecasts.map(forecast => forecast.latestId))}
+      </div></ha-card>`;
   }
 
-  private _dayLabel(): string {
-    return this._day.toLocaleDateString("en", {
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-      timeZone: this._timeZone,
-    });
-  }
-
-  private _panel(panel: Panel): TemplateResult {
-    const when = this._heading().toLowerCase();
-    const what = panel.roof ? "expected from your roof" : "forecast";
-    const label = `${panel.label}: ${panel.kwh.toFixed(1)} kilowatt hours ${what} for ${when}`;
+  private _panel(forecast: CorrectedForecast, day: Date, zone: string): TemplateResult {
+    const panel = buildPanel(forecast, day, zone);
+    const label = `${forecast.label}: ${panel.kwh.toFixed(1)} kilowatt hours expected from your roof for tomorrow`;
     return html`
       <section class="panel">
         <div class="heading">
-          <span class="provider">${panel.label}</span>
+          <span class="provider">${forecast.label}</span>
           <span class="total"><bdi>${panel.kwh.toFixed(1)} kWh</bdi></span>
         </div>
-        ${this._roof(panel)}
-        <svg
-          class="chart"
-          viewBox="0 0 ${WIDTH} ${HEIGHT}"
-          preserveAspectRatio="none"
-          role="img"
-          aria-label=${label}
-        >
-          ${panel.ticks.map(
-            (tick) => svgLine(PAD_START, panel.tickY(tick), WIDTH - PAD_END, panel.tickY(tick)),
-          )}
+        ${this._roof(forecast)}
+        <svg class="chart" viewBox="0 0 ${WIDTH} ${HEIGHT}"
+          preserveAspectRatio="none" role="img" aria-label=${label}>
+          ${panel.ticks.map(tick => svgLine(PAD_START, panel.tickY(tick), WIDTH - PAD_END, panel.tickY(tick)))}
           <path class="area" d=${panel.area} />
           <path class="line" d=${panel.line} />
-          ${panel.ticks.map(
-            (tick) => svg`<text class="tick" x="0" y=${panel.tickY(tick) + 4}>${tick}</text>`,
-          )}
-          ${panel.labels.map((mark) =>
-            mark.text
-              ? svg`<text class="tick" x=${mark.x} y=${HEIGHT - 6}>${mark.text}</text>`
-              : nothing,
-          )}
+          ${panel.isolated.map(([x, y]) => svg`<circle class="point" cx=${x} cy=${y} r="2" />`)}
+          ${panel.ticks.map(tick => svg`<text class="tick" x="0" y=${panel.tickY(tick) + 4}>${tick}</text>`)}
+          ${panel.labels.map(mark => mark.text
+            ? svg`<text class="tick" x=${mark.x} y=${HEIGHT - 6}>${mark.text}</text>` : nothing)}
         </svg>
-        <!-- The same numbers, for anyone who cannot see the shape. -->
-        <div class="sr-only">
-        <table>
-          <caption>
-            ${label}
-          </caption>
-          <tbody>
-            ${panel.hours.map(
-              (hour) => html`<tr>
-                <th scope="row">${hourLabel(hour.start, this._timeZone)}:00</th>
-                <td>${hour.kwh.toFixed(2)} kWh</td>
-              </tr>`,
-            )}
-          </tbody>
-        </table>
-        </div>
-      </section>
-    `;
+        <div class="sr-only"><table>
+          <caption>${label}</caption>
+          <tbody>${forecast.hours.map((hour, index) => html`<tr>
+            <th scope="row">${panel.times[index]}</th><td>${hour.kwh.toFixed(2)} kWh</td>
+          </tr>`)}</tbody>
+        </table></div>
+      </section>`;
   }
 
-  /**
-   * What the total and the curve were corrected by, or that they were not.
-   * The figure for an ideal roof is never printed beside the corrected one.
-   */
-  private _roof(panel: Panel): TemplateResult {
-    const roof = panel.roof;
-    if (!roof) {
-      return html`<p class="why">As the provider forecasts it, not yet corrected for your roof.</p>`;
-    }
+  private _roof(roof: CorrectedForecast): TemplateResult {
     const share = Math.round(roof.factor * 100);
     const over = roof.days ? ` over the last ${roof.days} days` : "";
-    return html`
-      <p class="why">
-        ${roof.byKindOfDay
-          ? html`Corrected for your roof: on days forecast like this one, it has delivered
-              about <bdi>${share}%</bdi> of the forecast${over}.`
-          : html`Corrected for your roof: it has delivered about <bdi>${share}%</bdi> of
-              this forecast${over}.`}
-      </p>
-    `;
+    return html`<p class="why">
+      ${roof.byKindOfDay
+        ? html`Corrected for your roof: on days forecast like this one, it has delivered about <bdi>${share}%</bdi> of the forecast${over}.`
+        : html`Corrected for your roof: it has delivered about <bdi>${share}%</bdi> of this forecast${over}.`}
+    </p>`;
   }
 
   private _note(headline: string, body: string): TemplateResult {
@@ -476,16 +242,12 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       text-align: start;
     }
     .when,
-    .body,
-    .footnote {
+    .body {
       margin: 0;
       color: var(--secondary-text-color);
       font-size: var(--ha-font-size-m, 0.875rem);
       line-height: 1.45;
       text-align: start;
-    }
-    .footnote {
-      font-size: var(--ha-font-size-s, 0.75rem);
     }
     .heading {
       display: flex;
@@ -525,6 +287,8 @@ export class SolarSanityForecastCard extends LitElement implements LovelaceCard 
       stroke-linejoin: round;
       vector-effect: non-scaling-stroke;
     }
+    .point {fill: var(--primary-color);}
+
     .area {
       fill: var(--energy-solar-color, #ff9800);
       opacity: 0.16;

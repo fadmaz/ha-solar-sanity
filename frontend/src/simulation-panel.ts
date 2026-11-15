@@ -201,6 +201,8 @@ export class SolarSanitySimulation extends LitElement {
     const planning=this._mode==="best_time",deadlineCandidates=planning?this._candidates(this._deadline):[];
     const plan=this._plan?.response;
     const currentPlan=plan?.basis.projection_id===this.projectionId && !!plan.recommendation;
+    const actions=plan?.load_actions;
+    const canRemind=actions ? actions.status==="ready" || actions.status==="waiting_for_update" : plan?.solar_corrected;
     return html`<section lang="en" dir="ltr"><p>Compare one extra load with the current projection. Calculated times can differ from the main card's settled times.</p>
       <div class="form"><label>Extra power (W)<input type="number" min="0" step="any" .value=${this._power} @input=${(e:Event)=>this._input("_power",e)}></label>
       <label>Duration (minutes)<input type="number" min="1" max="1440" step="1" .value=${this._minutes} @input=${(e:Event)=>this._input("_minutes",e)}></label>
@@ -220,10 +222,10 @@ export class SolarSanitySimulation extends LitElement {
       ${!this.projectionId?html`<p>Waiting for a valid current projection.</p>`:nothing}
       ${planning && plan?this._planView(plan):nothing}
       ${this.hass?.user?.is_admin?html`
-        ${planning && currentPlan && !plan?.solar_corrected?html`<p>Reminders require a current corrected solar forecast.</p>`:nothing}
+        ${planning && currentPlan && (actions?.reason || !canRemind)?html`<p role="status">${actions?.reason ?? "Reminders require a current corrected solar forecast."}</p>`:nothing}
         <solar-sanity-load-reminder .hass=${this.hass} .deviceId=${this.deviceId}
           .active=${this.active} .projectionId=${this.projectionId}
-          .request=${planning && currentPlan && plan?.solar_corrected?this._plan?.request:undefined}>
+          .request=${planning && currentPlan && canRemind?this._plan?.request:undefined}>
         </solar-sanity-load-reminder>`:nothing}
       ${r?html`<p>Based on ${this._time(r.basis.computed_at)} · ${r.basis.forecast_used?"Solar forecast":"Production history"}</p>${this._graph(r)}
         <table><thead><tr><th>Result</th><th>Baseline</th><th>Extra load</th></tr></thead><tbody>

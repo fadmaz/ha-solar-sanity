@@ -22,6 +22,8 @@ neither fixture.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from homeassistant.components.recorder import Recorder
 from homeassistant.components.recorder.statistics import async_add_external_statistics
@@ -119,3 +121,37 @@ async def test_the_metadata_carries_what_2026_11_will_require(
     assert metadata["source"] == "solar_sanity", (
         "the recorder requires source to equal the half before the colon"
     )
+
+
+async def test_forecast_archive_resumes_from_a_real_predecessor_after_eight_days(
+    recorder_mock: Recorder, hass: HomeAssistant
+) -> None:
+    """A long data gap leaves a valid sum, even when the last row is outside the lookback."""
+    key = ULID_ENTRY_ID
+    latest = statistics_source.forecast_statistic_id(key)
+    ahead = statistics_source.dayahead_statistic_id(key)
+    now = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+    previous, future = now - timedelta(days=8), now + timedelta(hours=18)
+    for statistic_id in (latest, ahead):
+        async_add_external_statistics(
+            hass,
+            statistics_source._metadata(statistic_id, "Synthetic forecast"),
+            [{"start": previous, "sum": 30.0, "state": 1.5}],
+        )
+    await async_wait_recording_done(hass)
+    expected = {}
+    assert await statistics_source.async_record_forecast(
+        hass, key, "Synthetic forecast", {future.isoformat(): 2000}, now, expected=expected
+    )
+    await async_wait_recording_done(hass)
+    assert expected == {latest: [(future, 2.0)], ahead: [(future, 2.0)]}
+    for statistic_id in (latest, ahead):
+        values = await statistics_source.async_forecast_series(
+            hass, statistic_id, previous, future + timedelta(hours=1)
+        )
+        assert values == {previous: 1.5, future: 2.0}
+        assert (
+            await statistics_source._async_resume_sum(
+                hass, statistic_id, future + timedelta(hours=1)
+            )
+        ) == 32.0

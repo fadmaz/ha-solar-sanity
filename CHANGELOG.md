@@ -2,6 +2,19 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.51.4] - 2026-11-15
+
+### Fixed
+
+- Archive verification checks both forecast series. Failed batches retry even
+  when the forecast is unchanged, and capture resumes across longer outages.
+- What if and Setup show whether the actual forecast provider supports load
+  actions. Reminders still consider a complete run when the forecast ends
+  before the saved deadline.
+- The forecast card shows fresh, corrected hours from the installation.
+  Missing hours leave gaps in the chart, and its labels use the local minute
+  and distinguish both occurrences of a repeated hour.
+
 ## [0.51.3] - 2026-11-15
 
 ### Fixed

@@ -126,9 +126,10 @@ do not make a claim about another installation.
 
 `collection_status` reports starting, OK, degraded or error. Per provider,
 `forecast_last_captured_at` is the integration's last usable capture and
-`forecast_archive_verified_at` is its last read-back of matching archive data.
-Verification is distinct from submitting a batch to the recorder. Its timestamp
-does not claim to be the physical disk-write time.
+`forecast_archive_verified_at` is its last read-back of matching archive data
+across both forecast series. Setup shows collection attempts, successful
+submissions and verification for each series. An incomplete batch retries on
+the regular capture interval, including when the provider returns identical data.
 
 The journal is local and private, retained for 90 days and at most 180 records
 per installation. Diagnostics include it; inspect the download before sharing.
@@ -250,16 +251,19 @@ Calculate again when the outlook changes. The same read-only calculation is
 available as `solar_sanity.find_best_time`.
 
 Home Assistant administrators can choose **Remind me** under a current
-recommendation based on corrected solar. Select a notification destination for
-this run. Solar Sanity saves one active reminder per installation, follows new
+recommendation based on corrected Forecast.Solar data. Other providers still
+support planning. The card and **Setup** show when the selected forecast
+supports planning only or is waiting for a confirmed update. Select a notification
+destination for this run. Solar Sanity saves one active reminder per installation, follows new
 outlooks, and shows the scheduled start or why it is waiting in **What if**.
 **Cancel reminder** is available while the reminder is active.
 
 At the scheduled time, Solar Sanity simulates starting now using the latest
 valid corrected solar forecast. It sends a prompt to run the load manually if
-the complete run fits by the deadline and the battery stays above reserve
-through the end of the outlook. If no suitable start remains before the latest
-start, **Expired** appears in the card. An interrupted notification attempt
+the complete run fits both the deadline and the current outlook, and the
+battery stays above reserve through the end of the outlook. If the forecast
+shortens, the reminder still checks any complete run that fits. If no suitable
+start remains before the latest start, **Expired** appears in the card. An interrupted notification attempt
 appears as **Delivery unconfirmed** and is never retried.
 
 Use a Home Assistant `notify` entity or a Companion App `notify.mobile_app_*`
@@ -311,11 +315,10 @@ registry, so renaming them does not lose them.
 
 **Solar Sanity: tomorrow's forecast** shows tomorrow as your roof is expected
 to make it: your provider's current forecast, curve and total, corrected by how
-much of it your roof has delivered on days forecast like tomorrow. The figure
-for an ideal roof is not shown; the provider's own sensors already show it.
-Until the correction is learned, it shows the provider's forecast and says so.
-It reads the forecast again every half hour. It is hand-rolled inline SVG, so
-it re-themes with no JavaScript.
+much of it your roof has delivered on days forecast like tomorrow. The card
+uses the corrected sensor's hours and waits for them when learning, stale or
+unavailable. The chart leaves holes where hours are missing. Its labels use
+Home Assistant's local time, including minutes and the offsets of repeated hours.
 
 Neither takes any configuration. Drop one on a dashboard and it finds its own
 data. Each has an editor for when there is a second installation to choose

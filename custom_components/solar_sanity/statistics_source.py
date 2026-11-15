@@ -38,6 +38,9 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+type ArchiveRows = list[tuple[datetime, float]]
+# None is an unknown expectation after a failed read, while [] is known empty.
+type ArchiveExpectations = dict[str, ArchiveRows | None]
 
 
 def recorder_available(hass: HomeAssistant) -> bool:
@@ -298,7 +301,7 @@ def _metadata(statistic_id: str, name: str) -> Any:
 
 
 async def async_forecast_series(
-    hass: HomeAssistant, statistic_id: str, start: datetime, end: datetime
+    hass: HomeAssistant, statistic_id: str, start: datetime, end: datetime | None
 ) -> dict[datetime, float] | None:
     """Hourly forecast kWh from one of our archives, by UTC hour.
 
@@ -379,6 +382,17 @@ async def _async_resume_sum(
         # Genuinely empty. This is the one case where zero is the truth.
         return 0.0
 
+    newest = last[statistic_id][0]
+    if (
+        isinstance(start := newest.get("start"), (int, float))
+        and math.isfinite(start)
+        and start < before.timestamp()
+    ):
+        # When the entire archive precedes the new batch, this is the immediate
+        # predecessor even after a long outage. It is never a future row.
+        total = newest.get("sum")
+        return float(total) if isinstance(total, (int, float)) and math.isfinite(total) else None
+
     try:
         rows = await get_instance(hass).async_add_executor_job(
             statistics_during_period,
@@ -402,7 +416,7 @@ async def _async_resume_sum(
         return None
 
     total = preceding[-1].get("sum")
-    return float(total) if isinstance(total, (int, float)) else None
+    return float(total) if isinstance(total, (int, float)) and math.isfinite(total) else None
 
 
 def _as_rows(points: list[tuple[datetime, float]], running: float) -> list[Any]:
@@ -421,7 +435,10 @@ async def async_record_forecast(
     wh_hours: dict[str, float],
     now: datetime | None = None,
     *,
-    submitted: dict[str, list[tuple[datetime, float]]] | None = None,
+    submitted: dict[str, ArchiveRows] | None = None,
+    expected: ArchiveExpectations | None = None,
+    previous: ArchiveExpectations | None = None,
+    write: bool = True,
 ) -> bool:
     """Persist one provider's forecast, as two series.
 
@@ -435,34 +452,34 @@ async def async_record_forecast(
     series idempotent — and is also why it cannot answer what was forecast
     yesterday. That is the day-ahead series' job.
     """
-    if not recorder_available(hass) or not wh_hours:
-        return False
-
-    from homeassistant.components.recorder.statistics import async_add_external_statistics
-
     points = normalise_wh_hours(wh_hours)
     if not points:
         return False
 
     when_now = now or dt_util.utcnow()
-    written = False
-
     latest_id = forecast_statistic_id(provider_key)
-    running = await _async_resume_sum(hass, latest_id, points[0][0])
-    if running is not None:
-        async_add_external_statistics(
-            hass, _metadata(latest_id, f"{provider_name} forecast"), _as_rows(points, running)
-        )
-        _LOGGER.debug("recorded %d forecast points for %s", len(points), latest_id)
-        if submitted is not None:
-            submitted[latest_id] = points
-        written = True
+    ahead_id = dayahead_statistic_id(provider_key)
+    if expected is not None:
+        expected[latest_id] = points
+        expected[ahead_id] = (previous or {}).get(ahead_id)
+    if not recorder_available(hass):
+        return False
 
-    if await _async_record_dayahead(
-        hass, provider_key, provider_name, points, when_now, submitted=submitted
-    ):
-        written = True
-    return written
+    latest_written = write and await _async_submit_forecast(
+        hass, latest_id, f"{provider_name} forecast", points, submitted
+    )
+    ahead_written = await _async_record_dayahead(
+        hass,
+        provider_key,
+        provider_name,
+        points,
+        when_now,
+        submitted=submitted,
+        expected=expected,
+        previous=(previous or {}).get(ahead_id),
+        write=write,
+    )
+    return latest_written or ahead_written
 
 
 async def _async_record_dayahead(
@@ -472,7 +489,10 @@ async def _async_record_dayahead(
     points: list[tuple[datetime, float]],
     now: datetime,
     *,
-    submitted: dict[str, list[tuple[datetime, float]]] | None = None,
+    submitted: dict[str, ArchiveRows] | None,
+    expected: ArchiveExpectations | None,
+    previous: ArchiveRows | None,
+    write: bool,
 ) -> bool:
     """Write only hours still far enough ahead, and only once each.
 
@@ -480,35 +500,56 @@ async def _async_record_dayahead(
     immutability is the whole point: it is what makes "this is what was
     forecast a day ahead" a statement rather than a hope.
     """
-    from homeassistant.components.recorder.statistics import async_add_external_statistics
-
+    statistic_id = dayahead_statistic_id(provider_key)
     ahead = eligible(points, now, DAYAHEAD_MIN_LEAD_HOURS)
     if not ahead:
+        if expected is not None:
+            expected[statistic_id] = []
         return False
 
-    statistic_id = dayahead_statistic_id(provider_key)
-    existing = await async_forecast_series(
-        hass, statistic_id, ahead[0][0], ahead[-1][0] + timedelta(hours=1)
-    )
+    # A shorter horizon may expose a gap before the existing future tail.
+    # Accounting for that tail preserves the sums across the insertion.
+    existing = await async_forecast_series(hass, statistic_id, ahead[0][0], None)
     if existing is None:
         return False
 
-    tail = dayahead_write_plan(points, existing, now, DAYAHEAD_MIN_LEAD_HOURS)
-    if not tail:
+    previous_values = dict(previous or [])
+    pending_points = [(hour, previous_values.get(hour, value)) for hour, value in points]
+    tail = dayahead_write_plan(pending_points, existing, now, DAYAHEAD_MIN_LEAD_HOURS)
+    if expected is not None:
+        values = {hour: existing.get(hour, value) for hour, value in ahead}
+        values.update(tail)
+        # A retry must not silently accept different content for hours that a
+        # previous attempt intended to write or preserve.
+        values.update(previous_values)
+        expected[statistic_id] = sorted(values.items())
+    if not write or not tail:
         return False
 
-    running = await _async_resume_sum(hass, statistic_id, tail[0][0])
+    return await _async_submit_forecast(
+        hass, statistic_id, f"{provider_name} forecast, a day ahead", tail, submitted
+    )
+
+
+async def _async_submit_forecast(
+    hass: HomeAssistant,
+    statistic_id: str,
+    name: str,
+    rows: ArchiveRows,
+    submitted: dict[str, ArchiveRows] | None,
+) -> bool:
+    from homeassistant.components.recorder.statistics import async_add_external_statistics
+
+    running = await _async_resume_sum(hass, statistic_id, rows[0][0])
     if running is None:
         return False
-
-    async_add_external_statistics(
-        hass,
-        _metadata(statistic_id, f"{provider_name} forecast, a day ahead"),
-        _as_rows(tail, running),
-    )
-    _LOGGER.debug("recorded %d day-ahead rows for %s", len(tail), statistic_id)
+    try:
+        async_add_external_statistics(hass, _metadata(statistic_id, name), _as_rows(rows, running))
+    except Exception:
+        _LOGGER.warning("Could not submit forecast archive data", exc_info=True)
+        return False
     if submitted is not None:
-        submitted[statistic_id] = tail
+        submitted[statistic_id] = rows
     return True
 
 

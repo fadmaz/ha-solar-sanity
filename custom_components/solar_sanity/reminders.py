@@ -42,6 +42,11 @@ _STATUSES = _ACTIVE | {
 _TIMES = ("earliest_start", "finish_by", "scheduled_at")
 _START_STATES = {"requesting", "requested", "unconfirmed"}
 _CHECKABLE = _ACTIVE | {"sent", "delivery_unconfirmed", "failed"}
+_FORECAST_ACTION_REASONS = {
+    "forecast_unavailable": "Wait for a current corrected solar forecast.",
+    "provider_unsupported_for_actions": "The current forecast provider supports planning only.",
+    "provider_update_unverified": "Waiting for a confirmed forecast provider update.",
+}
 
 
 def reminder_store(hass: HomeAssistant, entry_id: str) -> Store[dict]:
@@ -138,7 +143,7 @@ class LoadReminders:
         self._record: Reminder | None = None
         self._storage_error = False
         self._started = False
-        self._checked_projection: str | None = None
+        self._checked_projection: tuple[str | None, str | None] | None = None
         self._task: asyncio.Task | None = None
         self._timer = None
         self._startup = None
@@ -202,31 +207,44 @@ class LoadReminders:
         result["latest_start"] = record.latest_start.isoformat()
         return {"reminder": result, "storage_error": False}
 
-    def _projection(self, now: datetime, *, require_verified: bool = True) -> OutlookState | None:
+    def _forecast_problem(self, state: OutlookState, now: datetime) -> str | None:
         battery = self.coordinator.battery
-        state = battery.state
         if (
             battery.projection_problem(now)
             or state.outlook is None
             or not state.outlook.forecast_used
             or state.scale is None
         ):
-            return None
-        if state.forecast_source is not None:
-            current = self.coordinator.select_forecast("battery", now)
-            if (current.provider_id, current.captured_at) != (
-                state.forecast_source.provider_id,
-                state.forecast_source.captured_at,
-            ):
-                return None
-            if require_verified and not self.coordinator.forecast_ready_for_actions(current, now):
-                return None
-        return state
+            return "forecast_unavailable"
+        return self.coordinator.forecast_action_problem(state.forecast_source, now)
+
+    def forecast_action_status(self, state: OutlookState, now: datetime) -> dict:
+        problem = self._forecast_problem(state, now)
+        return {
+            "status": {
+                None: "ready",
+                "forecast_unavailable": "unavailable",
+                "provider_unsupported_for_actions": "unsupported",
+                "provider_update_unverified": "waiting_for_update",
+            }[problem],
+            "reason_code": problem,
+            "reason": _FORECAST_ACTION_REASONS.get(problem),
+        }
 
     @staticmethod
-    def _plan(state: OutlookState, record: Reminder, now: datetime) -> LoadPlan:
+    def _plan(
+        state: OutlookState, record: Reminder, now: datetime, *, within_horizon: bool = False
+    ) -> LoadPlan:
         settings, steps = frozen_inputs(state)
         assert state.soc_pct is not None
+        deadline = record.finish_by
+        if within_horizon:
+            assert state.outlook is not None
+            deadline = min(deadline, state.outlook.horizon_end)
+            if deadline < max(record.earliest_start, now) + timedelta(
+                minutes=record.duration_minutes
+            ):
+                return LoadPlan(reason_code="beyond_horizon")
         return find_best_time(
             state.soc_pct,
             settings,
@@ -234,7 +252,7 @@ class LoadReminders:
             power_w=record.power_w,
             duration_minutes=record.duration_minutes,
             earliest_start=record.earliest_start,
-            finish_by=record.finish_by,
+            finish_by=deadline,
             now=now,
         )
 
@@ -304,9 +322,10 @@ class LoadReminders:
                     "Cancel the active reminder before scheduling another."
                 )
             now = dt_util.utcnow()
-            state = self._projection(now, require_verified=False)
-            if state is None:
-                raise ServiceValidationError("Wait for a current corrected solar forecast.")
+            state = self.coordinator.battery.state
+            problem = self._forecast_problem(state, now)
+            if problem is not None and problem != "provider_update_unverified":
+                raise ServiceValidationError(_FORECAST_ACTION_REASONS[problem])
             if state.projection_id != data["projection_id"]:
                 raise ServiceValidationError("The outlook changed. Find the best time again.")
             if self.coordinator.battery.projection_soc_problem(state, now):
@@ -384,9 +403,9 @@ class LoadReminders:
             return {**result, "reason_code": "window_too_short"}
         if now < record.earliest_start:
             return {**result, "reason_code": "before_earliest_start"}
-        state = self._projection(now)
-        if state is None:
-            return {**result, "reason_code": "forecast_unavailable"}
+        state = self.coordinator.battery.state
+        if problem := self._forecast_problem(state, now):
+            return {**result, "reason_code": problem}
         if expected_projection is not None and expected_projection != state.projection_id:
             return {**result, "reason_code": "projection_changed"}
         if reason := self.coordinator.battery.projection_soc_problem(state, now):
@@ -502,8 +521,8 @@ class LoadReminders:
         ):
             return
         now = dt_util.utcnow()
-        state = self._projection(now)
-        revision = state.projection_id if state is not None else None
+        state = self.coordinator.battery.state
+        revision = state.projection_id, self._forecast_problem(state, now)
         due = record.scheduled_at is not None and now >= record.scheduled_at
         destination_ready = (
             record.reason_code == "destination_unavailable"
@@ -519,14 +538,15 @@ class LoadReminders:
             self._task = self.hass.async_create_task(self._async_check())
 
     def _check_plan(self, record: Reminder, now: datetime) -> tuple[LoadPlan | None, str | None]:
-        state = self._projection(now)
-        self._checked_projection = state.projection_id if state is not None else None
-        if state is None:
-            return None, "forecast_unavailable"
+        state = self.coordinator.battery.state
+        problem = self._forecast_problem(state, now)
+        self._checked_projection = state.projection_id, problem
+        if problem:
+            return None, problem
         if reason := self.coordinator.battery.projection_soc_problem(state, now):
             return None, reason
         try:
-            plan = self._plan(state, record, now)
+            plan = self._plan(state, record, now, within_horizon=True)
         except (ValueError, KeyError, TypeError, OverflowError):
             return None, "outlook_unavailable"
         return plan, plan.reason_code

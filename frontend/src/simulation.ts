@@ -25,10 +25,17 @@ export interface LoadTiming {
 export interface LoadPlanResponse {
   basis: ProjectionBasis;
   solar_corrected?: boolean;
+  load_actions?: LoadActionAvailability;
   recommendation: LoadTiming | null;
   run_now: LoadTiming | null;
   reason_code: "window_too_short" | "beyond_horizon" | "baseline_reaches_reserve" |
     "all_times_reach_reserve" | null;
+}
+
+export interface LoadActionAvailability {
+  status: "ready" | "waiting_for_update" | "unsupported" | "unavailable";
+  reason_code: string | null;
+  reason: string | null;
 }
 
 export interface LoadPlanRequest {
