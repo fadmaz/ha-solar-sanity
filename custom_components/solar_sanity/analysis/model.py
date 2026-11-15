@@ -81,6 +81,7 @@ class BucketSource(Enum):
     OWN_INTEGRAL = "own_integral"
     LTS_SUM = "lts_sum"
     LTS_MEAN = "lts_mean"
+    COMPLETE_SHORT_TERM_MEAN = "complete_short_term_mean"
 
 
 @dataclass(frozen=True, slots=True)

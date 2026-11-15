@@ -61,6 +61,7 @@ DEFAULT_TARGET_PCT: Final = 100.0
 STORAGE_VERSION: Final = 1
 STORAGE_MINOR_VERSION: Final = 1
 STORAGE_KEY_STATE: Final = f"{DOMAIN}.state"
+STORAGE_KEY_MEASUREMENTS: Final = f"{DOMAIN}.measurements"
 
 # --- scheduling ------------------------------------------------------------
 #: The battery outlook's quick tick. It recomputes only when the charge level

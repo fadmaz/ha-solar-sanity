@@ -6,7 +6,7 @@ No Home Assistant, clock or database: missing readings stay missing.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
 from .model import Bucket
@@ -177,6 +177,8 @@ class SocSeries:
 
 def observation_hours(start: datetime, end: datetime) -> list[datetime]:
     """Recorder's UTC hour starts intersecting the observation window."""
+    if end <= start:
+        return []
     hour = start.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
     end = end.astimezone(UTC)
     out = []
@@ -231,3 +233,31 @@ def grid_charged(buckets: Sequence[Bucket], start: datetime, end: datetime) -> b
         if charge > max(pv - load, 0.0) + GRID_CHARGE_MARGIN_WH:
             return True
     return False
+
+
+def grid_charge_status(
+    buckets: Sequence[Bucket],
+    start: datetime,
+    end: datetime,
+    boundary_flows: Mapping[tuple[datetime, datetime], tuple[float, float, float]],
+) -> str | None:
+    """Assess complete hours and recorded fragments without moving energy across a boundary."""
+    hour_length = timedelta(hours=1)
+    uncertain = False
+    for bucket in buckets:
+        hour = bucket.start_utc
+        begin, finish = max(start, hour), min(end, hour + hour_length)
+        if begin >= finish:
+            continue
+        pv, load, charge = (bucket.value(key) for key in ("pv", "load", "battery_charge"))
+        if begin != hour or finish != hour + hour_length:
+            if (flow := boundary_flows.get((begin, finish))) is not None:
+                pv, load, charge = flow
+            else:
+                uncertain |= charge is None or charge > GRID_CHARGE_MARGIN_WH
+                continue
+        if pv is None or load is None or charge is None:
+            uncertain = True
+        elif charge > max(pv - load, 0.0) + GRID_CHARGE_MARGIN_WH:
+            return "grid_charging"
+    return "grid_charge_uncertain" if uncertain else None

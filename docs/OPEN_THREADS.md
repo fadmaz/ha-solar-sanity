@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated for 0.51.1, 2026-11-15.
+Last updated for 0.51.2, 2026-11-15.
 
 ## Latest delivery and operational acceptance
 
@@ -11,8 +11,11 @@ Last updated for 0.51.1, 2026-11-15.
   the full warning window, and separates upstream update evidence from recorder
   verification. The reference provider is Forecast.Solar. Field evidence for
   provider failover on another installation remains open.
-- The remaining audit work covers measurement provenance and recovery, confirmed
-  journal writes, History rendering, and Home Assistant compatibility.
+- 0.51.2 binds saved measurements to their sources, recovers recent partial
+  hours, and confirms writes from disk. Old settled grades stay available in
+  History. Prospective experiment gates use issues from the new grading
+  revision. The private November 11 replay and the real restart remain
+  separate operational acceptance checks.
 
 - 0.48.0 adds installation-scoped reserve and measured surplus signals and
   notification blueprints. The reference installation can exercise reserve and
