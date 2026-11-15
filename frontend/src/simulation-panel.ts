@@ -227,7 +227,7 @@ export class SolarSanitySimulation extends LitElement {
         </solar-sanity-load-reminder>`:nothing}
       ${r?html`<p>Based on ${this._time(r.basis.computed_at)} · ${r.basis.forecast_used?"Solar forecast":"Production history"}</p>${this._graph(r)}
         <table><thead><tr><th>Result</th><th>Baseline</th><th>Extra load</th></tr></thead><tbody>
-        <tr><th>Night minimum</th><td>${r.baseline.lowest_pct===null?"—":`${r.baseline.lowest_pct.toFixed(1)}%`}</td><td>${r.scenario.lowest_pct===null?"—":`${r.scenario.lowest_pct.toFixed(1)}%`}</td></tr>
+        <tr><th>Lowest charge</th><td>${r.baseline.lowest_pct===null?"—":`${r.baseline.lowest_pct.toFixed(1)}%`}</td><td>${r.scenario.lowest_pct===null?"—":`${r.scenario.lowest_pct.toFixed(1)}%`}</td></tr>
         <tr><th>Reserve at</th><td>${this._time(r.baseline.reserve_at)}</td><td>${this._time(r.scenario.reserve_at)}</td></tr>
         <tr><th>Full at</th><td>${this._time(r.baseline.full_at)}</td><td>${this._time(r.scenario.full_at)}</td></tr>
         <tr><th>Uncovered energy</th><td>${r.baseline.uncovered_energy_kwh.toFixed(2)} kWh</td><td>${r.scenario.uncovered_energy_kwh.toFixed(2)} kWh</td></tr></tbody></table>

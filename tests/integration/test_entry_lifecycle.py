@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.const import DOMAIN
+from tests.integration.ha_harness import MockConfigEntry
 
 
 async def test_an_entry_sets_up_and_reaches_loaded(

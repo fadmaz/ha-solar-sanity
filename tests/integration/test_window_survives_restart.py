@@ -28,10 +28,10 @@ from datetime import UTC, datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.const import STORAGE_KEY_STATE, STORAGE_VERSION
+from tests.integration.ha_harness import MockConfigEntry
 
 KEYS = ("pv", "load", "grid_import", "battery_charge", "battery_discharge")
 

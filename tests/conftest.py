@@ -26,9 +26,9 @@ import pathlib
 #: Both halves are checked. Home Assistant and the plugin install separately,
 #: and either one missing makes this directory uncollectable for a different
 #: reason — Home Assistant for the imports, the plugin for the fixtures.
-HAS_REAL_HASS = (
-    importlib.util.find_spec("homeassistant") is not None
-    and importlib.util.find_spec("pytest_homeassistant_custom_component") is not None
+HAS_REAL_HASS = importlib.util.find_spec("homeassistant") is not None and (
+    importlib.util.find_spec("pytest_homeassistant") is not None
+    or importlib.util.find_spec("pytest_homeassistant_custom_component") is not None
 )
 
 

@@ -28,10 +28,10 @@ wrong and the failure is ``assert not [True]`` — which names neither fixture.
 
 from __future__ import annotations
 
+from importlib.util import find_spec
 from typing import Any
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.const import (
     CONF_CHANNELS,
@@ -40,6 +40,15 @@ from custom_components.solar_sanity.const import (
     CONF_ROLE,
     DOMAIN,
 )
+from tests.integration.ha_harness import MockConfigEntry
+
+if find_spec("pytest_homeassistant") is not None:
+
+    @pytest.fixture
+    def hass_config_dir(hass_tmp_config_dir):
+        """Give each Core test its own writable config and storage."""
+        return hass_tmp_config_dir
+
 
 #: The reference installation's shape: five channels, no export meter, a
 #: battery, and a consumption sensor its owner says covers the house. Chosen

@@ -11,7 +11,6 @@ import pytest
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.analysis.observations import observation_hours
@@ -19,6 +18,7 @@ from custom_components.solar_sanity.analysis.outlook import BatterySettings, Ste
 from custom_components.solar_sanity.battery_outlook import OutlookState
 from custom_components.solar_sanity.const import DOMAIN, OPT_BATTERY_CAPACITY_KWH
 from custom_components.solar_sanity.journal import JOURNAL_KEY
+from tests.integration.ha_harness import MockConfigEntry, async_fire_time_changed
 from tests.integration.test_battery_outlook import BATTERY, _loaded
 
 NOW = datetime(2026, 11, 10, 20, 1, tzinfo=UTC)
