@@ -854,6 +854,19 @@ per-entry lock serializes starts, cancels and notification delivery. The
 optional start status survives restart. An interrupted or unconfirmed attempt
 never dispatches again and also stops pending reminder notifications.
 
+### Measurement provenance and journal durability (0.51.2)
+
+The per-entry measurements store records the mapping and measurement type of
+each channel. A surviving channel is restored independently. The old role-only
+store stays available to earlier releases. Recorder seeds missing history and
+can complete a partial hour using a reset-compensated energy change or all
+twelve five-minute power means. An opaque hourly mean can inform profiles but
+does not certify a live grade. The journal checks recorded flows clipped to
+its observation bounds and leaves ambiguous external-charging timing pending
+until the retry window closes. A separate grading revision labels new outcomes
+and gates trials on the new issue cohort. Save acknowledgement compares a
+serialized batch with the store file on disk.
+
 ### Input changes (0.42.0)
 
 `analysis/changes.py` retains only two valid input snapshots in memory. Their

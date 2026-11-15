@@ -371,6 +371,29 @@ async def test_the_journal_retries_missing_evidence_but_excludes_grid_charge(
         assert record["result"] == {"status": "excluded", "reason_code": reason}
 
 
+async def test_a_reported_disk_write_failure_remains_visible_until_retry(
+    hass, enable_custom_integrations, entry_data
+):
+    """Core logs a write failure without propagating it to the caller."""
+    from homeassistant.util.file import WriteError
+
+    _, journal = await _journal(hass, entry_data)
+    assert journal.capture(NOW)
+    await journal.async_save()
+    journal.last_checked_at = NOW + timedelta(minutes=1)
+    with patch.object(journal._store, "_async_write_data", new=AsyncMock(side_effect=WriteError)):
+        await journal.async_save()
+    assert journal.error == "journal_write_failed"
+    assert (await journal._store.async_load())[
+        "last_checked_at"
+    ] != journal.last_checked_at.isoformat()
+    await journal.async_save()
+    assert journal.error is None
+    assert (await journal._store.async_load())[
+        "last_checked_at"
+    ] == journal.last_checked_at.isoformat()
+
+
 async def test_an_uncommitted_batch_is_not_a_verified_archive(
     hass, enable_custom_integrations, entry_data
 ):

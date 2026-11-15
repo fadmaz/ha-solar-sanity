@@ -111,9 +111,10 @@ async def test_cached_provider_failure_and_confirmed_identical_refresh(
 
 
 async def test_preferred_capture_fails_and_recovers_on_the_normal_timer(
-    hass, enable_custom_integrations, entry_data, providers
+    hass, enable_custom_integrations, entry_data, providers, freezer
 ):
     """A fresh previous capture cannot keep a failed preferred provider in use."""
+    freezer.move_to(NOW)
     await hass.config.async_set_time_zone("UTC")
     first, preferred, third = providers
     now = dt_util.utcnow()

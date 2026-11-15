@@ -136,14 +136,13 @@ async def test_the_old_shared_state_file_is_removed(
     assert STORAGE_KEY_STATE not in hass_storage
 
 
-async def test_a_storage_file_written_by_0_29_is_still_read(
+async def test_a_storage_file_written_by_0_29_is_retained_for_rollback(
     hass: HomeAssistant,
     enable_custom_integrations: None,
     entry: MockConfigEntry,
     hass_storage: dict,
 ) -> None:
-    """Same storage version, extra keys. Unknown keys were always ignored on
-    load, which is what makes dropping them without a version bump safe."""
+    """Role-only legacy state cannot identify the current measurements."""
     entry.add_to_hass(hass)
     key = f"{STORAGE_KEY_STATE}.{entry.entry_id}"
     top = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
@@ -165,7 +164,8 @@ async def test_a_storage_file_written_by_0_29_is_still_read(
 
     await _setup(hass, entry)
 
-    assert [b.wh["load"] for b in entry.runtime_data.coordinator.buckets] == [500.0]
+    assert not entry.runtime_data.coordinator.buckets
+    assert hass_storage[key]["data"]["window"]["rows"][0][2] == [0.0, 500.0]
 
 
 async def test_an_entry_still_holding_the_old_answers_loads_and_keeps_them(
@@ -207,7 +207,7 @@ async def test_the_window_is_saved_when_an_hour_closes(
     save.assert_called_once()
     payload, _delay = save.call_args.args
     assert payload == coordinator._payload
-    assert set(payload()) == {"window"}
+    assert set(payload()) == {"window", "sources"}
 
 
 async def test_a_scoring_failure_does_not_take_the_sensors_down(

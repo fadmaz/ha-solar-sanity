@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, tzinfo
 from hashlib import sha256
 from typing import Any, Final
@@ -64,7 +64,7 @@ from .const import (
     OPT_PREFERRED_FORECAST_PROVIDER,
     POWER_GAP_TOLERANCE_SECONDS,
     SCORING_INTERVAL,
-    STORAGE_KEY_STATE,
+    STORAGE_KEY_MEASUREMENTS,
     STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
 )
@@ -74,6 +74,7 @@ from .statistics_source import (
     async_forecast_series,
     async_get_solar_forecasts,
     async_record_forecast,
+    async_recovery_series,
     dayahead_statistic_id,
     forecast_statistic_id,
     normalise_wh_hours,
@@ -112,6 +113,7 @@ _SOURCE_CODE: Final = {
     BucketSource.OWN_INTEGRAL: "i",
     BucketSource.LTS_SUM: "s",
     BucketSource.LTS_MEAN: "m",
+    BucketSource.COMPLETE_SHORT_TERM_MEAN: "c",
 }
 
 #: The same two tables, inverted once here rather than at every read.
@@ -214,7 +216,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         self._store = Store[dict[str, Any]](
             hass,
             STORAGE_VERSION,
-            f"{STORAGE_KEY_STATE}.{entry.entry_id}",
+            f"{STORAGE_KEY_MEASUREMENTS}.{entry.entry_id}",
             minor_version=STORAGE_MINOR_VERSION,
         )
         #: Where the battery is heading. Built here because it reads the window,
@@ -652,7 +654,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         self._gap_seconds.clear()
         self._store.async_delay_save(self._payload, SAVE_DELAY)
 
-    def ingest_backfill(self, series: dict[str, list[tuple[datetime, float, bool]]]) -> None:
+    def ingest_backfill(
+        self, series: dict[str, list[tuple[datetime, float, bool]]], *, complete_means: bool = False
+    ) -> None:
         """Seed the window from long-term statistics at setup.
 
         Mean-derived buckets are tagged ``LTS_MEAN``: an hourly mean cannot say
@@ -668,12 +672,12 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             for when, value, from_mean in series.get(entity_id, []):
                 merged.setdefault(when, {})[key] = (value, from_mean)
 
-        existing = {bucket.start_utc for bucket in self._buckets}
-
+        existing = {bucket.start_utc: bucket for bucket in self._buckets}
         for when in sorted(merged):
-            if when in existing:
-                # Our own measurement is preferred where we have it.
-                continue
+            previous = existing.get(when)
+            complete_previous = (
+                previous if previous is not None and previous.seconds == 3600 else None
+            )
             local_date, dst = self._local_day(when)
             values = merged[when]
             wh: dict[str, float | None] = {}
@@ -681,6 +685,26 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             source: dict[str, BucketSource] = {}
             for spec in specs:
                 entry = values.get(spec.key)
+                if complete_previous is not None and complete_previous.value(spec.key) is not None:
+                    existing_source = complete_previous.source[spec.key]
+                    if (
+                        entry is None
+                        or not complete_means
+                        or existing_source != BucketSource.LTS_MEAN
+                    ):
+                        wh[spec.key] = complete_previous.wh[spec.key]
+                        quality[spec.key] = complete_previous.quality[spec.key]
+                        source[spec.key] = existing_source
+                        continue
+                if (
+                    not complete_means
+                    and previous is not None
+                    and complete_previous is None
+                    and entry is not None
+                    and entry[1]
+                ):
+                    # A partial local measurement cannot be upgraded by an opaque hourly mean.
+                    entry = None
                 if entry is None:
                     wh[spec.key] = None
                     quality[spec.key] = Quality.MISSING
@@ -689,9 +713,16 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 value, from_mean = entry
                 wh[spec.key] = value
                 quality[spec.key] = Quality.DERIVED_FROM_MEAN if from_mean else Quality.OK
-                source[spec.key] = BucketSource.LTS_MEAN if from_mean else BucketSource.LTS_SUM
-            self._buckets.append(
-                Bucket(
+                if from_mean:
+                    source[spec.key] = (
+                        BucketSource.COMPLETE_SHORT_TERM_MEAN
+                        if complete_means
+                        else BucketSource.LTS_MEAN
+                    )
+                else:
+                    source[spec.key] = BucketSource.LTS_SUM
+            if any(value is not None for value in wh.values()):
+                existing[when] = Bucket(
                     start_utc=when,
                     seconds=3600,
                     wh=wh,
@@ -700,11 +731,20 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                     local_date=local_date,
                     is_dst_transition=dst,
                 )
-            )
+        buckets = [existing[when] for when in sorted(existing)[-MAX_BUCKETS:]]
+        if buckets != self._buckets:
+            self._buckets = buckets
+            self._store.async_delay_save(self._payload, SAVE_DELAY)
 
-        self._buckets.sort(key=lambda b: b.start_utc)
-        if len(self._buckets) > MAX_BUCKETS:
-            del self._buckets[: len(self._buckets) - MAX_BUCKETS]
+    async def async_recover_hours(self, start: datetime, end: datetime) -> bool:
+        """Recover recent gaps for the current configuration from closed Recorder rows."""
+        power = {entity for entity, kind in self.statistics_classes.items() if kind == "mean"}
+        energy = {entity for entity, kind in self.statistics_classes.items() if kind == "sum"}
+        observations = await async_recovery_series(self.hass, power, energy, start, end)
+        if observations is None:
+            return False
+        self.ingest_backfill(observations, complete_means=True)
+        return True
 
     # -- forecast capture ---------------------------------------------------
 
@@ -1151,27 +1191,44 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         end. The columnar encoding is the diagnostics block's: about 120 kB at
         the full window.
         """
-        return {"window": self.window_snapshot()}
+        return {"window": self.window_snapshot(), "sources": self._measurement_sources()}
+
+    def _measurement_sources(self) -> dict[str, list[str | None]]:
+        sources = {}
+        for spec in self.specs:
+            state = self.hass.states.get(spec.entity_id)
+            kind = channel_kind(state)
+            recorder_kind = self.statistics_classes.get(spec.entity_id)
+            if kind is None:
+                kind = {"mean": KIND_POWER, "sum": KIND_ENERGY}.get(recorder_kind)
+            if kind == KIND_ENERGY and state is not None and not energy_is_cumulative(state):
+                kind = "unsupported_energy"
+            sources[spec.key] = [spec.entity_id, kind]
+        return sources
 
     async def async_restore(self) -> None:
-        """Reload the saved window so a restart does not lose measured hours.
+        """Restore only channels whose persisted source matches this entry.
 
-        Ahead of the statistics backfill, which is what makes this work:
-        ``ingest_backfill`` skips any hour already present, so whatever is
-        restored here wins over the same hour re-derived from statistics. That
-        ordering is in ``async_setup_entry`` and is the whole mechanism.
-
-        The file may not cost more than itself. ``Store`` calls
-        ``_async_migrate_func`` whenever the stored version differs from the one
-        asked for, and its default raises ``NotImplementedError``, so a file
-        written by a release we have not met would take setup down with it, and
-        it reaches *downgrading* users first. Older files also hold keys this
-        release no longer writes (``loss_model``, ``last_status``); only
-        ``window`` is read.
+        The older role-only file remains untouched for rollback. It cannot
+        establish which physical measurement supplied a restored value.
         """
         stored = await self._restore_from(self._store)
-        if stored:
-            self._buckets = self._buckets_from_snapshot(stored.get("window"))
+        if not stored or not isinstance(stored.get("sources"), dict):
+            return
+        current = self._measurement_sources()
+        matched = {
+            key for key, identity in current.items() if stored["sources"].get(key) == identity
+        }
+        self._buckets = [
+            replace(
+                bucket,
+                wh={key: value for key, value in bucket.wh.items() if key in matched},
+                quality={key: value for key, value in bucket.quality.items() if key in matched},
+                source={key: value for key, value in bucket.source.items() if key in matched},
+            )
+            for bucket in self._buckets_from_snapshot(stored.get("window"))
+            if matched.intersection(bucket.wh)
+        ]
 
     async def _restore_from(self, store: Store) -> dict[str, Any] | None:
         """One stored file, or ``None`` if it cannot be read for any reason.
@@ -1424,8 +1481,13 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                     bucket.start_utc.isoformat(),
                     bucket.seconds,
                     [bucket.wh.get(key) for key in keys],
-                    "".join(_QUALITY_CODE.get(bucket.quality.get(key), "?") for key in keys),
-                    "".join(_SOURCE_CODE.get(bucket.source.get(key), "?") for key in keys),
+                    "".join(
+                        _QUALITY_CODE[bucket.quality.get(key, Quality.MISSING)] for key in keys
+                    ),
+                    "".join(
+                        _SOURCE_CODE[bucket.source.get(key, BucketSource.OWN_INTEGRAL)]
+                        for key in keys
+                    ),
                 ]
             )
         return {

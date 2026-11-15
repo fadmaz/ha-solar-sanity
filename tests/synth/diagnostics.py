@@ -35,6 +35,7 @@ _SOURCE = {
     "i": BucketSource.OWN_INTEGRAL,
     "s": BucketSource.LTS_SUM,
     "m": BucketSource.LTS_MEAN,
+    "c": BucketSource.COMPLETE_SHORT_TERM_MEAN,
 }
 
 

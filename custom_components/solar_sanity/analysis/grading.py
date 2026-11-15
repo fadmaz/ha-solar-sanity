@@ -7,18 +7,46 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
-from .model import Bucket
-from .observations import SocSeries, grid_charged, observation_hours
+from .model import Bucket, BucketSource
+from .observations import SocSeries, grid_charge_status, grid_charged, observation_hours
 
 
-def flow_coverage(buckets: Sequence[Bucket], start: datetime, end: datetime) -> bool:
+def flow_coverage(
+    buckets: Sequence[Bucket], start: datetime, end: datetime, *, verified: bool = False
+) -> bool:
     """Missing flow cannot attest that the grid did not charge the battery."""
     hours = {b.start_utc: b for b in buckets if b.seconds == 3600}
     return all(
         hour in hours
-        and all(hours[hour].value(key) is not None for key in ("pv", "load", "battery_charge"))
+        and all(
+            hours[hour].value(key) is not None
+            and (not verified or hours[hour].source.get(key) is not BucketSource.LTS_MEAN)
+            for key in ("pv", "load", "battery_charge")
+        )
         for hour in observation_hours(start, end)
     )
+
+
+def flow_screening_windows(
+    record: Mapping[str, Any],
+    soc: SocSeries,
+    full_observed_at: datetime | None,
+) -> tuple[tuple[datetime, datetime], ...]:
+    """Separate time certainly before the measurement from a possible crossing hour."""
+    start = datetime.fromisoformat(record["issued_at"])
+    end = datetime.fromisoformat(record["until"])
+    if record["checkpoint"] == "evening":
+        reading = soc.lowest_reading(start, end)
+        return ((start, reading[1] - timedelta(hours=1)),) if reading else ()
+    at = soc.first_at_or_above(record["settings"]["target_pct"] - 1, start, end)
+    if at is None:
+        return ((start, end),)
+    if full_observed_at is not None and start <= full_observed_at < end:
+        return ((start, full_observed_at),)
+    if not soc.hourly_extremes:
+        return ((start, at),)
+    hour = at.replace(minute=0, second=0, microsecond=0)
+    return ((start, hour), (max(start, hour), min(end, hour + timedelta(hours=1))))
 
 
 def grade(
@@ -27,6 +55,7 @@ def grade(
     buckets: Sequence[Bucket],
     *,
     full_observed_at: datetime | None = None,
+    boundary_flows: Mapping[tuple[datetime, datetime], tuple[float, float, float]] | None = None,
 ) -> dict[str, Any]:
     """One settled outcome. Hourly extremes never claim minute precision."""
     start = datetime.fromisoformat(record["issued_at"])
@@ -35,8 +64,18 @@ def grade(
     extreme = "min" if kind == "evening" else "max"
     if not soc.covers(start, end, extreme=extreme):
         return {"status": "excluded", "reason_code": "soc_incomplete"}
-    if not flow_coverage(buckets, start, end):
+    if not flow_coverage(buckets, start, end, verified=boundary_flows is not None):
         return {"status": "excluded", "reason_code": "flow_incomplete"}
+    if boundary_flows is not None:
+        for index, (begin, finish) in enumerate(
+            flow_screening_windows(record, soc, full_observed_at)
+        ):
+            reason = grid_charge_status(buckets, begin, finish, boundary_flows)
+            if reason:
+                return {
+                    "status": "excluded",
+                    "reason_code": reason if index == 0 else "grid_charge_uncertain",
+                }
     if kind == "evening":
         reading = soc.lowest_reading(start, end)
         if reading is None:
@@ -44,7 +83,7 @@ def grade(
         actual, at = reading
         # Preserve the replay's measured cut-off allowance: charging after the
         # minimum must not discard a battery that already demonstrated it.
-        if grid_charged(buckets, start, at - timedelta(hours=1)):
+        if boundary_flows is None and grid_charged(buckets, start, at - timedelta(hours=1)):
             return {"status": "excluded", "reason_code": "grid_charging"}
         reserve = record["settings"]["reserve_pct"]
         return {
@@ -60,7 +99,7 @@ def grade(
     # For a morning, grid charging before full makes the solar-only call
     # ungradable, even if the battery subsequently reaches its target.
     grid_end = end if actual_at is None else actual_at
-    if grid_charged(buckets, start, grid_end):
+    if boundary_flows is None and grid_charged(buckets, start, grid_end):
         return {"status": "excluded", "reason_code": "grid_charging"}
     raw_prediction = record["published"].get("full_at")
     predicted_at = datetime.fromisoformat(raw_prediction) if raw_prediction else None
