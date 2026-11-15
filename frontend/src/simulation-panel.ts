@@ -235,12 +235,12 @@ export class SolarSanitySimulation extends LitElement {
       </section>`;
   }
   public static styles=css`
-    :host{display:block} p{line-height:1.6} .muted,figcaption{color:var(--secondary-text-color);font-size:.875rem} .muted[role=status]{margin-inline-start:12px}
+    :host{display:block;container-type:inline-size} p{line-height:1.6} .muted,figcaption{color:var(--secondary-text-color);font-size:.875rem} .muted[role=status]{margin-inline-start:12px}
     .form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}label{display:grid;gap:6px;font-size:.875rem}
     input,select,button{box-sizing:border-box;width:100%;font:inherit;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:10px;min-width:0}
     button{width:auto;cursor:pointer}button:disabled{opacity:.6;cursor:default}button:hover{background:var(--secondary-background-color)}input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--primary-color);outline-offset:3px}
     figure{margin:24px 0}svg{width:100%;display:block;overflow:visible}polyline{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.baseline{stroke:var(--primary-text-color)}.scenario{stroke:var(--primary-color);stroke-dasharray:7 4}.reserve{stroke:var(--divider-color);stroke-dasharray:3 3}.axis{display:flex;justify-content:space-between;gap:12px;color:var(--secondary-text-color);font-size:.875rem;font-variant-numeric:tabular-nums}
     table{width:100%;border-collapse:collapse;font-size:.875rem;table-layout:fixed}td,th{text-align:left;padding:10px 4px;border-bottom:1px solid var(--divider-color);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}th{font-weight:500}tbody th{color:var(--secondary-text-color)}
-    @media(max-width:420px){.form{grid-template-columns:1fr}}
+    @container(max-width:420px){.form{grid-template-columns:1fr}}
   `;
 }

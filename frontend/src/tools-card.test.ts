@@ -41,7 +41,7 @@ function setupData(): SetupCheckResponse {
     history:{...waiting,days:28,counts:null,exclusions:[]},
   };
 }
-afterEach(()=>{document.body.innerHTML="";});
+afterEach(()=>{document.body.innerHTML="";vi.useRealTimers();});
 
 describe("issued history tools",()=>{
   it("compares a complete solar hour in the saved time zone without replacing the night grade",async()=>{
@@ -83,6 +83,35 @@ describe("issued history tools",()=>{
     const c=await make(hass(vi.fn().mockResolvedValue({response:response([r])})));
     expect(c.shadowRoot!.textContent).toContain("Reached full · hourly evidence");expect(c.shadowRoot!.textContent).not.toContain("Timing error");
   });
+  it("compares a morning fill prediction with its saved deadline in the installation time zone",async()=>{
+    const r=row();r.checkpoint="morning";r.time_zone="Asia/Jerusalem";
+    r.issued_at="2026-11-10T06:00:50Z";r.until="2026-11-10T20:00:00Z";
+    r.published.full_at="2026-11-11T11:30:00Z";
+    const data=hass(vi.fn().mockResolvedValue({response:response([r])}));
+    data.config.time_zone="America/Los_Angeles";
+    const c=await make(data);
+    expect(c.shadowRoot!.textContent).toContain("Not expected to fill by 22:00");
+    expect(c.shadowRoot!.textContent).not.toContain("Full at");
+  });
+  it("keeps the earlier page during polling, including a new day and a failed refresh",async()=>{
+    vi.useFakeTimers();
+    const rows=Array.from({length:10},(_,i)=>row(`2026-11-${String(10-i).padStart(2,"0")}`));
+    const call=vi.fn().mockResolvedValue({response:response(rows)}), c=await make(hass(call));
+    const dates=()=>[...c.shadowRoot!.querySelectorAll("article strong")].map(node=>node.textContent);
+    [...c.shadowRoot!.querySelectorAll("button")].find(b=>b.textContent?.includes("earlier"))!.click();
+    await settle(c);
+    const page=dates();expect(page).toHaveLength(3);
+    call.mockResolvedValue({response:response([row("2026-11-11"),...rows])});
+    await vi.advanceTimersByTimeAsync(60_000);await settle(c);
+    expect(dates()).toEqual(page);
+    call.mockRejectedValue(new Error("offline"));
+    await vi.advanceTimersByTimeAsync(60_000);await settle(c);
+    expect(dates()).toEqual(page);
+    expect(c.shadowRoot!.textContent).toContain("Showing the last available records");
+    c.remove();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(call).toHaveBeenCalledTimes(3);
+  });
   it("retains missed checkpoints and their exclusion reason",async()=>{
     const r=row();r.issued_at=null;r.result.status="missed";r.reason="Home Assistant was offline at the checkpoint.";
     const c=await make(hass(vi.fn().mockResolvedValue({response:response([r])})));
@@ -98,10 +127,11 @@ describe("issued history tools",()=>{
     const select=c.shadowRoot!.querySelector("select")!;select.value="90";select.dispatchEvent(new Event("change"));await settle(c);
     expect(call).toHaveBeenLastCalledWith(expect.objectContaining({service_data:{device_id:"one",days:90}}));
   });
-  it("discards an old response after a newer request has completed",async()=>{
+  it("discards the old response before requesting the newly selected period",async()=>{
     let old:(v:unknown)=>void=()=>{};
     const call=vi.fn().mockImplementationOnce(()=>new Promise(resolve=>{old=resolve;})).mockResolvedValue({response:response([row("2026-11-09")])}),c=await make(hass(call));
     const select=c.shadowRoot!.querySelector("select")!;select.value="7";select.dispatchEvent(new Event("change"));await settle(c);
+    expect(call).toHaveBeenCalledTimes(1);
     old({response:response([row()])});await settle(c);
     expect(c.shadowRoot!.textContent).toContain("2026-11-09");expect(c.shadowRoot!.textContent).not.toContain("2026-11-10");
   });

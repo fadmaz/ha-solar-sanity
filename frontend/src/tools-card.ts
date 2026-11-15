@@ -1,6 +1,7 @@
 /** Setup, issued observations and projection tools for one installation. */
 import { LitElement, css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import { findInstallations, hasBatterySetup } from "./battery-model";
 import { safeTimeZone } from "./forecast-data";
 import { changesPanel } from "./changes";
@@ -42,6 +43,8 @@ export const TOOLS_TABS = [
   {value: "changes", label: "Changes"},
   {value: "setup", label: "Setup"},
 ];
+const HISTORY_REFRESH_MS = 60_000;
+const DAYS_PER_PAGE = 7;
 
 @customElement("solar-sanity-tools-card")
 export class SolarSanityToolsCard extends LitElement {
@@ -49,12 +52,15 @@ export class SolarSanityToolsCard extends LitElement {
   @state() protected _config: ToolsCardConfig = {type: "custom:solar-sanity-tools-card"};
   @state() protected _days = 28;
   @state() protected _tab = "history";
-  @state() protected _visibleDays = 7;
+  @state() protected _visibleDays = DAYS_PER_PAGE;
   @state() protected _history?: HistoryResponse;
   @state() protected _loading = false;
   @state() protected _error = "";
   private _key = "";
   private _generation = 0;
+  private _historyTimer?: ReturnType<typeof setInterval>;
+  private _inFlight = false;
+  private _refreshPending = false;
 
   public setConfig(config: ToolsCardConfig): void {
     if (config.device_id !== undefined && typeof config.device_id !== "string") throw new Error("Select an installation.");
@@ -66,7 +72,10 @@ export class SolarSanityToolsCard extends LitElement {
   public static getConfigElement(): HTMLElement { return document.createElement("solar-sanity-tools-card-editor"); }
   public static getStubConfig(): ToolsCardConfig { return {type: "custom:solar-sanity-tools-card", default_tab: "history"}; }
   public override connectedCallback(): void { super.connectedCallback(); this.requestUpdate(); }
-  public override disconnectedCallback(): void { super.disconnectedCallback(); this._generation++; this._key = ""; }
+  public override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._stopHistory();
+  }
 
   protected _installation() {
     const all = findInstallations(this.hass);
@@ -75,17 +84,28 @@ export class SolarSanityToolsCard extends LitElement {
   }
   protected override willUpdate(): void {
     const installation = this._installation(), hass = this.hass;
-    if (!installation || !hasBatterySetup(installation) || !hass || hass.config.state !== "RUNNING") {
-      if (this._key) { this._key = ""; this._generation++; this._history = undefined; this._loading = false; }
-      return;
+    const device = installation && hasBatterySetup(installation) ? installation.deviceId : null;
+    const key = device ? JSON.stringify([device, this._days]) : "";
+    if (key !== this._key) {
+      this._stopHistory();
+      this._key = key;
+      this._history = undefined;
+      this._error = "";
+      this._visibleDays = DAYS_PER_PAGE;
     }
-    const device = installation.deviceId;
-    const metrics = Object.values(hass.entities ?? {}).filter(e => e.device_id === device
-      && e.platform === "solar_sanity" && ["night_lowest_mae", "morning_fill_accuracy"].includes(e.translation_key ?? ""))
-      .map(e => { const a = hass.states[e.entity_id]?.attributes; return [a?.sample_count, a?.pending, a?.excluded]; });
-    const outlook = Object.values(hass.entities ?? {}).find(e => e.device_id === device && e.platform === "solar_sanity" && e.translation_key === "battery_lowest_before_sunrise");
-    const key = JSON.stringify([device, this._days, metrics, hass.config.time_zone, outlook ? hass.states[outlook.entity_id]?.attributes.computed_at : null]);
-    if (this._tab === "history" && this._key !== key) { this._key = key; void this._load(device); }
+    if (!this.isConnected || !device || this._tab !== "history" || hass?.config.state !== "RUNNING") {
+      if (this._historyTimer !== undefined) this._stopHistory();
+    } else if (this._historyTimer === undefined) {
+      this._historyTimer = setInterval(() => this._retry(), HISTORY_REFRESH_MS);
+      void this._load(device);
+    }
+  }
+  private _stopHistory(): void {
+    clearInterval(this._historyTimer);
+    this._historyTimer = undefined;
+    this._generation++;
+    this._refreshPending = false;
+    this._loading = false;
   }
   private _onTabKey(event: KeyboardEvent, tabs: string[], selected: string): void {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -97,32 +117,79 @@ export class SolarSanityToolsCard extends LitElement {
     void this.updateComplete.then(() => this.shadowRoot?.querySelector<HTMLElement>(`#tab-${this._tab}`)?.focus());
   }
   private async _load(device: string): Promise<void> {
-    const generation = ++this._generation;
-    this._loading = true; this._error = ""; this._history = undefined; this._visibleDays = 7;
+    if (this._inFlight) {
+      this._refreshPending = true;
+      return;
+    }
+    this._inFlight = true;
+    const generation = this._generation;
+    this._loading = true;
     try {
       const result = await this.hass!.callWS<{response: HistoryResponse}>({type: "call_service", domain: "solar_sanity",
         service: "get_forecast_history", service_data: {device_id: device, days: this._days}, return_response: true});
       if (generation !== this._generation || !this.isConnected) return;
       if (!result.response || !Array.isArray(result.response.records)) throw new Error("Invalid response");
+      const oldDates = this._dates(this._history);
+      if (result.response.status === "error" && !result.response.records.length && oldDates.length) {
+        throw new Error("Journal is unavailable");
+      }
+      const anchor = oldDates[Math.min(this._visibleDays, oldDates.length) - 1];
+      if (this._visibleDays > DAYS_PER_PAGE && anchor) {
+        const dates = this._dates(result.response);
+        const index = dates.indexOf(anchor);
+        this._visibleDays = Math.max(
+          DAYS_PER_PAGE, index >= 0
+            ? index + 1 + Math.max(0, this._visibleDays - oldDates.length)
+            : Math.min(dates.length, this._visibleDays),
+        );
+      }
       this._history = result.response;
+      this._error = "";
     } catch {
-      if (generation === this._generation && this.isConnected) this._error = "History could not be read. Check that Solar Sanity is loaded, then retry.";
-    } finally { if (generation === this._generation) this._loading = false; }
+      if (generation === this._generation && this.isConnected) {
+        if (!this._history?.records.length) this._history = undefined;
+        this._error = this._history
+          ? "History could not be refreshed. Showing the last available records."
+          : "History could not be read. Check that Solar Sanity is loaded, then retry.";
+      }
+    } finally {
+      this._inFlight = false;
+      if (generation === this._generation) this._loading = false;
+      if (this._refreshPending) {
+        this._refreshPending = false;
+        this._retry();
+      }
+    }
   }
-  private _retry(): void { this._key = ""; this.requestUpdate(); }
-  protected _time(value: string | null, zone?: string | null): string {
+  private _retry(): void {
+    const device = this._installation()?.deviceId;
+    if (this._historyTimer !== undefined && device) void this._load(device);
+  }
+  private _dates(history: HistoryResponse | undefined): string[] {
+    return [...new Set(history?.records.map(row => row.local_date) ?? [])];
+  }
+  protected _time(value: string | null, zone?: string | null, clockOnly = false): string {
     if (!value) return "—";
     const when = new Date(value);
     return Number.isNaN(when.getTime()) ? "—" : new Intl.DateTimeFormat("en", {
-      timeZone: safeTimeZone(zone ?? this.hass?.config.time_zone), month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+      timeZone: safeTimeZone(zone ?? this.hass?.config.time_zone),
+      month: clockOnly ? undefined : "short", day: clockOnly ? undefined : "numeric",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23",
     }).format(when);
   }
   private _forecast(row: HistoryRow): string {
     if (!row.issued_at) return "No prediction issued";
     if (["no_forecast", "no_night"].includes(row.result.reason_code ?? "")) return "Prediction unavailable";
     const p = row.published;
-    return row.checkpoint === "evening" ? (p.lowest_pct === null ? "—" : `Minimum ${p.lowest_pct.toFixed(1)}% · Reserve ${p.reserve_at ? this._time(p.reserve_at, row.time_zone) : "not reached"}`)
-      : p.full_at ? `Full at ${this._time(p.full_at, row.time_zone)}` : "Not expected to fill";
+    if (row.checkpoint === "evening") {
+      return p.lowest_pct === null ? "—" : `Minimum ${p.lowest_pct.toFixed(1)}% · Reserve ${p.reserve_at ? this._time(p.reserve_at, row.time_zone) : "not reached"}`;
+    }
+    const full = p.full_at ? Date.parse(p.full_at) : NaN;
+    if (p.full_at && row.until && Date.parse(row.issued_at) <= full && full <= Date.parse(row.until)) {
+      return `Full at ${this._time(p.full_at, row.time_zone)}`;
+    }
+    const deadline = this._time(row.until, row.time_zone, true);
+    return row.until ? `Not expected to fill by ${deadline}` : "Not expected to fill";
   }
   private _observed(row: HistoryRow): string {
     const r = row.result;
@@ -178,17 +245,17 @@ export class SolarSanityToolsCard extends LitElement {
   }
   protected _historyPanel(): TemplateResult {
     const history = this._history;
-    const dates = [...new Set(history?.records.map(r => r.local_date) ?? [])];
-    const visible = new Set(dates.slice(this._visibleDays - 7, this._visibleDays));
+    const dates = this._dates(history);
+    const visible = new Set(dates.slice(this._visibleDays - DAYS_PER_PAGE, this._visibleDays));
     return html`<div class="toolbar"><label>Period <select aria-label="History period" .value=${String(this._days)} @change=${(e: Event) => {this._days = Number((e.target as HTMLSelectElement).value);}}>
       ${[7, 28, 90].map(d => html`<option value=${d} ?selected=${d === this._days}>Last ${d} days</option>`)}</select></label>
       <button @click=${this._retry} ?disabled=${this._loading}>${this._error ? "Retry" : "Refresh"}</button></div>
-      ${this._loading ? html`<p role="status">Loading issued predictions…</p>` : nothing}
+      ${this._loading && !history ? html`<p role="status">Loading issued predictions…</p>` : nothing}
       ${this._error ? html`<p role="alert">${this._error}</p>` : nothing}
       ${history?.status === "error" ? html`<p role="alert">The journal could not be read or saved. Available records may not be durable. Check Solar Sanity diagnostics.</p>` : nothing}
       ${history && history.records.length === 0 && history.status !== "error" ? html`<p>${history.status === "starting" ? "No issued predictions yet. Checkpoints are at 08:00 and 20:00 in Home Assistant's time zone." : "No predictions in the selected period. Choose a longer period."}</p>` : nothing}
       ${history?.records.length ? html`<p class="muted">Forecast vs actual · Error is predicted minus observed.</p>
-        <div class="history">${history.records.filter(r => visible.has(r.local_date)).map(row => html`
+        <div class="history">${repeat(history.records.filter(r => visible.has(r.local_date)), row => row.id, row => html`
           <article><header><strong>${row.local_date}</strong><span>${row.checkpoint === "evening" ? "20:00 · Night" : "08:00 · Morning"}</span></header>
             <dl><div><dt>Forecast</dt><dd>${this._forecast(row)}</dd></div><div><dt>Observed</dt><dd>${this._observed(row)}</dd></div>
             <div class="outcome"><dt>Result</dt><dd>${this._outcome(row)}</dd></div></dl>
@@ -196,8 +263,8 @@ export class SolarSanityToolsCard extends LitElement {
             <p class="muted">${row.issued_at ? `Issued ${this._time(row.issued_at, row.time_zone)}` : "Checkpoint missed"}
               · ${row.model_revision ?? "Revision unavailable"}${row.time_zone ? ` · ${row.time_zone}` : ""}${row.previous_setup ? " · Previous setup" : ""}</p>
           </article>`)}</div>
-        <div class="toolbar">${this._visibleDays > 7 ? html`<button @click=${() => {this._visibleDays -= 7;}}>Newer days</button>` : nothing}
-        ${dates.length > this._visibleDays ? html`<button @click=${() => {this._visibleDays += 7;}}>Show earlier days</button>` : nothing}</div>` : nothing}`;
+        <div class="toolbar">${this._visibleDays > DAYS_PER_PAGE ? html`<button @click=${() => {this._visibleDays = Math.max(DAYS_PER_PAGE, this._visibleDays - DAYS_PER_PAGE);}}>Newer days</button>` : nothing}
+        ${dates.length > this._visibleDays ? html`<button @click=${() => {this._visibleDays += DAYS_PER_PAGE;}}>Show earlier days</button>` : nothing}</div>` : nothing}`;
   }
   protected render(): TemplateResult {
     const installation = this._installation();
@@ -227,7 +294,7 @@ export class SolarSanityToolsCard extends LitElement {
         </div>`}</div></ha-card>`;
   }
   public static styles = css`
-    :host {display:block;color:var(--primary-text-color);font-family:var(--ha-card-header-font-family,inherit)}
+    :host {display:block;container-type:inline-size;color:var(--primary-text-color);font-family:var(--ha-card-header-font-family,inherit)}
     .root {padding:20px} h2 {font-size:1.2rem;font-weight:500;margin:0 0 20px} h3 {font-size:1rem;margin:0 0 12px}
     [hidden]{display:none!important}[role=tablist]{display:flex;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--divider-color);padding-bottom:12px;margin-bottom:16px}[role=tab][aria-selected=true]{font-weight:600;border-color:var(--primary-color)}
     p {line-height:1.6} .muted,dt {color:var(--secondary-text-color);font-size:.875rem}
@@ -244,7 +311,7 @@ export class SolarSanityToolsCard extends LitElement {
     .solar-coverage p {margin:6px 0}
     ::selection {background:var(--primary-color);color:var(--text-primary-color,#fff)}
     .changes{width:100%;border-collapse:collapse;table-layout:fixed;font-size:.875rem}.changes td,.changes th{text-align:left;padding:12px 4px;border-bottom:1px solid var(--divider-color);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.changes th{font-weight:500}.changes tbody th{color:var(--secondary-text-color)}
-    @media(max-width:420px){
+    @container(max-width:420px){
       .root{padding:16px}
       [role=tablist]{gap:6px}
       [role=tab]{padding-inline:8px}
