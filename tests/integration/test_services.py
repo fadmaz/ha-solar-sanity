@@ -18,9 +18,9 @@ from __future__ import annotations
 import pathlib
 
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.const import DOMAIN
+from tests.integration.ha_harness import MockConfigEntry
 
 
 def _declared_services() -> tuple[str, ...]:

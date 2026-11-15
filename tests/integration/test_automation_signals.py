@@ -10,7 +10,6 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.solar_sanity.const import (
     CONF_CHANNELS,
@@ -21,6 +20,7 @@ from custom_components.solar_sanity.const import (
     OPT_RESERVE_WARNING_MINUTES,
     OPT_SURPLUS_HOLD_MINUTES,
 )
+from tests.integration.ha_harness import MockConfigEntry, async_fire_time_changed
 from tests.integration.test_battery_outlook import BATTERY, SOC, _entity_id, _loaded
 from tests.integration.test_setup_check import check
 

@@ -26,11 +26,11 @@ from homeassistant.components.recorder.models import StatisticMeanType, Statisti
 from homeassistant.components.recorder.statistics import async_import_statistics
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.components.recorder.common import (
-    async_wait_recording_done,
-)
 
 from custom_components.solar_sanity.statistics_source import async_classify_statistics
+from tests.integration.ha_harness import (
+    async_wait_recording_done,
+)
 
 RECORDED = "sensor.records_its_own_history"
 UNRECORDED = "sensor.has_no_state_class"
