@@ -600,6 +600,12 @@ entries and the absence of dynamic imports. It skips when no bundle is built.
 
 ## 7. Build, test, lint, release
 
+CI runs the integration suite on the declared floor and on Core 2026.2.3 with
+the existing harness. Core 2026.11.1 uses Python 3.14 and the matching official
+`pytest-homeassistant` release in its own environment. A test-only import
+bridge shares fixtures across both harnesses. GitHub requires the Validate
+checks on `main` before merging a pull request.
+
 ### 7.1 Test tiers
 
 | Tier | Where | Needs Home Assistant |

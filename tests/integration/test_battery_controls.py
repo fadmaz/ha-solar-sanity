@@ -9,12 +9,12 @@ import voluptuous as vol
 from homeassistant.core import Context
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ServiceValidationError, Unauthorized
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.analysis.outlook import BatteryControls
 from custom_components.solar_sanity.const import CONF_FORECAST_ENTRIES, DOMAIN
 from custom_components.solar_sanity.const import OPT_BATTERY_CHARGE_POWER_LIMIT_W as LIMIT
 from custom_components.solar_sanity.const import OPT_INVERTER_STANDBY_W as STANDBY
+from tests.integration.ha_harness import MockConfigEntry
 from tests.integration.test_battery_outlook import BATTERY, SOC, _loaded, _week_of_history
 from tests.integration.test_outlook_journal import NOW, _journal
 from tests.integration.test_simulation_service import setup

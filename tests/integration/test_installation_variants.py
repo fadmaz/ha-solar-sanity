@@ -3,7 +3,6 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.const import (
     CONF_CHANNELS,
@@ -13,6 +12,7 @@ from custom_components.solar_sanity.const import (
     OPT_BATTERY_CAPACITY_KWH,
     OPT_BATTERY_SOC,
 )
+from tests.integration.ha_harness import MockConfigEntry
 from tests.integration.test_battery_outlook import _loaded
 
 

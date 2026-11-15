@@ -12,7 +12,6 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.solar_sanity._forecast_plan import ForecastSelection
 from custom_components.solar_sanity.analysis.forecast import Correction
@@ -25,6 +24,7 @@ from custom_components.solar_sanity.const import (
     FORECAST_CAPTURE_INTERVAL,
     OPT_PREFERRED_FORECAST_PROVIDER,
 )
+from tests.integration.ha_harness import MockConfigEntry, async_fire_time_changed
 from tests.integration.test_battery_outlook import BATTERY, SOC, _loaded, _week_of_history
 from tests.integration.test_outlook_journal import NOW, _journal
 from tests.integration.test_setup_check import check

@@ -3,11 +3,11 @@
 from types import SimpleNamespace
 
 from homeassistant.helpers import issue_registry as ir
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity import _async_retire_the_check
 from custom_components.solar_sanity.const import DOMAIN
 from custom_components.solar_sanity.repairs import sync_energy_issues
+from tests.integration.ha_harness import MockConfigEntry
 
 
 async def test_unsupported_energy_issue_survives_cleanup_and_clears_when_source_recovers(hass):

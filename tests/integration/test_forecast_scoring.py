@@ -26,7 +26,6 @@ from unittest.mock import patch
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.const import CONF_FORECAST_ENTRIES, DOMAIN
@@ -36,6 +35,7 @@ from custom_components.solar_sanity.scoring import (
     _local_date_or_refuse,
     async_score_providers,
 )
+from tests.integration.ha_harness import MockConfigEntry
 
 KEYS = ("pv", "load", "grid_import", "battery_charge", "battery_discharge")
 NOON = datetime(2026, 8, 1, 12, tzinfo=UTC)

@@ -16,9 +16,9 @@
   "devDependencies": {
     "@mdi/js": "^7.4.47",
     "concurrently": "^10.0.5",
-    "happy-dom": "^20.11.12",
+    "happy-dom": "^21.0.4",
     "typescript": "^7.0.2",
-    "vite": "^8.2.2",
-    "vitest": "^4.1.11"
+    "vite": "^8.2.4",
+    "vitest": "^4.1.12"
   }
 }

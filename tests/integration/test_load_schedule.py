@@ -8,11 +8,11 @@ from unittest.mock import patch
 import pytest
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity import experiment_policy
 from custom_components.solar_sanity.const import DOMAIN, OPT_LOAD_PROFILE_ALTERNATE_DAYS
 from custom_components.solar_sanity.journal import JOURNAL_KEY, MODEL_REVISION, _valid_record
+from tests.integration.ha_harness import MockConfigEntry
 from tests.integration.test_battery_outlook import BATTERY, SOC, _loaded, _week_of_history
 from tests.integration.test_outlook_journal import NOW, _journal
 
