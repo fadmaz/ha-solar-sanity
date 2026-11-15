@@ -315,6 +315,10 @@
           "name": "Notification destination",
           "description": "A notify entity ID or a Companion App action name beginning with mobile_app_ (omit the notify. prefix for an action)."
         },
+        "script_entity_id": {
+          "name": "Start script",
+          "description": "Optional Home Assistant script to request manually after checking the reminder."
+        },
         "power_w": {
           "name": "Extra power",
           "description": "Finite non-negative additional power in watts."
@@ -354,6 +358,38 @@
         "reminder_id": {
           "name": "Reminder ID",
           "description": "The active reminder ID returned by Get load reminder."
+        }
+      }
+    },
+    "check_load_reminder": {
+      "name": "Check load reminder",
+      "description": "Check whether the reminder's complete load can start now and stay above reserve. Administrator access is required.",
+      "fields": {
+        "device_id": {
+          "name": "Installation",
+          "description": "The Solar Sanity battery installation to use."
+        },
+        "reminder_id": {
+          "name": "Reminder ID",
+          "description": "The current reminder ID returned by Get load reminder."
+        }
+      }
+    },
+    "start_load_reminder": {
+      "name": "Start load reminder",
+      "description": "Recheck the deadline and battery reserve, then request the script linked to the reminder. Administrator access is required.",
+      "fields": {
+        "device_id": {
+          "name": "Installation",
+          "description": "The Solar Sanity battery installation to use."
+        },
+        "reminder_id": {
+          "name": "Reminder ID",
+          "description": "The current reminder ID returned by Get load reminder."
+        },
+        "projection_id": {
+          "name": "Projection ID",
+          "description": "The projection ID returned by a ready Check load reminder result."
         }
       }
     },

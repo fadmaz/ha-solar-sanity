@@ -2,6 +2,16 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.51.0] - 2026-11-15
+
+### Added
+
+- Check now on a saved load reminder rechecks the deadline and battery reserve
+  with the current corrected solar outlook.
+- A reminder can link an optional Home Assistant script. Start with Home
+  Assistant requests the linked script after rechecking the outlook and
+  recording the attempt. Each reminder can request its script once.
+
 ## [0.50.0] - 2026-11-11
 
 ### Added

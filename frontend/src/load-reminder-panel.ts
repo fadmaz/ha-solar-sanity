@@ -26,20 +26,60 @@ const reasons: Record<string, string> = {
   permission_revoked: "The person who scheduled this reminder no longer has administrator access.",
 };
 
+const checkReasons: Record<string, string> = {
+  ...reasons,
+  before_earliest_start: "The earliest start has not arrived.",
+  beyond_horizon: "The full run must fit inside the current outlook.",
+  projection_changed: "The outlook changed. Check again.",
+  soc_unavailable: "Waiting for a battery charge reading.",
+  soc_stale: "Waiting for a fresh battery charge reading.",
+  soc_changed: "Waiting for an outlook that includes the latest battery charge.",
+  reaches_reserve: "The battery is expected to reach reserve within this outlook.",
+};
+
+const scriptReasons: Record<string, string> = {
+  script_unavailable: "The linked script is unavailable.",
+  script_permission: "You do not have permission to run the linked script.",
+  script_running: "The linked script is already running.",
+};
+
+const startLabels = {
+  requesting: "Requesting start…",
+  requested: "Start requested",
+  unconfirmed: "Start unconfirmed",
+};
+
 interface ReminderView {
   id: string;
   status: keyof typeof labels;
   reason_code: string | null;
   scheduled_at: string | null;
   latest_start: string;
+  earliest_start?: string;
   destination: string;
   power_w: number;
   duration_minutes: number;
+  script_entity_id?: string | null;
+  start_state?: keyof typeof startLabels;
+}
+
+interface ReminderCheck {
+  reminder_id: string;
+  ready: boolean;
+  reason_code: string | null;
+  checked_at: string;
+  finish_at: string;
+  projection_id?: string;
+  minimum_soc_pct?: number;
+  reserve_pct?: number;
+  script_name?: string;
+  script_reason_code?: string | null;
 }
 
 interface ReminderResponse {
   reminder: ReminderView | null;
   storage_error: boolean;
+  check?: ReminderCheck;
 }
 
 @customElement("solar-sanity-load-reminder")
@@ -52,6 +92,8 @@ export class SolarSanityLoadReminder extends LitElement {
 
   @state() private _result?: ReminderResponse;
   @state() private _destination = "";
+  @state() private _script = "";
+  @state() private _check?: ReminderCheck;
   @state() private _saving = false;
   @state() private _error = "";
   @state() private _statusError = false;
@@ -75,6 +117,8 @@ export class SolarSanityLoadReminder extends LitElement {
     if (changed.has("deviceId")) {
       this._result = undefined;
       this._destination = "";
+      this._script = "";
+      this._check = undefined;
       this._error = "";
       this._statusError = false;
     }
@@ -92,14 +136,19 @@ export class SolarSanityLoadReminder extends LitElement {
     if (this._visible()) void this._refresh(this._generation);
   }
 
-  private async _call(service: string, data: Record<string, unknown>): Promise<ReminderResponse> {
-    const {response} = await this.hass!.callWS<{response: ReminderResponse}>({
+  private async _request<T>(service: string, data: Record<string, unknown>): Promise<T> {
+    const {response} = await this.hass!.callWS<{response: T}>({
       type: "call_service",
       domain: "solar_sanity",
       service,
       service_data: {...data, device_id: this.deviceId},
       return_response: true,
     });
+    return response;
+  }
+
+  private async _call(service: string, data: Record<string, unknown>): Promise<ReminderResponse> {
+    const response = await this._request<ReminderResponse>(service, data);
     if (!response || typeof response.storage_error !== "boolean") {
       throw new Error("Reminder status is unavailable.");
     }
@@ -129,12 +178,22 @@ export class SolarSanityLoadReminder extends LitElement {
     this._saving = true;
     this._error = "";
     try {
-      const result = await this._call(service, data);
-      if (generation === this._generation) this._result = result;
+      if (service === "check_load_reminder") {
+        const check = await this._request<ReminderCheck>(service, data);
+        if (generation === this._generation && check?.reminder_id === data.reminder_id) this._check = check;
+      } else {
+        const result = await this._call(service, data);
+        if (generation === this._generation) {
+          this._result = result;
+          this._check = result.check;
+          if (service === "schedule_load_reminder") this._script = "";
+        }
+      }
     } catch (error) {
       if (generation === this._generation) {
         const message = (error as {message?: unknown})?.message;
         this._error = typeof message === "string" ? message : "Could not change the reminder.";
+        this._check = undefined;
       }
     } finally {
       if (generation === this._generation) {
@@ -152,10 +211,49 @@ export class SolarSanityLoadReminder extends LitElement {
     }).format(new Date(value));
   }
 
+  private _checkView(reminder: ReminderView) {
+    const check = this._check?.reminder_id === reminder.id ? this._check : undefined;
+    const changed = Boolean(check?.projection_id && check.projection_id !== this.projectionId);
+    const latestPassed = Date.now() > Date.parse(reminder.latest_start);
+    const scriptName = check?.script_name ?? (reminder.script_entity_id
+      ? this.hass?.states?.[reminder.script_entity_id]?.attributes.friendly_name ?? reminder.script_entity_id
+      : undefined);
+    const canStart = check?.ready && check.projection_id && check.script_name
+      && !changed && !latestPassed && !this._statusError;
+    return html`<div class="check">
+      ${scriptName ? html`<p>Start script · ${scriptName}</p>` : nothing}
+      <button ?disabled=${this._saving || this._statusError}
+        @click=${() => void this._change("check_load_reminder", {reminder_id: reminder.id})}>Check now</button>
+      <div role="status">
+        ${check ? html`
+          <p>Checked ${this._time(check.checked_at)}</p>
+          ${changed ? html`<p>${checkReasons.projection_changed}</p>` : html`
+            <p><strong>${check.ready && !latestPassed ? "Ready to start" :
+              latestPassed ? checkReasons.window_too_short : checkReasons[check.reason_code ?? "outlook_unavailable"]}</strong></p>
+            ${check.reason_code === "before_earliest_start" && reminder.earliest_start
+              ? html`<p>Earliest start ${this._time(reminder.earliest_start)}</p>` : nothing}
+            ${check.minimum_soc_pct !== undefined ? html`
+              <p>Finish if started now ${this._time(check.finish_at)}</p>
+              <p>Minimum charge ${check.minimum_soc_pct.toFixed(1)}% · Reserve ${check.reserve_pct}%</p>` : nothing}
+            ${check.script_reason_code ? html`<p>${scriptReasons[check.script_reason_code]}</p>` : nothing}
+          `}
+        ` : nothing}
+      </div>
+      ${canStart ? html`<button ?disabled=${this._saving}
+        aria-label=${`Start with Home Assistant · ${check.script_name}`}
+        @click=${() => void this._change("start_load_reminder", {reminder_id: reminder.id, projection_id: check.projection_id})}>
+        Start with Home Assistant
+      </button>` : nothing}
+    </div>`;
+  }
+
   protected render() {
     const result = this._result;
     const reminder = result?.reminder;
-    const active = reminder?.status === "scheduled" || reminder?.status === "waiting";
+    const startState = reminder?.start_state;
+    const active = !startState && (reminder?.status === "scheduled" || reminder?.status === "waiting");
+    const canCheck = reminder && !startState && (active ||
+      ["sent", "delivery_unconfirmed", "failed", "expired"].includes(reminder.status));
     const canSchedule = this.request?.device_id === this.deviceId && result && !this._statusError && !result.storage_error && !active
       && reminder?.status !== "dispatching";
     const entities = Object.entries(this.hass?.states ?? {})
@@ -166,6 +264,11 @@ export class SolarSanityLoadReminder extends LitElement {
       .map((id) => ({value: id, label: `notify.${id}`}));
     const destinations = [...entities, ...legacy];
     const selected = destinations.some(({value}) => value === this._destination);
+    const scripts = Object.entries(this.hass?.states ?? {})
+      .filter(([id, state]) => id.startsWith("script.") && ["off", "on"].includes(state.state))
+      .map(([value, state]) => ({value, label: String(state.attributes.friendly_name ?? value)}))
+      .sort((left, right) => left.label.localeCompare(right.label));
+    const scriptSelected = !this._script || scripts.some(({value}) => value === this._script);
     if (!reminder && !this.request && !result?.storage_error && !this._statusError && !this._error) return nothing;
 
     return html`<section aria-label="Load reminder">
@@ -174,14 +277,16 @@ export class SolarSanityLoadReminder extends LitElement {
         ${this._statusError ? html`<p>Could not refresh the reminder status. Retrying…</p>` : nothing}
         ${!result && !this._statusError && this.request ? html`<p>Checking reminder status…</p>` : nothing}
         ${reminder ? html`
-          <p><strong>${labels[reminder.status]}</strong> · ${reminder.power_w} W for ${reminder.duration_minutes} min</p>
+          <p><strong>${startState ? startLabels[startState] : labels[reminder.status]}</strong> · ${reminder.power_w} W for ${reminder.duration_minutes} min</p>
           ${reminder.scheduled_at && active ? html`<p>Scheduled start ${this._time(reminder.scheduled_at)}</p>` : nothing}
-          ${active ? html`<p>Latest start ${this._time(reminder.latest_start)}</p>` : nothing}
-          ${reminder.reason_code ? html`<p>${reasons[reminder.reason_code]}</p>` : nothing}
+          ${canCheck ? html`<p>Latest start ${this._time(reminder.latest_start)}</p>` : nothing}
+          ${!startState && reminder.reason_code ? html`<p>${reasons[reminder.reason_code]}</p>` : nothing}
+          ${startState === "unconfirmed" ? html`<p>Check the device or script trace before requesting another start.</p>` : nothing}
         ` : nothing}
       </div>
       ${active && reminder ? html`<button ?disabled=${this._saving}
         @click=${() => void this._change("cancel_load_reminder", {reminder_id: reminder.id})}>Cancel reminder</button>` : nothing}
+      ${canCheck ? this._checkView(reminder) : nothing}
       ${canSchedule ? html`
         ${destinations.length ? html`<div class="controls">
           <label>Notification destination
@@ -191,9 +296,17 @@ export class SolarSanityLoadReminder extends LitElement {
               ${destinations.map(({value, label}) => html`<option value=${value}>${label}</option>`)}
             </select>
           </label>
-          <button ?disabled=${!selected || this._saving}
+          ${scripts.length ? html`<label>Start script (optional)
+            <select .value=${this._script} ?disabled=${this._saving}
+              @change=${(event: Event) => { this._script = (event.target as HTMLSelectElement).value; }}>
+              <option value="">Manual start</option>
+              ${scripts.map(({value, label}) => html`<option value=${value}>${label}</option>`)}
+            </select>
+          </label>` : nothing}
+          <button ?disabled=${!selected || !scriptSelected || this._saving}
             @click=${() => void this._change("schedule_load_reminder", {
               ...this.request, projection_id: this.projectionId, destination: this._destination,
+              ...(this._script ? {script_entity_id: this._script} : {}),
             })}>Remind me</button>
         </div>` : html`<p>Add a Home Assistant notification destination to set a reminder.</p>`}
       ` : nothing}
@@ -205,6 +318,8 @@ export class SolarSanityLoadReminder extends LitElement {
     section { margin-block: 16px; padding-block-start: 12px; border-block-start: 1px solid var(--divider-color); }
     p { margin: 0 0 8px; line-height: 1.6; }
     .controls { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
+    .check { margin-block: 12px; }
+    .check div:not(:empty) { margin-block-start: 8px; }
     label { display: grid; gap: 6px; font-size: .875rem; min-width: 0; flex: 1 1 15rem; }
     select, button {
       box-sizing: border-box; font: inherit; color: var(--primary-text-color);

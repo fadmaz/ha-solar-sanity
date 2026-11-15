@@ -3,7 +3,7 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated for 0.50.0, 2026-11-11.
+Last updated for 0.51.0, 2026-11-15.
 
 ## Latest delivery and operational acceptance
 
@@ -72,6 +72,9 @@ Last updated for 0.50.0, 2026-11-11.
 
 ## Tools development sequence
 
+- 0.51.0 adds Check now for the saved load and an optional explicitly
+  requested start through a linked Home Assistant script. Operational
+  acceptance compares Check now with What if and exercises a test-only script.
 - 0.50.0 adds a persistent Remind me action for one manual load. Operational
   acceptance checks that a reminder survives a Home Assistant restart and that
   the dispatch decision agrees with What if on the same projection.
