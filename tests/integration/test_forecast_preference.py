@@ -3,12 +3,14 @@
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
+from logging import getLogger
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from custom_components.solar_sanity._forecast_plan import ForecastSelection
@@ -54,6 +56,58 @@ def forecast(now, power, *, today=True, tomorrow=True):
             for hour in range(24)
         }
     }
+
+
+async def test_cached_provider_failure_and_confirmed_identical_refresh(
+    hass, enable_custom_integrations, entry_data, providers, freezer
+):
+    """The energy platform can return the same payload even after a failed update."""
+    freezer.move_to(NOW)
+    backup, preferred, *_ = providers
+    provider = hass.config_entries.async_get_entry(preferred)
+    upstream = DataUpdateCoordinator(
+        hass, getLogger(__name__), name="synthetic", config_entry=provider
+    )
+    provider.runtime_data = upstream
+    payloads = {key: forecast(NOW, 1600) for key in (backup, preferred)}
+    with (
+        patch(
+            "custom_components.solar_sanity.coordinator.async_get_solar_forecasts",
+            new=AsyncMock(return_value=payloads),
+        ),
+        patch("custom_components.solar_sanity.coordinator.async_record_forecast", new=AsyncMock()),
+    ):
+        entry = await _loaded(
+            hass,
+            MockConfigEntry(
+                domain=DOMAIN,
+                data={**entry_data, CONF_FORECAST_ENTRIES: [backup, preferred]},
+                options={**BATTERY, OPT_PREFERRED_FORECAST_PROVIDER: preferred},
+            ),
+        )
+        coordinator = entry.runtime_data.coordinator
+        initial = coordinator.select_forecast("battery", NOW)
+        assert not coordinator.forecast_ready_for_actions(initial, NOW)
+        freezer.move_to(NOW + timedelta(minutes=25))
+        await coordinator.async_capture_forecasts()
+        assert coordinator.select_forecast("battery", dt_util.utcnow()) == initial
+        upstream.async_set_updated_data(object())
+        await coordinator.async_capture_forecasts()
+        verified = coordinator.select_forecast("battery", dt_util.utcnow())
+        assert verified.captured_at == dt_util.utcnow()
+        assert coordinator.forecast_ready_for_actions(verified, dt_util.utcnow())
+        upstream.last_update_success = False
+        assert not coordinator.forecast_ready_for_actions(verified, dt_util.utcnow())
+        await coordinator.async_capture_forecasts()
+        fallback = coordinator.select_forecast("battery", dt_util.utcnow())
+        assert fallback.provider_id == backup
+        assert fallback.reason_code == "provider_update_failed"
+        assert (
+            coordinator.journal.health[preferred]["captured_at"] == verified.captured_at.isoformat()
+        )
+        upstream.async_set_updated_data(object())
+        await coordinator.async_capture_forecasts()
+        assert coordinator.select_forecast("battery", dt_util.utcnow()).provider_id == preferred
 
 
 async def test_preferred_capture_fails_and_recovers_on_the_normal_timer(

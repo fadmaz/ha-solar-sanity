@@ -293,6 +293,10 @@ class BatteryOutlook:
 
     def forecast_fresh(self, state: OutlookState, now: datetime) -> bool:
         source = state.forecast_source
+        if source is not None and source.provider_id is not None:
+            return self.coordinator.forecast_source_is_fresh(
+                source.provider_id, source.captured_at, now
+            )
         captured = (
             source.captured_at if source is not None else self.coordinator.forecast_captured_at
         )

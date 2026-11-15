@@ -202,7 +202,7 @@ class LoadReminders:
         result["latest_start"] = record.latest_start.isoformat()
         return {"reminder": result, "storage_error": False}
 
-    def _projection(self, now: datetime) -> OutlookState | None:
+    def _projection(self, now: datetime, *, require_verified: bool = True) -> OutlookState | None:
         battery = self.coordinator.battery
         state = battery.state
         if (
@@ -218,6 +218,8 @@ class LoadReminders:
                 state.forecast_source.provider_id,
                 state.forecast_source.captured_at,
             ):
+                return None
+            if require_verified and not self.coordinator.forecast_ready_for_actions(current, now):
                 return None
         return state
 
@@ -302,11 +304,15 @@ class LoadReminders:
                     "Cancel the active reminder before scheduling another."
                 )
             now = dt_util.utcnow()
-            state = self._projection(now)
+            state = self._projection(now, require_verified=False)
             if state is None:
                 raise ServiceValidationError("Wait for a current corrected solar forecast.")
             if state.projection_id != data["projection_id"]:
                 raise ServiceValidationError("The outlook changed. Find the best time again.")
+            if self.coordinator.battery.projection_soc_problem(state, now):
+                raise ServiceValidationError(
+                    "Wait for an outlook based on the current battery charge."
+                )
             if self._destination(data["destination"]) is None:
                 raise ServiceValidationError(
                     "Choose an available Home Assistant notification target."
@@ -517,6 +523,8 @@ class LoadReminders:
         self._checked_projection = state.projection_id if state is not None else None
         if state is None:
             return None, "forecast_unavailable"
+        if reason := self.coordinator.battery.projection_soc_problem(state, now):
+            return None, reason
         try:
             plan = self._plan(state, record, now)
         except (ValueError, KeyError, TypeError, OverflowError):

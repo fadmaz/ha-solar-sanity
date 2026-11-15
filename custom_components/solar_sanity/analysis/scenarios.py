@@ -81,6 +81,36 @@ def _with_load(
     return tuple(changed)
 
 
+def _future_steps(steps: Sequence[Step], now: datetime) -> tuple[Step, ...]:
+    """Begin from measured charge at now, excluding elapsed forecast energy."""
+    if now.utcoffset() is None or not steps or steps[0].start > now:
+        raise ValueError("No current projection is available.")
+    now = now.astimezone(UTC)
+    future = []
+    cursor = now
+    for original in steps:
+        if original.end <= cursor:
+            continue
+        if original.start > cursor or (future and original.start != cursor):
+            raise ValueError("The outlook has a gap in its future horizon.")
+        step = original
+        if original.start < cursor:
+            hours = (original.end - cursor).total_seconds() / 3600
+            share = hours / original.hours
+            step = Step(
+                cursor,
+                hours,
+                original.pv_wh * share,
+                original.load_wh * share,
+                original.daylight_wh * share,
+            )
+        future.append(step)
+        cursor = step.end
+    if not future:
+        raise ValueError("No current projection is available.")
+    return tuple(future)
+
+
 def compare_load(
     soc_pct: float,
     battery: BatterySettings,
@@ -98,8 +128,7 @@ def compare_load(
         raise ValueError("The start time must include a time zone.")
     # Duration is elapsed time even when the local clock skips or repeats.
     start_at, now = start_at.astimezone(UTC), now.astimezone(UTC)
-    if not steps or steps[0].start > now or steps[-1].end <= now:
-        raise ValueError("No current projection is available.")
+    steps = _future_steps(steps, now)
     end = start_at + duration
     if end <= now:
         raise ValueError("This scenario has finished.")
@@ -157,12 +186,8 @@ def time_load_now(
 ) -> LoadTiming:
     """Simulate a whole run through the forecast horizon, including later reserve crossings."""
     end = now + _duration(power_w, duration_minutes)
-    if (
-        not steps
-        or steps[0].start > now
-        or end > steps[-1].end
-        or not math.isfinite(power_w * (duration_minutes / 60))
-    ):
+    steps = _future_steps(steps, now)
+    if end > steps[-1].end or not math.isfinite(power_w * (duration_minutes / 60)):
         raise ValueError("The complete load must fit inside a current outlook.")
     baseline = simulate(soc_pct, battery, steps)
     run = simulate(soc_pct, battery, _with_load(steps, power_w, now, end))
@@ -189,8 +214,7 @@ def find_best_time(
     now = now.astimezone(UTC)
     first = max(earliest_start.astimezone(UTC), now)
     deadline = finish_by.astimezone(UTC)
-    if not steps or steps[0].start > now or steps[-1].end <= now:
-        raise ValueError("No current projection is available.")
+    steps = _future_steps(steps, now)
     if deadline - first < duration:
         return LoadPlan(reason_code="window_too_short")
     if deadline > steps[-1].end:

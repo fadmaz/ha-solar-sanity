@@ -174,9 +174,10 @@ async def test_reserve_uses_unsettled_crossing_and_valid_projection(
     state = coordinator.battery.state
     now = dt_util.utcnow()
     state.outlook = SimpleNamespace(
-        reserve_at=now + timedelta(minutes=40),
+        reserve_at=None,
+        horizon_reserve_at=now + timedelta(minutes=40),
         horizon_end=now + timedelta(hours=5),
-        takeover_at=None,
+        takeover_at=now + timedelta(minutes=10),
         forecast_used=False,
     )
     state.reason = None
@@ -188,12 +189,15 @@ async def test_reserve_uses_unsettled_crossing_and_valid_projection(
     assert (
         coordinator.automation.reserve(now).attributes["reserve_at"] != state.reserve_at.isoformat()
     )
-    state.outlook.reserve_at += timedelta(minutes=1)
+    state.outlook.horizon_reserve_at += timedelta(minutes=1)
     assert coordinator.automation.reserve(now).is_on is False
+    state.outlook.horizon_reserve_at = None
+    state.outlook.horizon_end = now + timedelta(minutes=20)
+    assert coordinator.automation.reserve(now).is_on is None
     state.outlook.forecast_used = True
     assert coordinator.automation.reserve(now).is_on is None
     state.outlook = None
-    state.soc_pct = 20
+    hass.states.async_set(SOC, "20", {"unit_of_measurement": "%"})
     coordinator.async_update_listeners()
     risk = hass.states.get(_binary(hass, entry, "reserve_risk"))
     assert risk.state == "on" and risk.attributes["at_reserve"]

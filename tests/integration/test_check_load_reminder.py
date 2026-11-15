@@ -1,6 +1,7 @@
 """Check the stored load and run only its linked script on explicit request."""
 
 import asyncio
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -10,12 +11,13 @@ from homeassistant.exceptions import ServiceValidationError, Unauthorized
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 
+from custom_components.solar_sanity.analysis.outlook import BatterySettings, Step, project
 from custom_components.solar_sanity.analysis.profile import ForecastScale
 from custom_components.solar_sanity.const import OPT_BATTERY_SOC
 from custom_components.solar_sanity.reminders import LoadReminders
 from tests.integration import test_load_reminders
 from tests.integration.test_load_reminders import action, install_notify, publish, schedule, wake
-from tests.integration.test_simulation_service import invoke, setup
+from tests.integration.test_simulation_service import NOW, invoke, setup
 
 clock = test_load_reminders.clock
 SCRIPT = "script.test_reminder_start"
@@ -53,6 +55,42 @@ async def start(hass, entry, record, projection_id="synthetic-basis"):
     return await action(
         hass, entry, "start_load_reminder", reminder_id=record["id"], projection_id=projection_id
     )
+
+
+async def test_no_reminder_or_script_uses_solar_before_the_current_charge(hass, prepared, clock):
+    """Elapsed forecast generation once allowed a 36% battery to hit reserve."""
+    entry, coordinator, state, events, notifications = prepared
+    now, _ = clock
+    battery = BatterySettings(10_000, 35, 100)
+    steps = (
+        Step(NOW, 1, 3000, 0, 3000),
+        Step(NOW + timedelta(hours=1), 1, 0, 0, 0),
+    )
+    state.soc_pct = 36
+    state.battery = battery
+    state.outlook = project(36, battery, steps, forecast_used=True)
+    state.inputs = {
+        "battery": asdict(battery),
+        "steps": [{**asdict(step), "start": step.start.isoformat()} for step in steps],
+    }
+    hass.states.async_set(entry.options[OPT_BATTERY_SOC], "36")
+    earliest = NOW + timedelta(minutes=9)
+    record = await schedule(
+        hass,
+        entry,
+        script_entity_id=SCRIPT,
+        power_w=3000,
+        earliest_start=earliest.isoformat(),
+        finish_by=(earliest + timedelta(hours=1)).isoformat(),
+    )
+    now.return_value = earliest
+    verdict = await check(hass, entry, record)
+    assert verdict["reason_code"] == "reaches_reserve"
+    assert verdict["minimum_soc_pct"] == 35
+    assert (await start(hass, entry, record))["check"] == verdict
+    assert (await wake(hass, coordinator.reminders, force=True))["status"] == "waiting"
+    assert not events
+    assert not notifications
 
 
 @pytest.mark.parametrize("after_notification", [False, True])

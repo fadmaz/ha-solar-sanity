@@ -214,6 +214,8 @@ class Outlook:
     #: now, inside it) until the sun takes over, in Wh. ``None`` when the
     #: horizon ends before the takeover.
     night_load_wh: float | None = None
+    #: The automation lead time can extend beyond the night displayed above.
+    horizon_reserve_at: datetime | None = None
 
 
 def build_steps(
@@ -498,6 +500,7 @@ def project(
         forecast_used=forecast_used,
         trajectory=tuple(zip(run.times, run.soc, strict=True)),
         night_load_wh=night_load_wh,
+        horizon_reserve_at=run.reserve_at,
     )
 
 
