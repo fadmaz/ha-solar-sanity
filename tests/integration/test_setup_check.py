@@ -10,7 +10,6 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context
 from homeassistant.exceptions import Unauthorized
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.const import (
@@ -20,6 +19,7 @@ from custom_components.solar_sanity.const import (
     CONF_ROLE,
     DOMAIN,
 )
+from tests.integration.ha_harness import MockConfigEntry
 from tests.integration.test_battery_outlook import BATTERY, SOC, _loaded
 from tests.integration.test_outlook_journal import NOW, _journal
 from tests.integration.test_tools_services import device

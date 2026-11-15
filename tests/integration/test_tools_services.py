@@ -23,7 +23,11 @@ async def history(hass, device_id, **extra):
 
 
 def device(hass, entry):
-    return dr.async_get(hass).async_get_device(identifiers={(DOMAIN, entry.entry_id)}).id
+    registry = dr.async_get(hass)
+    identifier = DOMAIN, entry.entry_id
+    if hasattr(registry, "async_get_device_by_identifier"):
+        return registry.async_get_device_by_identifier(identifier, entry.entry_id).id
+    return registry.async_get_device(identifiers={identifier}).id
 
 
 async def test_real_action_returns_frozen_public_history_without_triggering_work(

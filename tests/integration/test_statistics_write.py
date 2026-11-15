@@ -28,12 +28,12 @@ from homeassistant.components.recorder.statistics import async_add_external_stat
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.components.recorder.common import (
+
+from custom_components.solar_sanity import statistics_source
+from tests.integration.ha_harness import (
     async_wait_recording_done,
     statistics_during_period,
 )
-
-from custom_components.solar_sanity import statistics_source
 
 #: The shape Home Assistant has minted since 2023.4, and the reason this file
 #: exists. Uppercase, and the recorder will not have it.
