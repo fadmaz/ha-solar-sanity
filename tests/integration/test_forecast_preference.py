@@ -216,9 +216,10 @@ async def test_solar_only_configure_and_removing_the_preference(
 
 
 async def test_issued_source_survives_reload_and_separates_calibration(
-    hass, enable_custom_integrations, entry_data, providers
+    hass, enable_custom_integrations, entry_data, providers, freezer
 ):
     """Switching live providers does not rewrite or invalidate issued evidence."""
+    freezer.move_to(NOW)
     first, preferred, *_ = providers
     entry_data[CONF_FORECAST_ENTRIES] = [first, preferred]
     with patch(
