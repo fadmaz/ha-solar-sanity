@@ -2,6 +2,17 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.54.1] - 2026-11-16
+
+### Fixed
+
+- Keep tomorrow's corrected forecast total and chart on the same local day
+  when midnight passes between forecast captures.
+- Preserve damaged or newer forecast journal files during restore. The
+  forecast archive continues recording while the journal is unavailable.
+- Keep unsaved load names, power and duration when the saved-load list fails
+  to refresh. If the list changed, reopen the edit before saving.
+
 ## [0.54.0] - 2026-11-16
 
 ### Added

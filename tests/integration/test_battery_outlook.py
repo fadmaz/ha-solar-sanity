@@ -440,12 +440,14 @@ async def test_today_is_judged_by_the_archive_for_the_hours_gone(
 
     # The corrected figure for tomorrow is scaled the same way: a third, not
     # the overall 0.45.
-    coordinator._expected_tomorrow_provider = "provider"
-    coordinator._expected_tomorrow_kwh = 16.0
-    attrs = coordinator.expected_tomorrow_corrected_attrs
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_FORECAST_ENTRIES: ["provider"]}
+    )
+    coordinator._latest_forecast_batch = frozenset({"provider"})
+    total, attrs = coordinator.tomorrow_forecast(dt_util.utcnow())
     assert attrs["factor"] == round(MIXED.for_day(16_000.0), 2) == 0.35
     assert attrs["basis"] == "learned"
-    assert coordinator.expected_tomorrow_corrected_kwh == round(16 * MIXED.for_day(16_000), 2)
+    assert total == round(16 * MIXED.for_day(16_000), 2)
     assert attrs["applied_factor"] == MIXED.for_day(16_000)
 
 

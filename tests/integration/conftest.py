@@ -28,6 +28,7 @@ wrong and the failure is ``assert not [True]`` — which names neither fixture.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from importlib.util import find_spec
 from typing import Any
 
@@ -41,6 +42,22 @@ from custom_components.solar_sanity.const import (
     DOMAIN,
 )
 from tests.integration.ha_harness import MockConfigEntry
+
+
+@pytest.fixture
+def hass_storage(hass_storage, monkeypatch):
+    """Give the journal's read-only path the same mocked envelopes as Store."""
+    from custom_components.solar_sanity import journal
+    from custom_components.solar_sanity._store_file import store_data
+
+    async def read(_hass, store):
+        if store.key not in hass_storage:
+            return None
+        return store_data(deepcopy(hass_storage[store.key]), store)
+
+    monkeypatch.setattr(journal, "async_read_store", read)
+    return hass_storage
+
 
 if find_spec("pytest_homeassistant") is not None:
 

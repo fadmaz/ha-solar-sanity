@@ -82,6 +82,10 @@ export class SolarSanityLoadProfiles extends LitElement {
       throw new Error("The saved load list is unavailable.");
     }
     this._list = response;
+    const draft = this._editor ?? this._delete;
+    if (!response.storage_error && draft && draft.revision !== response.revision) {
+      this._writeError = "Saved loads have changed. Cancel and reopen this edit to use the latest list.";
+    }
     const selected = this.selected;
     if (selected && !response.storage_error && !response.profiles.some(load =>
       load.id === selected.id && load.name === selected.name && load.power_w === selected.power_w &&
@@ -155,18 +159,12 @@ export class SolarSanityLoadProfiles extends LitElement {
     } finally {
       if (current()) this._writing = false;
     }
-    if (refresh) {
-      await this._read();
-      if (current() && this._list && !this._readError && !this._list.storage_error &&
-          this._list.revision !== data.revision) {
-        this._writeError = "Saved loads have changed. Cancel and reopen this edit to use the latest list.";
-      }
-    }
+    if (refresh) await this._read();
   }
 
   private _save(event: Event): void {
     event.preventDefault();
-    if (!this._editor) return;
+    if (!this._editor || this._editor.revision !== this._list?.revision) return;
     const form = new FormData(event.currentTarget as HTMLFormElement);
     const name = String(form.get("load_name") ?? "").trim();
     if (!name || Array.from(name).length > 60) {
@@ -215,12 +213,15 @@ export class SolarSanityLoadProfiles extends LitElement {
           ${loads.length === 20 ? html`<p>This installation has reached its limit of 20 saved loads.</p>` : nothing}
         </details>
         ${editor ? html`<form @submit=${(event: Event) => this._save(event)}>
-          <label>Load name<input name="load_name" required .value=${editor.name} ?disabled=${busy}></label>
+          <label>Load name<input name="load_name" required .value=${editor.name} ?disabled=${busy}
+            @input=${(event: Event) => {editor.name = (event.target as HTMLInputElement).value;}}></label>
           <div class="fields">
-            <label>Power (W)<input name="load_power" type="number" min="0" step="any" required .value=${editor.power} ?disabled=${busy}></label>
-            <label>Duration (minutes)<input name="load_minutes" type="number" min="1" max="1440" step="1" required .value=${editor.minutes} ?disabled=${busy}></label>
+            <label>Power (W)<input name="load_power" type="number" min="0" step="any" required .value=${editor.power} ?disabled=${busy}
+              @input=${(event: Event) => {editor.power = (event.target as HTMLInputElement).value;}}></label>
+            <label>Duration (minutes)<input name="load_minutes" type="number" min="1" max="1440" step="1" required .value=${editor.minutes} ?disabled=${busy}
+              @input=${(event: Event) => {editor.minutes = (event.target as HTMLInputElement).value;}}></label>
           </div>
-          <div class="actions"><button type="submit" ?disabled=${busy}>${editor.id ? "Save changes" : "Save load"}</button>
+          <div class="actions"><button type="submit" ?disabled=${busy || editor.revision !== this._list?.revision}>${editor.id ? "Save changes" : "Save load"}</button>
             <button type="button" ?disabled=${busy} @click=${() => this._close()}>Cancel</button></div>
         </form>` : nothing}
         ${deletion ? html`<div class="confirm"><p>Delete <strong dir="auto">${deletion.load.name}</strong>?</p><div class="actions">

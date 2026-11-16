@@ -1,9 +1,7 @@
 """Shared load profiles for one installation, independent of the forecast."""
 
 import asyncio
-import json
 import logging
-from pathlib import Path
 from uuid import uuid4
 
 import voluptuous as vol
@@ -11,6 +9,7 @@ from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.storage import Store
 
+from ._store_file import async_read_store
 from .const import DOMAIN
 from .load_planning import load_duration, load_power
 
@@ -54,25 +53,6 @@ def load_profile_store(hass: HomeAssistant, entry_id: str) -> Store[dict]:
     )
 
 
-def _read_store(path: str, key: str) -> dict | None:
-    # Store.async_load may move a malformed file aside or rewrite a newer minor
-    # version. Read the envelope without migration to preserve unknown data.
-    try:
-        envelope = json.loads(Path(path).read_bytes())
-    except FileNotFoundError:
-        return None
-    if (
-        not isinstance(envelope, dict)
-        or type(envelope.get("version")) is not int
-        or envelope["version"] != _PROFILES_VERSION
-        or envelope.get("minor_version", 1) != 1
-        or envelope.get("key") != key
-        or not isinstance(envelope.get("data"), dict)
-    ):
-        raise ValueError("Unrecognized load profile storage envelope")
-    return envelope["data"]
-
-
 class LoadProfiles:
     """Publish a revised list only after its private Store write is verified."""
 
@@ -104,9 +84,7 @@ class LoadProfiles:
             _LOGGER.exception("Could not restore saved load profiles")
 
     async def _async_read(self) -> dict | None:
-        return await self.hass.async_add_executor_job(
-            _read_store, self._store.path, self._store.key
-        )
+        return await async_read_store(self.hass, self._store)
 
     def view(self) -> dict:
         return {

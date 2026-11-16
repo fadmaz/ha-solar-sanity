@@ -17,6 +17,7 @@ from homeassistant.core import CoreState, callback
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from ._store_file import async_read_store
 from .analysis.calibration import interval_view, issue_interval
 from .analysis.daylight_shape import SHAPE_REVISION
 from .analysis.experiment import shape_gate
@@ -141,7 +142,7 @@ class OutlookJournal:
 
             integration = await async_get_integration(self.hass, DOMAIN)
             self.version = str(integration.version)
-            saved = await self._store.async_load()
+            saved = await async_read_store(self.hass, self._store)
             if saved is not None:
                 records = saved["records"]
                 if not isinstance(records, list) or not all(_valid_record(r) for r in records):
@@ -194,10 +195,7 @@ class OutlookJournal:
             if self.hass.state is CoreState.stopping:
                 # Store defers shutdown writes until the final-write event.
                 return
-            # A completed Store write invalidates the preload cache. Use a
-            # separate reader with no pending writes to verify the durable copy.
-            reader = Store(self.hass, JOURNAL_VERSION, self._store.key)
-            if await reader.async_load() != payload:
+            if await async_read_store(self.hass, self._store) != payload:
                 raise OSError("The journal write could not be verified.")
             if self.error == "journal_write_failed":
                 self.error = None

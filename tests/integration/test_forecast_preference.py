@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from logging import getLogger
 from unittest.mock import AsyncMock, patch
 
@@ -30,7 +30,13 @@ from custom_components.solar_sanity.statistics_source import (
     forecast_statistic_id,
 )
 from tests.integration.ha_harness import MockConfigEntry, async_fire_time_changed
-from tests.integration.test_battery_outlook import BATTERY, SOC, _loaded, _week_of_history
+from tests.integration.test_battery_outlook import (
+    BATTERY,
+    SOC,
+    _entity_id,
+    _loaded,
+    _week_of_history,
+)
 from tests.integration.test_outlook_journal import NOW, _journal
 from tests.integration.test_setup_check import check
 
@@ -61,6 +67,107 @@ def forecast(now, power, *, today=True, tomorrow=True):
             for hour in range(24)
         }
     }
+
+
+@pytest.mark.parametrize(
+    ("zone", "midnight", "hours"),
+    [
+        ("UTC", "2026-11-17T00:00+00:00", 24),
+        ("America/New_York", "2026-03-07T05:00+00:00", 23),
+        ("America/New_York", "2026-10-31T04:00+00:00", 25),
+    ],
+)
+async def test_tomorrow_sensor_reselects_the_day_and_source_at_local_midnight(
+    hass, enable_custom_integrations, entry_data, providers, freezer, *, zone, midnight, hours
+):
+    """Between captures the published total and curve must roll over together."""
+    midnight = datetime.fromisoformat(midnight)
+    await hass.config.async_set_time_zone(zone)
+    freezer.move_to(midnight - timedelta(minutes=5))
+    first, second, *_ = providers
+    next_day = midnight + timedelta(hours=24)
+    raw = {
+        first: {"wh_hours": {midnight.isoformat(): 12000}},
+        second: {
+            "wh_hours": {
+                (next_day + timedelta(hours=hour)).isoformat(): 8000 / hours
+                for hour in range(hours)
+            }
+        },
+    }
+    with (
+        patch(
+            "custom_components.solar_sanity.coordinator.async_get_solar_forecasts",
+            new=AsyncMock(return_value=raw),
+        ),
+        patch(
+            "custom_components.solar_sanity.coordinator.async_record_forecast",
+            new=AsyncMock(return_value=False),
+        ),
+        patch.object(OutlookJournal, "_queue_verification"),
+    ):
+        entry = await _loaded(
+            hass,
+            MockConfigEntry(domain=DOMAIN, data={**entry_data, CONF_FORECAST_ENTRIES: providers}),
+        )
+        coordinator = entry.runtime_data.coordinator
+        with patch.object(
+            coordinator, "_tomorrow_correction", return_value=Correction(0.5, "scored", 30)
+        ):
+            sensor = _entity_id(hass, entry, "expected_tomorrow_corrected")
+            coordinator.notify_live_entities()
+            initial = hass.states.get(sensor)
+            assert float(initial.state) == 6
+            assert initial.attributes["forecast_statistic_id"] == forecast_statistic_id(first)
+            assert initial.attributes["forecast_for_date"] == midnight.date().isoformat()
+            freezer.move_to(midnight + timedelta(minutes=1))
+            coordinator.notify_live_entities()
+            updated = hass.states.get(sensor)
+            assert updated.attributes["forecast_for_date"] == next_day.date().isoformat()
+            assert updated.attributes["forecast_statistic_id"] == forecast_statistic_id(second)
+            curve = updated.attributes["corrected_hours"]
+            assert len(curve) == hours
+            assert curve[0]["start"] == next_day.isoformat()
+            assert float(updated.state) == round(sum(hour["kwh"] for hour in curve), 2) == 4
+            assert coordinator.select_forecast("today", dt_util.utcnow()).provider_id == first
+
+
+async def test_auto_tomorrow_prefers_saved_order_and_reports_stale_or_missing_coverage(
+    hass, enable_custom_integrations, entry_data, providers, freezer
+):
+    """Only the completed batch supplies a day, and Auto checks the chosen source's age."""
+    freezer.move_to(NOW)
+    await hass.config.async_set_time_zone("UTC")
+    first, second, *_ = providers
+    with (
+        patch(
+            "custom_components.solar_sanity.coordinator.async_get_solar_forecasts",
+            new=AsyncMock(return_value={second: forecast(NOW, 1000), first: forecast(NOW, 1500)}),
+        ) as fetch,
+        patch(
+            "custom_components.solar_sanity.coordinator.async_record_forecast",
+            new=AsyncMock(return_value=False),
+        ),
+        patch.object(OutlookJournal, "_queue_verification"),
+    ):
+        entry = await _loaded(
+            hass,
+            MockConfigEntry(domain=DOMAIN, data={**entry_data, CONF_FORECAST_ENTRIES: providers}),
+        )
+        coordinator = entry.runtime_data.coordinator
+        assert coordinator.select_forecast("tomorrow", NOW).provider_id == first
+        coordinator.journal.health[first]["provider_updated_at"] = (
+            NOW - timedelta(hours=3, seconds=1)
+        ).isoformat()
+        assert coordinator.select_forecast("tomorrow", NOW).reason_code == "forecast_stale"
+        fetch.return_value = {second: forecast(NOW, 1000)}
+        await coordinator.async_capture_forecasts()
+        assert coordinator.select_forecast("tomorrow", NOW).provider_id == second
+        fetch.return_value = {second: forecast(NOW, 1000, tomorrow=False)}
+        await coordinator.async_capture_forecasts()
+        assert (
+            coordinator.select_forecast("tomorrow", NOW).reason_code == "forecast_horizon_missing"
+        )
 
 
 async def test_same_payload_recovers_an_unverified_archive_after_journal_restore(
@@ -252,7 +359,7 @@ async def test_preferred_capture_fails_and_recovers_on_the_normal_timer(
             assert sources["today"]["provider"] == "Preferred roof"
             assert sources["tomorrow"]["provider"] == "Backup roof"
             assert sources["tomorrow"]["status"] == "fallback"
-            assert coordinator.expected_tomorrow_corrected_kwh == pytest.approx(21.6)
+            assert coordinator.tomorrow_forecast(now)[0] == pytest.approx(21.6)
         assert {call.args[1] for call in archive.call_args_list} == set(providers)
         context = coordinator.journal.context()
         captured_at = coordinator.battery.state.forecast_source.captured_at
@@ -279,7 +386,7 @@ async def test_preferred_capture_fails_and_recovers_on_the_normal_timer(
         coordinator.battery.refresh(force=True)
         assert not coordinator.battery.state.outlook.forecast_used
         assert (await check(hass, entry))["forecast"]["sources"]["battery"]["status"] == "history"
-        assert coordinator.expected_tomorrow_corrected_kwh is None
+        assert coordinator.tomorrow_forecast(dt_util.utcnow())[0] is None
 
 
 async def test_auto_retains_the_previous_battery_batch_until_expiry(

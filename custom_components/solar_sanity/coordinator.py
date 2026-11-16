@@ -193,7 +193,6 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         self._first_sample_at: datetime | None = None
         #: Latest forecast total for tomorrow, in kWh, and the provider it is
         #: from. The corrected figure corrects this provider and no other.
-        self._expected_tomorrow_kwh: float | None = None
         self._expected_tomorrow_provider: str | None = None
         #: Each provider's latest forecast, in kWh per UTC hour, as the battery
         #: outlook reads it. Held in memory only: it is re-captured every thirty
@@ -854,7 +853,6 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         forecasts = await async_get_solar_forecasts(self.hass, entry_ids, captured_at=captured)
         captured_at = dt_util.utcnow()
         written = 0
-        tomorrow_kwh: float | None = None
         tomorrow_provider: str | None = None
         points: dict[str, dict[datetime, float]] = {}
         captures: dict[str, datetime] = {}
@@ -902,10 +900,8 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 if previous_capture is not None and not new_update
                 else captured.get(entry_id, captured_at)
             )
-            if tomorrow_kwh is None:
-                tomorrow_kwh = self._sum_for_tomorrow(wh_hours)
-                if tomorrow_kwh is not None:
-                    tomorrow_provider = entry_id
+            if tomorrow_provider is None and self._has_tomorrow(wh_hours, captured_at):
+                tomorrow_provider = entry_id
             if health.get("reason_code") in ("provider_update_failed", "capture_unavailable"):
                 health["reason_code"] = None
             same_capture = previous_capture is not None and not new_update
@@ -949,7 +945,6 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
 
         for provider, reason in failures.items():
             self.journal.health[provider]["reason_code"] = reason
-        self._expected_tomorrow_kwh = tomorrow_kwh
         self._expected_tomorrow_provider = tomorrow_provider
         self._latest_forecast_batch = frozenset(points)
         self._forecast_failures = failures
@@ -1019,17 +1014,31 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
 
         # Auto follows the existing battery order, and keeps the capture's
         # tomorrow source first for today's corrected figures.
-        tomorrow = self._expected_tomorrow_provider
         if horizon == "tomorrow":
-            candidates = (tomorrow,) if tomorrow is not None else ()
-        elif horizon == "today" and tomorrow is not None:
-            candidates = (tomorrow, *providers)
+            if not providers:
+                return ForecastSelection(reason_code="no_provider")
+            if not self._latest_forecast_batch:
+                return ForecastSelection(reason_code="waiting_for_capture")
+            zone = self._time_zone() or dt_util.UTC
+            tomorrow = now.astimezone(zone).date() + timedelta(days=1)
+            for provider in providers:
+                if provider in self._latest_forecast_batch and any(
+                    when.astimezone(zone).date() == tomorrow
+                    for when in self.forecast_points[provider]
+                ):
+                    captured = self.forecast_capture_time(provider)
+                    if self.forecast_source_is_fresh(provider, captured, now):
+                        return ForecastSelection(provider, captured)
+                    return ForecastSelection(reason_code="forecast_stale")
+            return ForecastSelection(reason_code="forecast_horizon_missing")
+        if horizon == "today" and self._expected_tomorrow_provider is not None:
+            candidates = (self._expected_tomorrow_provider, *providers)
         else:
             candidates = providers
         reason = "waiting_for_capture" if providers else "no_provider"
         for provider in candidates:
             points = self.forecast_points.get(provider)
-            if horizon != "tomorrow" and not points:
+            if not points:
                 continue
             captured = self.forecast_capture_time(provider)
             if not self.forecast_source_is_fresh(provider, captured, now):
@@ -1154,36 +1163,15 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             out[entry_id] = series
         return out
 
-    def _sum_for_tomorrow(self, wh_hours: dict[str, Any]) -> float | None:
-        """Total forecast energy for tomorrow, in kWh, by local date.
-
-        The payload's values are Wh produced *during* each period — a delta, not
-        a running total — so they add. Periods are not guaranteed to be an hour,
-        which is why every entry is summed rather than counted.
-        """
-        try:
-            tz = dt_util.get_time_zone(self.hass.config.time_zone)
-        except Exception:
-            tz = None
-        now = dt_util.now(tz) if tz else dt_util.utcnow()
-        tomorrow = (now + timedelta(days=1)).date()
-
-        total = 0.0
-        seen = False
-        for raw_when, raw_value in wh_hours.items():
-            when = dt_util.parse_datetime(raw_when)
-            if when is None or not isinstance(raw_value, (int, float)):
-                continue
-            local = when.astimezone(tz) if tz else when
-            if local.date() != tomorrow:
-                continue
-            total += float(raw_value)
-            seen = True
-
-        # No entries for tomorrow is not zero production — it is no forecast.
-        # Round only after roof correction. Early rounding once made the live
-        # total disagree with the exact corrected hourly curve by 0.01 kWh.
-        return total / 1000.0 if seen else None
+    def _has_tomorrow(self, wh_hours: dict[str, Any], now: datetime) -> bool:
+        """Preserve Auto's capture-time provider priority for today's figures."""
+        zone = self._time_zone()
+        tomorrow = (now.astimezone(zone) if zone else now).date() + timedelta(days=1)
+        return any(
+            (when.astimezone(zone) if zone else when).date() == tomorrow
+            for raw_when, value in wh_hours.items()
+            if isinstance(value, (int, float)) and (when := dt_util.parse_datetime(raw_when))
+        )
 
     # -- scoring ------------------------------------------------------------
 
@@ -1436,99 +1424,45 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         )
         return attrs
 
-    @property
-    def expected_tomorrow_corrected_kwh(self) -> float | None:
-        """Tomorrow's forecast, moved by what this roof has delivered against it.
-
-        ``None`` until there is a correction worth applying. On the reference
-        installation that was every day for a month: its forecast runs at about
-        twice what the roof delivers, but the gap grows with the size of the
-        day, so the scored bias was never stated, while the battery outlook had
-        learned 0.52 from the same archive within three days.
-        """
-        now = dt_util.utcnow()
-        provider = self.select_forecast("tomorrow", now).provider_id
-        if provider is None:
-            return None
-        base = self._tomorrow_total(provider, now)
-        found = self._tomorrow_correction(provider, now)
-        if base is None or found is None:
-            return None
-        return found.apply(base)
-
-    @property
-    def expected_tomorrow_corrected_attrs(self) -> dict[str, Any]:
-        """Which provider was corrected, by what, and on what evidence.
-
-        ``forecast_statistic_id`` is the rolling archive of the provider this
-        figure corrects: the forecast card matches its own panels on it, so it
-        can show the correction under the right provider.
-        """
-        now = dt_util.utcnow()
+    def tomorrow_forecast(self, now: datetime) -> tuple[float | None, dict[str, Any]]:
+        """Use one local day and one provider's curve for the published total."""
         selected = self.select_forecast("tomorrow", now)
         provider = selected.provider_id
         if provider is None:
-            return {"reason": FORECAST_SOURCE_REASONS.get(selected.reason_code)}
+            return None, {"reason": FORECAST_SOURCE_REASONS.get(selected.reason_code)}
         entry = self.hass.config_entries.async_get_entry(provider)
         attrs: dict[str, Any] = {
             "provider": entry.title if entry is not None else provider,
             "forecast_statistic_id": forecast_statistic_id(provider),
         }
         found = self._tomorrow_correction(provider, now)
-        if found is not None:
-            attrs.update(
-                factor=round(found.factor, 2),
-                applied_factor=found.factor,
-                basis=found.basis,
-                days=found.days,
-            )
-            zone = self._time_zone()
-            tomorrow = (
-                now.astimezone(zone).date() + timedelta(days=1)
-                if zone
-                else now.date() + timedelta(days=1)
-            )
-            attrs["forecast_for_date"] = tomorrow.isoformat()
-            if selected.captured_at is not None:
-                updated = self.journal.health.get(provider, {}).get("provider_updated_at")
-                oldest = (
-                    min(selected.captured_at, datetime.fromisoformat(updated))
-                    if updated
-                    else selected.captured_at
-                )
-                attrs["forecast_valid_until"] = (oldest + FORECAST_MAX_AGE).isoformat()
-            hours = corrected_hours(
-                self.forecast_points.get(provider, {}),
-                day_of=lambda when: when.astimezone(zone).date() if zone else when.date(),
-                factor_for=lambda day: found.factor if day == tomorrow else None,
-            )
-            attrs["corrected_hours"] = [
-                {"start": t.isoformat(), "kwh": v} for t, v in sorted(hours.items())
-            ]
-            return attrs
-        attrs["reason"] = self._uncorrected_reason(provider)
-        return attrs
-
-    @property
-    def expected_tomorrow_kwh(self) -> float | None:
-        """Tomorrow's forecast total, or ``None`` when no provider is configured."""
-        if self.preferred_forecast_provider is None:
-            return self._expected_tomorrow_kwh
-        now = dt_util.utcnow()
-        provider = self.select_forecast("tomorrow", now).provider_id
-        return self._tomorrow_total(provider, now) if provider is not None else None
-
-    def _tomorrow_total(self, provider: str, now: datetime) -> float | None:
-        if self.preferred_forecast_provider is None:
-            return self._expected_tomorrow_kwh
-        zone = self._time_zone()
-        tomorrow = (now.astimezone(zone) if zone else now).date() + timedelta(days=1)
-        # Eligibility requires a point for this local day.
-        return sum(
-            value
-            for when, value in self.forecast_points[provider].items()
-            if (when.astimezone(zone) if zone else when).date() == tomorrow
+        if found is None:
+            attrs["reason"] = self._uncorrected_reason(provider)
+            return None, attrs
+        zone = self._time_zone() or dt_util.UTC
+        tomorrow = now.astimezone(zone).date() + timedelta(days=1)
+        hours = corrected_hours(
+            self.forecast_points[provider],
+            day_of=lambda when: when.astimezone(zone).date(),
+            factor_for=lambda day: found.factor if day == tomorrow else None,
         )
+        attrs.update(
+            factor=round(found.factor, 2),
+            applied_factor=found.factor,
+            basis=found.basis,
+            days=found.days,
+            forecast_for_date=tomorrow.isoformat(),
+            corrected_hours=[{"start": t.isoformat(), "kwh": v} for t, v in sorted(hours.items())],
+        )
+        if selected.captured_at is not None:
+            updated = self.journal.health.get(provider, {}).get("provider_updated_at")
+            oldest = (
+                min(selected.captured_at, datetime.fromisoformat(updated))
+                if updated
+                else selected.captured_at
+            )
+            attrs["forecast_valid_until"] = (oldest + FORECAST_MAX_AGE).isoformat()
+        return round(sum(hours.values()), 2), attrs
 
     def window_snapshot(self) -> dict[str, Any]:
         """Every hour in the window, as numbers, so the outlook can be replayed.

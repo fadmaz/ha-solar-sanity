@@ -172,8 +172,9 @@ every five minutes, and its sensors were written only at setup and by the six-ho
 
 - Unique ids are `f"{entry.entry_id}_{key}"`.
 - Sensors:
-  - `expected_tomorrow_corrected`, `TOTAL`, so the forecast is recorded. It corrects the
-    first provider with a figure for tomorrow and no other, by the learned factor for
+  - `expected_tomorrow_corrected`, `TOTAL`, so the forecast is recorded. In Auto it
+    selects the first configured provider with hours for the next local day in the
+    latest completed batch, then checks freshness. It uses the learned factor for
     tomorrow first and a stated score second (`analysis.forecast.correction`), and says
     which in its attributes: `provider`, `forecast_statistic_id`, `factor`, `basis`, `days`,
     or `reason` while unknown. The uncorrected `expected_tomorrow` was retired in 0.33.0
@@ -450,12 +451,14 @@ one resource entry by URL prefix. `tests/test_card_registration.py` covers it.
 
 ### 5.8 Issued prediction journal (0.35.0)
 
-`journal.py` owns a separate `solar_sanity.outlook_journal.<entry_id>` Store,
-version 1. Its envelope is independent of the measurement window's version 1.1.
+`journal.py` owns a separate `solar_sanity.outlook_journal.<entry_id>` Store
+with a version 1.1 envelope independent of the measurement window.
 It contains immutable issued records, settled outcomes, provider capture health,
 the journal's creation instant and last checked instant. At most 180 records
-and 90 days are retained. Unknown versions and malformed records disable journal
-writes while leaving the file and the battery outlook alone.
+and 90 days are retained. The journal reads the file directly on restore and
+after each write. Unknown versions and malformed records disable journal writes
+and leave the original file available for recovery. The battery outlook and
+Recorder archive continue working independently.
 
 At 0.43.0 its optional `load_trial` control stores a versioned experiment epoch,
 generation and setup identity. Old envelopes without it restore normally. A day
@@ -1004,9 +1007,9 @@ points and reserve accuracy >=85%. Historical development replay cannot count.
 The exact active corrected series is exposed to the forecast card as hourly
 energy. Calculations retain the unrounded learned factor; the descriptive factor
 stays rounded, with `applied_factor` available for reproducing the arithmetic.
-The raw tomorrow total also retains precision until the corrected result is
-rounded for publication; rounding it first once moved the sensor by 0.01 kWh
-from its own hourly curve (0.39.1).
+On each publication the tomorrow sensor resolves the next local day and usable
+provider, then sums its corrected hourly energy and rounds once. The total and
+chart switch days together when a fresh capture already covers the new day.
 The curve attribute is excluded from recorder history. The active battery math
 continues to be baseline-0.34.2 while prospective evidence accumulates.
 
