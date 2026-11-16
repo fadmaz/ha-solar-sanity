@@ -17,26 +17,43 @@
 
 ## Install or update
 
+Use the Marketplace, HACS or manual installation, then add the integration.
+
+### Marketplace (Home Assistant 2026.11 or later)
+
+1. Go to **Settings → Marketplace → Add from link**.
+2. Enter `https://github.com/fadmaz/ha-solar-sanity` under **GitHub link** and
+   select **Add**. Connect GitHub if prompted. If asked for a type, choose
+   **Integration**.
+3. Open **Solar Sanity** and install the latest stable release.
+
+[Home Assistant Marketplace custom repositories](https://www.home-assistant.io/integrations/marketplace/#custom-repositories)
+
+### HACS
+
 1. Open **HACS**, open the menu in the upper right and select **Custom
    repositories**.
 2. Enter `https://github.com/fadmaz/ha-solar-sanity` and select **Integration**.
 3. Open **Solar Sanity** in HACS and download the latest stable version.
-4. Restart Home Assistant, then go to **Settings → Devices & services → Add
-   integration** and select **Solar Sanity**.
 
-For updates, download the new version from the existing HACS entry and restart
-Home Assistant. Refresh the dashboard after Home Assistant finishes starting.
-The integration registers its matching cards for dashboards that store
-resources in Home Assistant. See [HACS custom repositories](https://www.hacs.xyz/docs/faq/custom_repositories/)
-and [Solar Sanity releases](https://github.com/fadmaz/ha-solar-sanity/releases).
+[HACS custom repositories](https://www.hacs.xyz/docs/faq/custom_repositories/)
 
 ### Manual installation
 
-If you manage custom integrations yourself, download `solar_sanity.zip` from
-the [stable release](https://github.com/fadmaz/ha-solar-sanity/releases/latest).
-Extract its contents into `<config>/custom_components/solar_sanity/`, with
-`manifest.json` directly inside that directory. Restart Home Assistant and add
-the integration using the same steps above. The release ZIP includes the cards.
+Download `solar_sanity.zip` and extract its contents into
+`<config>/custom_components/solar_sanity/`, with `manifest.json` directly
+inside that directory. The ZIP includes the dashboard cards.
+[Latest stable release](https://github.com/fadmaz/ha-solar-sanity/releases/latest)
+
+### Add Solar Sanity
+
+Restart Home Assistant, then go to **Settings → Devices & services → Add
+integration** and select **Solar Sanity**.
+
+For updates, use the entry in the Marketplace or HACS, or download the new
+release ZIP for a manual installation. Restart Home Assistant and refresh the
+dashboard. Solar Sanity registers the matching cards for dashboards that
+store resources in Home Assistant.
 
 ## Map the measurements
 
@@ -46,15 +63,16 @@ Review any suggestions from your Energy Dashboard before saving them.
 | --- | --- |
 | **Solar generation** | Total output of the panels or inverter for this installation. Required. |
 | **House consumption** | Whole-home consumption for the same installation. Required. Grid import alone misses loads served by solar or the battery. |
-| **Grid import** | Energy or power drawn from the grid. If one signed grid sensor goes negative when exporting, select it here and leave **Grid export** blank. |
+| **Grid import** | Energy or power drawn from the grid. For energy accounting, you can map one signed grid power sensor here if it goes negative when exporting and you leave **Grid export** blank. |
 | **Grid export** | Energy or power sent to the grid, when measured separately. |
 | **Battery charging** and **Battery discharging** | Measurements of the energy flowing into and out of the battery, when available. |
 | **Battery charge level (optional)** | Battery state of charge in percent. Choose it to enable the battery outlook. |
 
 Flow measurements can be in W or kW, or cumulative energy totals. An energy
 sensor must report `state_class: total` or `total_increasing` so Solar Sanity
-can calculate the energy added between readings. Power-based automation
-signals have [additional requirements](AUTOMATIONS.md#solar-surplus-ready).
+can calculate the energy added between readings. **Solar surplus ready** needs
+separate live import and export power sensors.
+[Measured surplus requirements](AUTOMATIONS.md#solar-surplus-ready)
 
 On the next screen, choose the forecast providers to archive. If you selected
 a battery charge sensor, enter **Usable battery capacity (kWh)**, **Reserve (%)**
@@ -101,7 +119,7 @@ lovelace:
       type: module
 ```
 
-On Home Assistant 2025.11, use `mode: yaml` in place of `resource_mode: yaml`.
+Before Home Assistant 2026.2, use `mode: yaml` in place of `resource_mode: yaml`.
 Add the resource once. Increase its version query string after an upgrade if
 your browser keeps loading an older card. Dashboard storage mode handles the
 resource version automatically.
@@ -142,7 +160,7 @@ Open **Solar Sanity: tools → Setup**.
 | What you see | What to check |
 | --- | --- |
 | No card in the picker, or an old card after updating | Restart Home Assistant after installing the integration. Refresh the dashboard and check that the Solar Sanity resource is registered as a JavaScript module. In YAML mode, check the manual resource entry above. |
-| A measurement is unavailable or rejected | Check the source sensor and its unit. For cumulative energy, check its state class. An unsupported classification can also appear in **Settings → Repairs**. |
+| A measurement is unavailable or rejected | Check the source sensor and its unit. For cumulative energy, check its state class. An unsupported classification can also appear in **Settings → System → Repairs**. |
 | Battery outlook is unavailable | Verify that charge level is a percentage and updating, usable capacity is set, and there are enough completed consumption hours in **Setup**. |
 | Corrected forecast is unknown | Check whether the provider covers the relevant period and refreshed recently. **Setup** distinguishes a missing or stale capture from a correction that is still learning. |
 | A forecast was captured but the archive is pending | Check the last submitted batch and read-back in **Setup**. Recorder may still be committing the rows. Solar Sanity retries incomplete verification on its regular capture cycle. |

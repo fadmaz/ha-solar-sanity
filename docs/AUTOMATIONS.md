@@ -25,8 +25,15 @@ has lasted for a set time. The defaults are **1,500 W** for **Minimum measured
 surplus** and **5 minutes** for **Surplus hold time**. The hold time can be
 1–60 minutes.
 
-The signal needs live solar generation, grid export and grid import in W or
-kW. Battery installations also need live discharge power or a signed **Battery
+The signal needs live solar generation and separate, nonnegative grid import
+and export sensors in W or kW. If you have a signed grid sensor that is
+positive for import, you can derive the two sensors with templates. Use
+`max(net, 0)` for import and `max(-net, 0)` for export, where `net` is the
+signed reading. Preserve the source unit and propagate its unavailable state.
+Check that both sensors keep reporting even when one direction stays at zero.
+[Home Assistant template sensors](https://www.home-assistant.io/integrations/template/#state-based-template-sensors)
+
+Battery installations also need live discharge power or a signed **Battery
 power (optional)** sensor. Solar Sanity subtracts import and battery discharge
 from measured export and caps the result at measured solar power. Import or
 battery discharge above **50 W** stops the signal. Missing or stale readings

@@ -103,9 +103,10 @@ is projected to stay above reserve through the outlook. It can reschedule
 within the saved window or wait for usable data. **Expired** means there is
 no time left to finish the saved run.
 
-A scheduled reminder sends a message. A script starts only when you request
-it from the card. **Start requested** means Home Assistant accepted the
-request and ends the reminder. The script handles the appliance itself. If
+A scheduled reminder sends a message. To run a linked script, use **Start
+with Home Assistant** or the `solar_sanity.start_load_reminder` action.
+**Start requested** means Home Assistant accepted the request and Solar Sanity
+ended the reminder. The script handles the appliance itself. If
 the result is unconfirmed, check the script trace or the appliance before
 requesting another run. **Delivery unconfirmed** means the notification
 attempt was interrupted and will not be retried.
