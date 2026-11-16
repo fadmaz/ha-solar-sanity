@@ -274,7 +274,10 @@ async def test_editing_or_deleting_a_saved_load_preserves_an_existing_reminder(
     reminder = await schedule(hass, entry, **values)
     updated = await _save(hass, entry, 1, profile_id=saved["profiles"][0]["id"], power_w=600)
     await _delete(hass, entry, updated)
-    assert (await action(hass, entry, "get_load_reminder"))["reminder"] == reminder
+    current = (await action(hass, entry, "get_load_reminder"))["reminder"]
+    # Updating the outlook can independently move this reminder to waiting.
+    fields = ("id", "destination", "power_w", "duration_minutes", "earliest_start", "finish_by")
+    assert {key: current[key] for key in fields} == {key: reminder[key] for key in fields}
 
 
 async def test_solar_only_planning_accepts_the_same_values_from_the_saved_list(
