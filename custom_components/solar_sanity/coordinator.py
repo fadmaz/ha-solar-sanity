@@ -69,6 +69,7 @@ from .const import (
     STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
 )
+from .export_evidence import ExportEvidence
 from .journal import ARCHIVE_PROOF_REVISION, OutlookJournal
 from .reminders import LoadReminders
 from .statistics_source import (
@@ -227,6 +228,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         #: the forecast and the open hour, all of which this class owns.
         self.battery = BatteryOutlook(hass, self)
         self.automation = AutomationSignals(self)
+        self.export_evidence = ExportEvidence(self)
         self.journal = OutlookJournal(self)
         self.reminders = LoadReminders(self)
 
@@ -297,6 +299,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             return
 
         now = dt_util.utcnow()
+        self.export_evidence.advance(now)
         self._advance_hour(now)
 
         for spec in specs:
@@ -1240,7 +1243,11 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         end. The columnar encoding is the diagnostics block's: about 120 kB at
         the full window.
         """
-        return {"window": self.window_snapshot(), "sources": self._measurement_sources()}
+        return {
+            "window": self.window_snapshot(),
+            "sources": self._measurement_sources(),
+            "export_evidence": self.export_evidence.snapshot(),
+        }
 
     def _measurement_sources(self) -> dict[str, list[str | None]]:
         sources = {}
@@ -1262,6 +1269,9 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         establish which physical measurement supplied a restored value.
         """
         stored = await self._restore_from(self._store)
+        self.export_evidence.restore(
+            stored.get("export_evidence") if stored else None, dt_util.utcnow()
+        )
         if not stored or not isinstance(stored.get("sources"), dict):
             return
         current = self._measurement_sources()
@@ -1278,6 +1288,17 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             for bucket in self._buckets_from_snapshot(stored.get("window"))
             if matched.intersection(bucket.wh)
         ]
+        evidence = self.export_evidence.snapshot()
+        previous_evidence = stored.get("export_evidence") or {}
+        if evidence != previous_evidence:
+            # A rapid second reload must not restore the previous context.
+            await self.async_save_export_evidence()
+
+    async def async_save_export_evidence(self) -> None:
+        try:
+            await self._store.async_save(self._payload())
+        except Exception:
+            _LOGGER.warning("Could not save forecast evidence", exc_info=True)
 
     async def _restore_from(self, store: Store) -> dict[str, Any] | None:
         """One stored file, or ``None`` if it cannot be read for any reason.

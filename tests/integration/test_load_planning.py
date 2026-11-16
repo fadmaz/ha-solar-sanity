@@ -1,6 +1,6 @@
 """Use the native actions with installation-specific planning limits."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, time, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -14,6 +14,8 @@ from custom_components.solar_sanity.const import (
     CONF_FORECAST_ENTRIES,
     CONF_ROLE,
     DOMAIN,
+    EXPORT_UNLIMITED,
+    OPT_GRID_EXPORT_MODE,
     OPT_PLANNING_MAX_GRID_KWH,
     OPT_PLANNING_MIN_SOC_PCT,
     OPT_PREFERRED_FORECAST_PROVIDER,
@@ -22,6 +24,7 @@ from custom_components.solar_sanity.const import (
 from tests.integration.ha_harness import MockConfigEntry
 from tests.integration.test_battery_controls import options
 from tests.integration.test_battery_outlook import _loaded, _week_of_history
+from tests.integration.test_forecast_scoring import _bucket
 from tests.integration.test_setup_check import check
 from tests.integration.test_simulation_service import NOW, invoke, setup
 
@@ -166,4 +169,68 @@ async def test_missing_darkness_needs_evidence_for_the_local_date(
             assert result["grid"]["additional_grid_kwh"] == pytest.approx(1)
             coordinator.forecast_points[chosen] = {hour - timedelta(days=1): 1.0}
             with pytest.raises(ServiceValidationError, match="missing hours"):
+                await invoke(hass, entry)
+
+
+async def test_hourly_evidence_enables_only_the_validated_provider(
+    hass, enable_custom_integrations, entry_data, planning_providers
+):
+    """The real score, setup response and both actions share the verified basis."""
+    with patch(CLOCK, return_value=NOW):
+        entry, coordinator, _, backup, hour = await _solar(hass, entry_data, planning_providers)
+        with pytest.raises(ServiceValidationError, match="roof correction"):
+            await invoke(hass, entry)
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, OPT_GRID_EXPORT_MODE: EXPORT_UNLIMITED}
+        )
+        coordinator.export_evidence.advance(NOW - timedelta(days=40))
+        forecast, shifted = {}, {}
+        for offset in range(1, 40):
+            day = (NOW - timedelta(days=offset)).date()
+            noon = datetime.combine(day, time(12), UTC)
+            for index, (aligned, late) in enumerate(
+                zip((1.0, 3.0, 2.0, 1.0), (1.0, 1.0, 3.0, 2.0), strict=True)
+            ):
+                at = noon + timedelta(hours=index)
+                forecast[at], shifted[at] = aligned, late
+                coordinator._buckets.append(_bucket(at, aligned * 1000))
+
+        def sun(_hass, event, day):
+            return datetime.combine(day, time(12 if event == "sunrise" else 16), UTC)
+
+        with (
+            patch("custom_components.solar_sanity.scoring.get_astral_event_date", side_effect=sun),
+            patch(
+                "custom_components.solar_sanity.scoring.async_forecast_series",
+                side_effect=[forecast, shifted],
+            ) as archive,
+            patch(
+                "custom_components.solar_sanity.load_planning.get_astral_event_date",
+                side_effect=lambda _hass, event, _day: (
+                    hour + timedelta(hours=4 if event == "sunset" else -4)
+                ),
+            ),
+        ):
+            await coordinator.async_refresh()
+            assert all("dayahead_" in call.args[1] for call in archive.await_args_list)
+            result = await invoke(hass, entry)
+            assert result["basis"]["provider"] == "Fallback"
+            assert result["basis"]["forecast_factor_source"] == "validated"
+            assert result["basis"]["forecast_factor"] == 1
+            plan = await invoke(
+                hass,
+                entry,
+                action="find_best_time",
+                finish_by=(hour + timedelta(hours=3)).isoformat(),
+            )
+            assert plan["basis"]["projection_id"] == result["basis"]["projection_id"]
+            assert coordinator._correction_for(backup, None) is None
+            setup_data = await check(hass, entry)
+            first, second = setup_data["forecast"]["providers"]
+            assert first["evidence"]["reason_code"] == "validated"
+            assert second["evidence"]["reason_code"] == "hourly_misalignment"
+            assert first["evidence"]["validation_days"] == 7
+            assert setup_data["automation"]["solar_surplus_ready"]["state"] == "unavailable"
+            await hass.config.async_set_time_zone("Asia/Jerusalem")
+            with pytest.raises(ServiceValidationError, match="hourly planning check"):
                 await invoke(hass, entry)

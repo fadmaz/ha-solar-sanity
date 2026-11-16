@@ -59,6 +59,29 @@ least 28 days, plus stability checks. The sensor explains what is missing
 while it is unknown. Installations with batteries can learn a correction
 from suitable days sooner.
 
+## Forecast evidence for planning
+
+Open **Setup → Solar forecast** to see the configured grid export mode,
+curtailment status and **Forecast evidence** for each provider. A production
+curtailment sensor can confirm actual reduction. A live reading near a
+positive export limit suggests possible reduction. A zero export reading
+leaves the available solar power undetermined.
+
+The hourly check looks at up to 45 completed local days in the current
+setup. It pairs the archived day-ahead forecast with complete daylight
+measurements. Fixed-limit installations also need evidence that reduction
+was inactive for every compared hour. Missing hours and incomplete evidence
+exclude the day. At least 21 usable training days spanning 28 or more days
+must support a stable factor of 1.00. On seven later days the total absolute
+hourly error must stay within 20% of measured production. A one-hour shift
+that improves the comparable error by more than five percentage points
+indicates a timing problem.
+
+Passing this check enables factor 1.00 as a fallback for manual solar-only
+planning. **What if** shows the source and capture time. The solar forecast
+sensors keep their existing correction rules. Changing the export or
+production measurement setup starts a new evidence window.
+
 ## Read issued predictions in History
 
 Solar Sanity saves the first valid battery outlook in the five minutes after

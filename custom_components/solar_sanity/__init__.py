@@ -157,6 +157,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     # Power is integrated on its own state changes rather than sampled. A timer
     # cannot see a kettle that ran for ninety seconds between two ticks.
     entry.async_on_unload(coordinator.async_track_power())
+    for unsubscribe in coordinator.export_evidence.track():
+        entry.async_on_unload(unsubscribe)
     entry.async_on_unload(coordinator.battery.async_track())
     for unsubscribe in coordinator.automation.async_track():
         entry.async_on_unload(unsubscribe)
@@ -209,10 +211,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
 
 async def async_unload_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) -> bool:
     """Stop reminders before replacing the loaded entry."""
-    reminders = entry.runtime_data.coordinator.reminders
+    coordinator = entry.runtime_data.coordinator
+    reminders = coordinator.reminders
     await reminders.async_quiesce()
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if not unloaded:
+    if unloaded and coordinator.export_evidence.since is not None:
+        await coordinator.async_save_export_evidence()
+    elif not unloaded:
         reminders.async_start()
     return unloaded
 

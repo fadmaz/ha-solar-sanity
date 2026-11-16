@@ -20,6 +20,18 @@ interface Provider extends Check {
   verified_at: string | null;
   verification: "pending" | "verified" | "unverified" | null;
   archive_series?: Partial<Record<"latest" | "dayahead", "pending" | "verified" | "unverified" | "not_required">> | null;
+  evidence?: {
+    status: "battery" | "ready" | "waiting";
+    reason: string;
+    factor: number | null;
+    factor_source: string | null;
+    comparable_days: number;
+    training_days: number;
+    validation_days: number;
+    compared_hours: number;
+    hourly_error_pct: number | null;
+    exclusions: Record<string, number>;
+  };
 }
 interface ForecastSource {
   provider: string | null;
@@ -40,6 +52,12 @@ export interface SetupCheckResponse {
     corrected: boolean;
     correction_reason: string | null;
     preferred_provider?: string | null;
+    export?: {
+      mode: "unknown" | "unlimited" | "fixed";
+      limit_w: number | null;
+      curtailment: "confirmed" | "possible" | "not_reported" | "unknown";
+      confirmed_hours: number;
+    };
     sources?: Partial<Record<"battery" | "today" | "tomorrow", ForecastSource>>;
     load_actions?: LoadActionAvailability | null;
   };
@@ -81,6 +99,13 @@ const SOURCE_KEYS = new Set(["battery_lowest_before_sunrise", "solar_energy_toda
 const SOURCE_LABELS = {battery:"Battery outlook",today:"Today's corrected forecast",tomorrow:"Tomorrow's corrected forecast"};
 const ARCHIVE_LABELS = {latest: "Latest forecast", dayahead: "Day-ahead forecast"};
 const ARCHIVE_STATUS = {pending: "Pending", verified: "Verified", unverified: "Unverified", not_required: "No hours due"};
+const EXPORT_LABELS = {unknown: "Unknown", unlimited: "No configured limit", fixed: "Fixed limit"};
+const CURTAILMENT_LABELS = {confirmed: "Active reduction reported", possible: "Possible reduction near export limit",
+  not_reported: "Reduction sensor is off", unknown: "Reduction cannot be determined"};
+const FIT_EXCLUSIONS: Record<string, string> = {daylight_unavailable: "Daylight window unavailable",
+  forecast_incomplete: "Incomplete forecast", measurement_incomplete: "Incomplete measurement",
+  confirmed_curtailment: "Production reduction reported", curtailment_not_ruled_out: "Production reduction cannot be ruled out",
+  low_forecast_energy: "Low forecast energy"};
 const numbers = new Intl.NumberFormat("en", {maximumFractionDigits: 2});
 
 @customElement("solar-sanity-setup-check")
@@ -129,7 +154,7 @@ export class SolarSanitySetupCheck extends LitElement {
         }
         return [e.entity_id, state?.state, state?.attributes.reason_code, state?.attributes.verification,
           state?.attributes.reason, state?.attributes.lead_minutes, state?.attributes.minimum_w,
-          state?.attributes.hold_minutes, state?.attributes.load_planning];
+          state?.attributes.hold_minutes, state?.attributes.load_planning, state?.attributes.forecast_evidence_revision];
       });
     const key = JSON.stringify([device, hass.config.time_zone, health]);
     if (this._key === key) return;
@@ -201,9 +226,14 @@ export class SolarSanitySetupCheck extends LitElement {
   }
 
   private _forecast(data: SetupCheckResponse["forecast"]): TemplateResult {
+    const grid = data.export;
     return this._group("Solar forecast", data, html`
       ${data.sources && data.providers.length ? html`<p>Preferred forecast provider <strong>${data.preferred_provider ?? "Auto"}</strong></p>` : nothing}
       ${data.load_actions?.reason ? html`<p>Load actions · ${data.load_actions.reason}</p>` : nothing}
+      ${grid ? html`<dl><div><dt>Grid export</dt><dd>${EXPORT_LABELS[grid.mode]}${grid.limit_w === null ? "" : ` · ${numbers.format(grid.limit_w)} W`}</dd></div>
+        <div><dt>Curtailment</dt><dd>${CURTAILMENT_LABELS[grid.curtailment]}</dd></div>
+        ${grid.confirmed_hours ? html`<div><dt>Hours with reported reduction</dt><dd>${grid.confirmed_hours}</dd></div>` : nothing}
+      </dl>` : nothing}
       <ul>
         ${data.sources ? (Object.keys(SOURCE_LABELS) as (keyof typeof SOURCE_LABELS)[]).map(key => {
           const source = data.sources?.[key];
@@ -236,9 +266,29 @@ export class SolarSanitySetupCheck extends LitElement {
               const status = provider.archive_series?.[key];
               return status ? html`<div><dt>${ARCHIVE_LABELS[key]}</dt><dd>${ARCHIVE_STATUS[status]}</dd></div>` : nothing;
             })}</dl>` : nothing}
-            ${this._details(provider)}</li>`;
+            ${this._details(provider)}
+            ${provider.evidence ? this._forecastEvidence(provider.evidence) : nothing}</li>`;
         })}
       </ul>`);
+  }
+
+  private _forecastEvidence(evidence: NonNullable<Provider["evidence"]>): TemplateResult {
+    const factor = evidence.factor === null ? "—" : evidence.factor.toFixed(2);
+    const error = evidence.hourly_error_pct === null ? "—" : `${numbers.format(evidence.hourly_error_pct)}%`;
+    const excluded = Object.entries(evidence.exclusions);
+    return html`<details><summary>Forecast evidence</summary>
+      ${evidence.status === "ready" ? html`<p>Forecast source ready for manual planning.</p>` : nothing}
+      <p>${evidence.reason}</p>
+      <dl><div><dt>${evidence.status === "battery" ? "Tomorrow’s correction" : "Planning factor"}</dt><dd>${factor}</dd></div>
+        <div><dt>Comparable days</dt><dd>${evidence.comparable_days}</dd></div>
+        <div><dt>Training days</dt><dd>${evidence.training_days}</dd></div>
+        <div><dt>Validation days</dt><dd>${evidence.validation_days}</dd></div>
+        <div><dt>Validation hours</dt><dd>${evidence.compared_hours}</dd></div>
+        <div><dt>Hourly validation error</dt><dd>${error}</dd></div>
+      </dl>
+      ${excluded.length ? html`<dl>${excluded.map(([key, count]) =>
+        html`<div><dt>${FIT_EXCLUSIONS[key] ?? key}</dt><dd>${count} days excluded</dd></div>`)}</dl>` : nothing}
+    </details>`;
   }
 
   private _battery(data: SetupCheckResponse["battery"]): TemplateResult {

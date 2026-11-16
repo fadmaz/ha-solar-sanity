@@ -126,6 +126,39 @@ describe("live load exploration",()=>{
   });
 });
 
+it("rechecks a solar plan when its verified forecast changes and hides an obsolete result", async () => {
+  const candidate = (id: string) => ({response: {
+    planning_mode: "solar_only",
+    basis: {...response(id).response.basis, provider: "Roof forecast", forecast_factor_source: "validated",
+      forecast_captured_at: "2026-11-10T08:15:00Z"},
+    recommendation: {start_at: "2026-11-10T11:00:00Z", end_at: "2026-11-10T12:00:00Z",
+      baseline_grid_kwh: 0, scenario_grid_kwh: 0.4, additional_grid_kwh: 0.4, meets_limit: true},
+  }});
+  const call = vi.fn().mockResolvedValueOnce(candidate("one"))
+    .mockRejectedValueOnce(new Error("The hourly planning check has not passed."))
+    .mockResolvedValueOnce(candidate("three"));
+  const {c} = await make(call);
+  c.planning = {mode: "solar_only", max_extra_grid_kwh: null, revision: "one", recheck_forecast: true};
+  await settle(c);
+  await input(c, "select", "best_time", "change");
+  await input(c, "input[name=finish_by]", "2026-11-10T13:00");
+  await start(c);
+  expect(c.shadowRoot!.textContent).toContain("Hourly-validated forecast (1.00)");
+  c.projectionId = "two";
+  await settle(c);
+  await vi.advanceTimersByTimeAsync(500);
+  await settle(c);
+  expect(call).toHaveBeenCalledTimes(2);
+  expect(c.shadowRoot!.querySelector("table")).toBeNull();
+  expect(c.shadowRoot!.textContent).toContain("The hourly planning check has not passed.");
+  c.projectionId = "three";
+  await settle(c);
+  await vi.advanceTimersByTimeAsync(500);
+  await settle(c);
+  expect(call).toHaveBeenCalledTimes(3);
+  expect(c.shadowRoot!.textContent).toContain("Hourly-validated forecast (1.00)");
+});
+
 describe("finding the best time", () => {
   it.each(["unsupported", "waiting_for_update"] as const)(
     "shows action availability %s without hiding the recommendation", async status => {

@@ -36,13 +36,16 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
 from ._local_time import local_day
 from .analysis.forecast import Bias, build_days, eligible, estimate
+from .analysis.forecast_fit import FIT_DAYS, HOUR, ForecastFit, evaluate_fit
 from .analysis.model import BucketSource, Role
-from .const import CONF_FORECAST_ENTRIES
+from .const import CONF_FORECAST_ENTRIES, EXPORT_FIXED, EXPORT_UNKNOWN
 from .statistics_source import async_forecast_series, dayahead_statistic_id
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -66,19 +69,22 @@ class ProviderScore:
     entry_id: str
     name: str
     bias: Bias
+    fit: ForecastFit | None = None
+    fit_context: str | None = None
 
 
-def _actual_kwh_by_hour(coordinator: SolarSanityCoordinator) -> dict[datetime, float]:
+def _actual_kwh_by_hour(
+    coordinator: SolarSanityCoordinator, *, complete_only: bool = False
+) -> dict[datetime, float]:
     """Generation this integration measured, by UTC hour, in kilowatt-hours.
 
     Only whole hours, and only hours with a reading. A partial hour is not a
     small hour: a forecast compared against three-quarters of an hour
     under-reads by a quarter with nothing to show for it.
 
-    Provenance is deliberately *not* filtered on. A statistics-derived hour is a
-    weaker measurement of generation than our own, but it is a measurement, and
-    scoring a provider on the days we happened to be running would bias the
-    result toward whatever the weather did while this integration was up.
+    The descriptive daily score includes statistics-derived hours. The manual
+    planning gate needs end-to-end coverage, which a bare hourly mean or sum
+    cannot establish.
     """
     pv_keys = [spec.key for spec in coordinator.specs if spec.role is Role.PV]
     if not pv_keys:
@@ -88,11 +94,62 @@ def _actual_kwh_by_hour(coordinator: SolarSanityCoordinator) -> dict[datetime, f
     for bucket in coordinator.buckets:
         if bucket.seconds != 3600:
             continue
+        if complete_only and not all(
+            bucket.source.get(key)
+            in (BucketSource.OWN_INTEGRAL, BucketSource.COMPLETE_SHORT_TERM_MEAN)
+            for key in pv_keys
+        ):
+            continue
         values = [value for key in pv_keys if (value := bucket.value(key)) is not None]
         if len(values) != len(pv_keys):
             continue
         actual[bucket.start_utc] = sum(values) / WH_PER_KWH
     return actual
+
+
+def _fit_daylight(
+    coordinator: SolarSanityCoordinator, since: datetime, now: datetime
+) -> dict[date, tuple[datetime, ...]]:
+    zone = coordinator.time_zone
+    if zone is None:
+        return {}
+    today = now.astimezone(zone).date()
+    first = max(since.astimezone(zone).date(), today - timedelta(days=FIT_DAYS))
+    daylight: dict[date, tuple[datetime, ...]] = {}
+    for offset in range((today - first).days):
+        day = first + timedelta(days=offset)
+        try:
+            sunrise = get_astral_event_date(coordinator.hass, SUN_EVENT_SUNRISE, day)
+            sunset = get_astral_event_date(coordinator.hass, SUN_EVENT_SUNSET, day)
+        except (ValueError, OverflowError):
+            sunrise = sunset = None
+        if sunrise is None or sunset is None or sunset <= sunrise:
+            daylight[day] = ()
+            continue
+        start = dt_util.as_utc(sunrise).replace(minute=0, second=0, microsecond=0)
+        if start >= since:
+            stop = dt_util.as_utc(sunset)
+            daylight[day] = tuple(
+                start + HOUR * index for index in range(25) if start + HOUR * index < stop
+            )
+    return daylight
+
+
+def forecast_fit_for(coordinator: SolarSanityCoordinator, provider: str) -> ForecastFit:
+    export = coordinator.export_evidence
+    if export.mode == EXPORT_UNKNOWN:
+        return ForecastFit("export_not_configured")
+    if export.mode == EXPORT_FIXED and export.sensor is None:
+        return ForecastFit("curtailment_sensor_missing")
+    context = export.context
+    return next(
+        (
+            score.fit
+            for score in coordinator.forecast_scores
+            if score.entry_id == provider and score.fit is not None and score.fit_context == context
+        ),
+        ForecastFit("insufficient_days"),
+    )
 
 
 def _local_date_or_refuse(coordinator: SolarSanityCoordinator):
@@ -161,6 +218,18 @@ async def async_score_providers(
     end = dt_util.utcnow()
     start = end - timedelta(days=SCORING_WINDOW_DAYS)
     from_mean = _from_mean(coordinator)
+    export = coordinator.export_evidence
+    export.advance(end)
+    fit_since = export.since if export.mode != EXPORT_UNKNOWN else None
+    daylight = _fit_daylight(coordinator, fit_since, end) if fit_since is not None else {}
+    complete = _actual_kwh_by_hour(coordinator, complete_only=True) if daylight else {}
+    context = export.context
+    uncurtailed = (
+        {hour for hour, state in export.hours.items() if state == "off"}
+        if export.mode == EXPORT_FIXED
+        else None
+    )
+    curtailed = frozenset(hour for hour, state in export.hours.items() if state == "on")
 
     scores: list[ProviderScore] = []
     for entry_id in entry_ids:
@@ -181,6 +250,12 @@ async def async_score_providers(
                 entry_id=entry_id,
                 name=provider.title or entry_id,
                 bias=estimate(days, from_mean=from_mean),
+                fit=evaluate_fit(
+                    forecast, complete, daylight, uncurtailed=uncurtailed, curtailed=curtailed
+                )
+                if daylight
+                else None,
+                fit_context=context,
             )
         )
     return scores

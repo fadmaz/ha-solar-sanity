@@ -835,6 +835,23 @@ The collection sensor provides a Recorder-excluded update token and the saved
 defaults. Setup checks the same planning inputs and shows a reason when they
 are unavailable.
 
+### Forecast fit and export evidence (0.53.0)
+
+Scoring reuses the day-ahead archive read and evaluates complete daylight
+pairs for the current installation and provider. Training and validation
+dates are disjoint. Only the manual solar-only planning resolver can use
+a validated neutral factor. The planning revision includes the effective
+factor and provider context, and Setup presents the fit and exclusions
+without reading Recorder.
+
+The measurement store has an optional export evidence block keyed by the
+export settings, mapped sources and location. Closed UTC hours can record
+an observed reduction or continuous inactive coverage from the configured
+binary sensor. The open hour and held sensor value are rebuilt after reload.
+Gaps remain unknown. A live export reading near a positive limit can support
+the possible status in Setup while verified hourly evidence comes from the
+binary sensor.
+
 ### Load reminders (0.50.0)
 
 `reminders.py` owns one active manual-run notification per battery entry. The

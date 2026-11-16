@@ -64,5 +64,6 @@ after you select the button and the current conditions pass a fresh check.
   history. [Report a problem](https://github.com/fadmaz/ha-solar-sanity/issues/new/choose)
 
 [Release notes](https://github.com/fadmaz/ha-solar-sanity/blob/main/CHANGELOG.md) ·
+[Installation compatibility](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/COMPATIBILITY.md) ·
 [Architecture and development](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/ARCHITECTURE.md) ·
 [MIT license](https://github.com/fadmaz/ha-solar-sanity/blob/main/LICENSE)
