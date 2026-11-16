@@ -15,7 +15,7 @@ from custom_components.solar_sanity.const import (
     OPT_GRID_EXPORT_LIMIT_W,
     OPT_GRID_EXPORT_MODE,
 )
-from tests.integration.ha_harness import MockConfigEntry
+from tests.integration.ha_harness import MockConfigEntry, async_fire_time_changed
 from tests.integration.test_battery_outlook import _loaded
 from tests.integration.test_setup_check import check
 
@@ -85,7 +85,8 @@ async def test_reported_curtailment_survives_reload_but_a_gap_stays_unknown(
     hass.states.async_set(CURTAILMENT, "off")
     await hass.async_block_till_done()
     freezer.move_to(start + timedelta(hours=3))
-    coordinator.accumulate()
+    async_fire_time_changed(hass, start + timedelta(hours=3))
+    await hass.async_block_till_done()
     assert coordinator.export_evidence.hours == {start: "off", start + timedelta(hours=1): "on"}
 
     assert await hass.config_entries.async_reload(entry.entry_id)

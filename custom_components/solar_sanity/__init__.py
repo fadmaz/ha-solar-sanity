@@ -165,6 +165,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
 
     @callback
     def _sample(_now: Any) -> None:
+        coordinator.export_evidence.advance(_now)
         coordinator.accumulate()
         sync_energy_issues(hass, entry, coordinator)
         coordinator.battery.refresh(force=True)

@@ -299,7 +299,6 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
             return
 
         now = dt_util.utcnow()
-        self.export_evidence.advance(now)
         self._advance_hour(now)
 
         for spec in specs:
@@ -1243,11 +1242,10 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         end. The columnar encoding is the diagnostics block's: about 120 kB at
         the full window.
         """
-        return {
-            "window": self.window_snapshot(),
-            "sources": self._measurement_sources(),
-            "export_evidence": self.export_evidence.snapshot(),
-        }
+        payload = {"window": self.window_snapshot(), "sources": self._measurement_sources()}
+        if evidence := self.export_evidence.snapshot():
+            payload["export_evidence"] = evidence
+        return payload
 
     def _measurement_sources(self) -> dict[str, list[str | None]]:
         sources = {}
