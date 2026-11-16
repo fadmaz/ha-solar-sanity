@@ -9,8 +9,12 @@ Last updated for 0.54.1, 2026-11-16.
 
 - 0.54.1 publishes tomorrow's corrected total and hourly curve from the same
   source and local day, preserves damaged or newer journal files, and retains
-  unsaved load edits across a failed list refresh. The reference upgrade and
-  dashboard check are pending.
+  unsaved load edits across a failed list refresh. The reference installation
+  loaded 0.54.1 after one Core restart. The live forecast chart, hourly table,
+  and displayed total matched the corrected sensor. All 12 journal records
+  kept their issue times and published values. The first natural Forecast.Solar
+  refresh matched all 44 rolling archive hours in Recorder and preserved the
+  day-ahead rows.
 - 0.54.0 adds shared saved loads to What if. The reference dashboard used a
   saved load in a calculation, retained it through a browser refresh, and
   removed it afterwards. The existing journal survived the Core restart.

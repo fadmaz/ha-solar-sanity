@@ -49,6 +49,10 @@ loads, and users with read access can select them. When a selected load
 changes in the list, the open form keeps its draft and switches to **Manual**.
 Scheduled reminders keep the power and duration used when they were created.
 
+If the list fails to refresh while you edit a saved load, choose **Retry saved
+loads** to return to your draft. If the list changed in the meantime, cancel
+and reopen the editor to make your changes against the current list.
+
 ## Compare one start time
 
 1. Enter **Extra power (W)** and **Duration (minutes)**. Duration can be any
