@@ -31,7 +31,7 @@ positive for import, you can derive the two sensors with templates. Use
 `max(net, 0)` for import and `max(-net, 0)` for export, where `net` is the
 signed reading. Preserve the source unit and propagate its unavailable state.
 Check that both sensors keep reporting even when one direction stays at zero.
-[Home Assistant template sensors](https://www.home-assistant.io/integrations/template/#state-based-template-sensors)
+[Home Assistant template sensors](https://www.home-assistant.io/integrations/template/)
 
 Battery installations also need live discharge power or a signed **Battery
 power (optional)** sensor. Solar Sanity subtracts import and battery discharge
