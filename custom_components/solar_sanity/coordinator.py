@@ -71,6 +71,7 @@ from .const import (
 )
 from .export_evidence import ExportEvidence
 from .journal import ARCHIVE_PROOF_REVISION, OutlookJournal
+from .load_profiles import LoadProfiles
 from .reminders import LoadReminders
 from .statistics_source import (
     ArchiveExpectations,
@@ -231,6 +232,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
         self.export_evidence = ExportEvidence(self)
         self.journal = OutlookJournal(self)
         self.reminders = LoadReminders(self)
+        self.load_profiles = LoadProfiles(hass, entry.entry_id)
 
     # -- configuration ------------------------------------------------------
 

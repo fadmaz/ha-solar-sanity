@@ -135,6 +135,66 @@ find_best_time:
           step: any
           mode: box
           unit_of_measurement: kWh
+list_load_profiles:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
+save_load_profile:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
+    revision:
+      required: true
+      selector:
+        number:
+          min: 0
+          mode: box
+    profile_id:
+      selector:
+        text:
+    name:
+      required: true
+      selector:
+        text:
+    power_w:
+      required: true
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+          unit_of_measurement: W
+    duration_minutes:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 1440
+          mode: box
+          unit_of_measurement: min
+delete_load_profile:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: solar_sanity
+    revision:
+      required: true
+      selector:
+        number:
+          min: 0
+          mode: box
+    profile_id:
+      required: true
+      selector:
+        text:
 schedule_load_reminder:
   fields:
     device_id:

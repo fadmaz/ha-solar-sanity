@@ -40,7 +40,7 @@ Forecast.Solar in Home Assistant first.
 | I want to… | Read |
 | --- | --- |
 | Install, update, map sensors or fix missing data | [Get started](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/GETTING_STARTED.md) |
-| Compare an extra load, find a time, or set a reminder | [Plan a load](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/LOAD_PLANNING.md) |
+| Save a load, compare start times, or set a reminder | [Plan a load](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/LOAD_PLANNING.md) |
 | Get a reserve or surplus notification | [Set up alerts](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/AUTOMATIONS.md) |
 | Understand the charts, past predictions and accuracy | [Forecasts and history](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/FORECASTS_AND_HISTORY.md) |
 | Find a setting, entity name or Home Assistant action | [Reference](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/REFERENCE.md) |

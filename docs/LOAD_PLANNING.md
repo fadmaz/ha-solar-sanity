@@ -35,6 +35,20 @@ An empty grid limit allows any estimated additional grid energy. **0 kWh**
 allows only runs with no estimated additional draw. The house can still draw
 grid energy for its existing load during that interval.
 
+## Reuse a saved load
+
+Choose a **Saved load** to fill in its power and duration. Your start, finish
+deadline and planning limit stay as entered. Select **Calculate** or **Find
+best time** to run the new comparison. Editing the power or duration switches
+the picker to **Manual** and keeps your draft values.
+
+An administrator can choose **Save as load**, give the current power and
+duration a name, and keep it in this installation's shared list. Use **Manage
+saved loads** to edit or delete a load. Each installation holds up to 20
+loads, and users with read access can select them. When a selected load
+changes in the list, the open form keeps its draft and switches to **Manual**.
+Scheduled reminders keep the power and duration used when they were created.
+
 ## Compare one start time
 
 1. Enter **Extra power (W)** and **Duration (minutes)**. Duration can be any

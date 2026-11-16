@@ -64,7 +64,7 @@ async def setup(hass, entry_data):
     return entry, journal, state
 
 
-async def action(hass, entry, name, *, context=OWNER, **data):
+async def action(hass, entry, name, /, *, context=OWNER, **data):
     return await hass.services.async_call(
         DOMAIN,
         name,

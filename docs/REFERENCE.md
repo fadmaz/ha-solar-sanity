@@ -107,6 +107,9 @@ For a script or automation, use `response_variable` to read it in a later step.
 | `solar_sanity.get_forecast_history` | `device_id` and optional `days` from 1 to 90, default 28. Read issued predictions and results. |
 | `solar_sanity.simulate_load` | `device_id`, `power_w`, `duration_minutes` and optional `start_at`. Read a battery or solar-only comparison. |
 | `solar_sanity.find_best_time` | `device_id`, `power_w`, `duration_minutes`, `finish_by` and optional `earliest_start`. Compare complete runs and get a recommendation when one qualifies. |
+| `solar_sanity.list_load_profiles` | `device_id`. Read the installation's saved loads, list `revision` and `storage_error` flag. Each load has an `id`, `name`, `power_w` and `duration_minutes`. |
+| `solar_sanity.save_load_profile` | Administrator only. Supply `device_id`, current list `revision`, `name`, `power_w` and `duration_minutes`. Include `profile_id` to edit an existing load. Returns the updated list. |
+| `solar_sanity.delete_load_profile` | Administrator only. Supply `device_id`, current list `revision` and `profile_id`. Returns the updated list. |
 | `solar_sanity.preview_battery_settings` | `device_id`, current `projection_id` and proposed `battery_charge_power_limit_w` and `inverter_standby_w`. Use `null` to preview automatic estimation. |
 | `solar_sanity.rescore_forecasts` | Recalculate forecast scores for configured providers from retained data. |
 | `solar_sanity.schedule_load_reminder` | Save a reminder with the current `projection_id`, `power_w`, `duration_minutes` and `finish_by`. Set `destination` to a `notify` entity or a Companion App notification action. `earliest_start` and `script_entity_id` are optional. |
