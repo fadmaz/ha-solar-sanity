@@ -3,10 +3,14 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated for 0.52.0, 2026-11-16.
+Last updated for 0.53.0, 2026-11-16.
 
 ## Latest delivery and operational acceptance
 
+- 0.53.0 adds export configuration, curtailment evidence and an hourly
+  validation gate for a neutral forecast in solar-only What if. Reference
+  deployment and independent solar-only field validation remain open.
+  See the [compatibility matrix](COMPATIBILITY.md).
 - 0.52.0 adds manual battery charge limits and solar-only estimates in What if.
   The reference installation loaded 0.52.0 after a HACS upgrade and restart.
   The saved journal survived, What if and Setup rendered on the live instance,

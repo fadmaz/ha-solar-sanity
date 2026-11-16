@@ -51,6 +51,9 @@ from .const import (
     DEFAULT_SURPLUS_HOLD_MINUTES,
     DEFAULT_TARGET_PCT,
     DOMAIN,
+    EXPORT_FIXED,
+    EXPORT_UNKNOWN,
+    EXPORT_UNLIMITED,
     OPT_BATTERY_CAPACITY_KWH,
     OPT_BATTERY_CHARGE_POWER_LIMIT_W,
     OPT_BATTERY_POWER,
@@ -58,6 +61,9 @@ from .const import (
     OPT_BATTERY_RESERVE_PCT,
     OPT_BATTERY_SOC,
     OPT_BATTERY_TARGET_PCT,
+    OPT_CURTAILMENT_SENSOR,
+    OPT_GRID_EXPORT_LIMIT_W,
+    OPT_GRID_EXPORT_MODE,
     OPT_LOAD_PROFILE_ALTERNATE_DAYS,
     OPT_MINIMUM_SURPLUS_W,
     OPT_PLANNING_MAX_GRID_KWH,
@@ -551,6 +557,17 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
             errors[OPT_LOAD_PROFILE_ALTERNATE_DAYS] = "all_schedule_days"
 
         if user_input is not None:
+            export_mode = user_input.get(
+                OPT_GRID_EXPORT_MODE,
+                self.config_entry.options.get(OPT_GRID_EXPORT_MODE, EXPORT_UNKNOWN),
+            )
+            if export_mode == EXPORT_FIXED:
+                try:
+                    manual[OPT_GRID_EXPORT_LIMIT_W] = power_override(
+                        user_input.get(OPT_GRID_EXPORT_LIMIT_W), positive=False
+                    )
+                except ValueError:
+                    errors[OPT_GRID_EXPORT_LIMIT_W] = "invalid_export_limit"
             if OPT_PLANNING_MIN_SOC_PCT in fields and (
                 (raw := user_input.get(OPT_PLANNING_MIN_SOC_PCT)) not in (None, "")
             ):
@@ -618,6 +635,10 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
                     options.pop(name, None)
                 else:
                     options[name] = manual.get(name, user_input[name])
+            if options.get(OPT_GRID_EXPORT_MODE) in (None, EXPORT_UNKNOWN):
+                options.pop(OPT_GRID_EXPORT_MODE, None)
+            if options.get(OPT_GRID_EXPORT_MODE) != EXPORT_FIXED:
+                options.pop(OPT_GRID_EXPORT_LIMIT_W, None)
             return self.async_create_entry(data=options)
 
         return self.async_show_form(
@@ -643,6 +664,27 @@ class SolarSanityOptionsFlow(OptionsFlowWithReload):
             fields[vol.Optional(OPT_PREFERRED_FORECAST_PROVIDER, default=default)] = (
                 selector.SelectSelector(selector.SelectSelectorConfig(options=choices))
             )
+
+        fields[
+            vol.Optional(
+                OPT_GRID_EXPORT_MODE,
+                default=self.config_entry.options.get(OPT_GRID_EXPORT_MODE, EXPORT_UNKNOWN),
+            )
+        ] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(value=EXPORT_UNKNOWN, label="Unknown"),
+                    selector.SelectOptionDict(value=EXPORT_UNLIMITED, label="No configured limit"),
+                    selector.SelectOptionDict(value=EXPORT_FIXED, label="Fixed limit"),
+                ]
+            )
+        )
+        fields[vol.Optional(OPT_GRID_EXPORT_LIMIT_W)] = _FiniteNumberSelector(
+            selector.NumberSelectorConfig(min=0, step="any", mode="box", unit_of_measurement="W")
+        )
+        fields[vol.Optional(OPT_CURTAILMENT_SENSOR)] = selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="binary_sensor")
+        )
 
         # Optional, and the start of the battery outlook: everything it projects
         # begins from this reading. Filtered to battery-percentage sensors,

@@ -11,6 +11,9 @@ the list of linked forecast providers.
 | Setting | Use |
 | --- | --- |
 | **Preferred forecast provider** | Choose a linked provider or **Auto**. Check **Setup → Forecast** for the provider actually used for each result. |
+| **Grid export** | Describe the installation's export configuration. Choose **No configured limit** or **Fixed limit** to start collecting hourly forecast evidence. The default is **Unknown**. |
+| **Grid export limit (W)** | Required for **Fixed limit**. Enter 0 for zero export. The value describes the grid connection for Solar Sanity's checks. |
+| **Production curtailed (optional)** | A binary sensor reporting actual production reduction. A fixed-limit installation needs this sensor to qualify for the 1.00 planning factor. |
 | **Battery charge level** | Battery state of charge as a percentage. |
 | **Usable battery capacity (kWh)** | Energy the battery can store over its usable charge range. Required for the battery outlook. Range 0.1–1,000 kWh. |
 | **Reserve (%)** | Set to the battery cutoff used by your system. Range 0–95%. Default 20%. |
@@ -100,7 +103,7 @@ For a script or automation, use `response_variable` to read it in a later step.
 
 | Action | Inputs and use |
 | --- | --- |
-| `solar_sanity.get_setup_check` | `device_id`. Read current measurement, forecast, battery, history and load planning readiness. |
+| `solar_sanity.get_setup_check` | `device_id`. Read current measurement, forecast, battery, history and load planning readiness. `forecast.export` gives the export setting and curtailment status. Each provider's `evidence` includes validation counts, error and exclusions. |
 | `solar_sanity.get_forecast_history` | `device_id` and optional `days` from 1 to 90, default 28. Read issued predictions and results. |
 | `solar_sanity.simulate_load` | `device_id`, `power_w`, `duration_minutes` and optional `start_at`. Read a battery or solar-only comparison. |
 | `solar_sanity.find_best_time` | `device_id`, `power_w`, `duration_minutes`, `finish_by` and optional `earliest_start`. Compare complete runs and get a recommendation when one qualifies. |
@@ -117,6 +120,10 @@ The two planning actions accept optional `minimum_soc_pct` for a battery or
 without a solar-only cap. Use timestamps with a UTC offset, such as
 `2026-05-20T15:00:00+02:00`. The reminder actions require a Home Assistant
 administrator.
+
+Solar-only planning responses include `forecast_factor` and
+`forecast_factor_source` in `basis`. A source of `validated` is a factor of
+1.00 supported by the hourly check for manual planning.
 
 For example, a script can ask what a 1,000 W load would do over the next hour.
 Replace the placeholder with the Solar Sanity device ID.

@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
 from homeassistant.helpers.sun import get_astral_event_date
 
+from .analysis.forecast import Correction
 from .analysis.model import Role
 from .analysis.outlook import HORIZON_HOURS, Step
 from .analysis.profile import hourly_profile
@@ -19,12 +20,14 @@ from .const import (
     CONF_CHANNELS,
     CONF_FORECAST_ENTRIES,
     CONF_ROLE,
+    EXPORT_UNKNOWN,
     OPT_BATTERY_POWER,
     OPT_BATTERY_SOC,
     OPT_PLANNING_MAX_GRID_KWH,
     OPT_PLANNING_MIN_SOC_PCT,
     OPT_SOLAR_ONLY_PLANNING,
 )
+from .scoring import forecast_fit_for
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -44,6 +47,7 @@ PLANNING_REASONS = {
     "forecast_incomplete": "The forecast is missing hours in this planning window.",
     "beyond_horizon": "The planning window extends beyond the current outlook.",
     "window_too_short": "The load cannot finish by the deadline.",
+    "forecast_fit_pending": "The hourly planning check has not passed. See Setup for details.",
 }
 
 
@@ -72,6 +76,16 @@ def _solar_enabled(coordinator: SolarSanityCoordinator) -> bool:
     )
 
 
+def solar_planning_correction(
+    coordinator: SolarSanityCoordinator, provider: str
+) -> Correction | None:
+    correction = coordinator._correction_for(provider, None)
+    if correction is not None:
+        return correction
+    fit = forecast_fit_for(coordinator, provider)
+    return Correction(1.0, "validated", fit.training_days) if fit.eligible else None
+
+
 def planning_metadata(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
     """Defaults and a small update signal for the card, with no I/O."""
     options = coordinator.entry.options
@@ -86,15 +100,27 @@ def planning_metadata(coordinator: SolarSanityCoordinator, now: datetime) -> dic
     if _solar_enabled(coordinator):
         tick = int(now.timestamp() // BUCKET_INTERVAL.total_seconds())
         sources = tuple(
-            (provider, coordinator.forecast_capture_time(provider))
+            (
+                provider,
+                coordinator.forecast_capture_time(provider),
+                solar_planning_correction(coordinator, provider),
+            )
             for provider in coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or ()
             if coordinator.forecast_available_for_planning(provider)
         )
-        context = (coordinator.entry.entry_id, tick, sources, coordinator.time_zone)
+        context = (
+            coordinator.entry.entry_id,
+            tick,
+            sources,
+            coordinator.time_zone,
+            coordinator.preferred_forecast_provider,
+            coordinator.export_evidence.context,
+        )
         return {
             "mode": "solar_only",
             "max_extra_grid_kwh": options.get(OPT_PLANNING_MAX_GRID_KWH),
             "revision": sha256(repr(context).encode()).hexdigest(),
+            "recheck_forecast": coordinator.export_evidence.mode != EXPORT_UNKNOWN,
         }
     return {"mode": None}
 
@@ -106,6 +132,7 @@ class SolarPlanningBasis:
     provider: str
     captured_at: datetime
     computed_at: datetime
+    correction: Correction
 
 
 def solar_planning_basis(
@@ -173,9 +200,14 @@ def solar_planning_basis(
         ):
             continue
 
-        correction = coordinator._correction_for(provider, None)
+        correction = solar_planning_correction(coordinator, provider)
         if correction is None:
-            problems.add("correction_unavailable")
+            reason = (
+                "correction_unavailable"
+                if coordinator.export_evidence.mode == EXPORT_UNKNOWN
+                else "forecast_fit_pending"
+            )
+            problems.add(reason)
             continue
         supplied_days = {point.astimezone(zone).date() for point in points}
         steps = []
@@ -205,10 +237,11 @@ def solar_planning_basis(
                 entry.title,
                 captured,
                 now,
+                correction,
             )
         problems.add("forecast_incomplete")
 
-    for reason in ("forecast_incomplete", "correction_unavailable"):
+    for reason in ("forecast_incomplete", "forecast_fit_pending", "correction_unavailable"):
         if reason in problems:
             raise PlanningUnavailableError(reason)
     raise PlanningUnavailableError("forecast_unavailable")

@@ -235,6 +235,27 @@ describe("setup check tools", () => {
     expect(panel.querySelectorAll("section")).toHaveLength(4);
   });
 
+  it("shows explicit zero export and the provider's hourly planning evidence", async () => {
+    const result = setupData();
+    result.forecast.export = {mode:"fixed", limit_w:0, curtailment:"confirmed", confirmed_hours:2};
+    result.forecast.providers[0]!.evidence = {status:"ready", reason:"The forecast passed the hourly check for manual planning.",
+      factor:1, factor_source:"validated", comparable_days:35, training_days:28, validation_days:7,
+      compared_hours:56, hourly_error_pct:12.5, exclusions:{confirmed_curtailment:2}};
+    const c = new SolarSanityToolsCard();
+    c.setConfig({type:"custom:solar-sanity-tools-card",default_tab:"setup"});
+    c.hass = hass(vi.fn().mockResolvedValue({response:result}));
+    document.body.append(c);
+    const panel = await setup(c);
+    const forecast = panel.querySelector('section[aria-label="Solar forecast"]')!;
+    expect(forecast.textContent).toContain("Fixed limit · 0 W");
+    expect(forecast.textContent).toContain("Active reduction reported");
+    const evidence = forecast.querySelector("details")!;
+    expect(evidence.querySelector("summary")?.textContent).toBe("Forecast evidence");
+    expect(evidence.textContent).toContain("1.00");
+    expect(evidence.textContent).toContain("12.5%");
+    expect(evidence.textContent).toContain("2 days excluded");
+  });
+
   it("ignores a late setup response for the previous installation", async () => {
     let old: (v:unknown)=>void = ()=>{};
     const next = setupData();

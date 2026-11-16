@@ -16,9 +16,18 @@ shows how much of that run your installation could cover.
 
 Enable **Grid-connected solar without a battery** under **Configure** to open
 the solar-only planner. It needs completed house consumption history and a
-fresh, corrected forecast from one provider covering the requested window.
+fresh forecast from one provider covering the requested window. A roof
+correction or a factor of 1.00 supported by the hourly check is required.
 A grid import meter is optional. **Setup → Load planning** shows what is
 missing if the planner cannot estimate a run.
+
+To qualify for factor 1.00, set **Grid export** to match your installation.
+Open **Setup → Solar forecast → Forecast evidence** to see how many days
+qualified and whether the timing and error checks passed. The hourly check
+starts when you configure the export mode. With a fixed limit, a production
+curtailment sensor must confirm that each qualifying daylight hour ran
+without reduction.
+[How the forecast check works](FORECASTS_AND_HISTORY.md#forecast-evidence-for-planning)
 
 Set your default limit under **Configure**. Inside **What if**, change or
 clear it for the current comparison. An empty battery limit uses the reserve.
@@ -51,8 +60,9 @@ close call to avoid jumping between times.
 2. Enter **Finish by** and, optionally, **Earliest start**. Leave the
    earliest start empty to search from now.
 3. Select **Find best time**. Compare **Recommended** with **Run now** when
-   starting now is within the selected window. Calculate again if the card
-   marks the result outdated.
+   starting now is within the selected window. Solar-only plans with a
+   configured export mode refresh automatically while this tab is open.
+   Calculate again if the card marks another result outdated.
 
 Solar Sanity checks starts on the quarter hour and at the exact ends of the
 allowed start range. It ranks battery runs by least estimated additional

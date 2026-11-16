@@ -19,12 +19,13 @@ export interface SimulationResponse {
 
 export type LoadPlanning =
   | {mode: "battery"; reserve_pct: number; minimum_soc_pct: number | null}
-  | {mode: "solar_only"; max_extra_grid_kwh: number | null; revision: string}
+  | {mode: "solar_only"; max_extra_grid_kwh: number | null; revision: string; recheck_forecast?: boolean}
   | {mode: null};
 
 interface SolarBasis {
   projection_id: string; computed_at: string; horizon_end: string; time_zone: string;
   provider: string; forecast_captured_at: string;
+  forecast_factor?: number; forecast_factor_source?: string;
 }
 
 export interface SolarGridTiming {

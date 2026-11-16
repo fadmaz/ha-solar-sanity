@@ -127,6 +127,7 @@ class Bias:
     reportable_pct: int | None = None
     reason: str = ""
     measurements: dict[str, float] = field(default_factory=dict)
+    neutral: bool = False
 
     @property
     def direction(self) -> str:
@@ -243,6 +244,7 @@ def estimate(days: list[ForecastDay], *, from_mean: bool = False) -> Bias:
             value=value,
             reason="The forecast tracks what happens closely enough to say nothing.",
             measurements=measured,
+            neutral=True,
         )
 
     return Bias(

@@ -124,6 +124,8 @@ def _solar_basis_view(basis: SolarPlanningBasis, time_zone: str) -> dict:
         "forecast_used": True,
         "provider": basis.provider,
         "forecast_captured_at": basis.captured_at.isoformat(),
+        "forecast_factor": basis.correction.factor,
+        "forecast_factor_source": basis.correction.basis,
         "time_zone": time_zone,
     }
 

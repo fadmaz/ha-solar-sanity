@@ -2,6 +2,18 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.53.0] - 2026-11-16
+
+### Added
+
+- Describe the installation's grid export limit, including zero export, and
+  optionally track a binary sensor that reports actual production curtailment.
+- Setup shows curtailment evidence and the hourly forecast check for each
+  provider, including validation error and why days were excluded.
+- Solar-only What if can use a forecast at factor 1.00 after the installation
+  passes the hourly check. A plan that uses the new check is recalculated when
+  its forecast changes while What if is open.
+
 ## [0.52.0] - 2026-11-15
 
 ### Added

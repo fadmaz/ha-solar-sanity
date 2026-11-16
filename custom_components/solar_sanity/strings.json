@@ -108,7 +108,10 @@
           "surplus_hold_minutes": "Surplus hold time",
           "planning_min_soc_pct": "Minimum planned battery charge",
           "solar_only_planning": "Grid-connected solar without a battery",
-          "planning_max_grid_kwh": "Maximum estimated additional grid energy"
+          "planning_max_grid_kwh": "Maximum estimated additional grid energy",
+          "grid_export_mode": "Grid export",
+          "grid_export_limit_w": "Grid export limit (W)",
+          "curtailment_sensor": "Production curtailed (optional)"
         },
         "data_description": {
           "battery_soc_entity": "Optional. Your battery's state of charge, as a percentage. With the capacity below, it is what the battery outlook projects from.",
@@ -126,7 +129,10 @@
           "surplus_hold_minutes": "How many whole minutes the surplus must stay at or above the threshold (1–60).",
           "planning_min_soc_pct": "Optional default for manual planning in What if. Enter a percentage at or above the reserve. Leave blank to use the reserve.",
           "solar_only_planning": "Enable manual grid energy estimates in What if for a grid-connected installation with no battery. Uses the corrected solar forecast and measured house consumption history.",
-          "planning_max_grid_kwh": "Optional default for planning without a battery. Enter the maximum additional grid energy in kWh. Enter zero for a run with no estimated additional grid energy, or leave blank to clear the limit."
+          "planning_max_grid_kwh": "Optional default for planning without a battery. Enter the maximum additional grid energy in kWh. Enter zero for a run with no estimated additional grid energy, or leave blank to clear the limit.",
+          "grid_export_mode": "Describe whether your installation has a configured export limit. Use Unknown for a dynamic or unverified limit.",
+          "grid_export_limit_w": "Required for Fixed limit. Enter 0 for a zero-export installation.",
+          "curtailment_sensor": "Choose a binary sensor that is on when the inverter is actively reducing solar production. A sensor that only reports a configured limit cannot establish this."
         }
       }
     },
@@ -138,6 +144,7 @@
       "invalid_signal_threshold": "Enter a finite value in range. Enter durations in whole minutes.",
       "invalid_planning_minimum": "Enter a finite percentage from the battery reserve to 100%.",
       "invalid_planning_grid_limit": "Enter a finite non-negative grid energy limit.",
+      "invalid_export_limit": "Enter a finite export limit of at least 0 W.",
       "battery_present_for_planning": "Turn off solar-only planning when configuring a battery."
     }
   },

@@ -1,7 +1,8 @@
 """Present the installation's current setup without starting collection or grading."""
 
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
+from hashlib import sha256
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntryState
@@ -11,9 +12,10 @@ from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
 from ._forecast_plan import FORECAST_SOURCE_REASONS, ForecastSelection, forecast_is_fresh
 from .analysis.history import OBSERVATION_REASONS
 from .analysis.model import ChannelSpec, Role
+from .automation_signals import FLOW_TOLERANCE_W, MEASUREMENT_MAX_AGE
 from .battery_controls import control_view
 from .battery_outlook import REASONS
-from .const import CONF_FORECAST_ENTRIES, FORECAST_MAX_AGE, OPT_BATTERY_SOC
+from .const import CONF_FORECAST_ENTRIES, FORECAST_MAX_AGE, OPT_BATTERY_SOC, OPT_SOLAR_ONLY_PLANNING
 from .coordinator import (
     KIND_ENERGY,
     KIND_POWER,
@@ -23,12 +25,115 @@ from .coordinator import (
     read_channel,
 )
 from .journal import COLLECTION_REASONS
-from .load_planning import planning_status
+from .load_planning import has_battery_channels, planning_status, solar_planning_correction
+from .scoring import forecast_fit_for
 
 READY = "ready"
 WAITING = "waiting_for_data"
 ATTENTION = "needs_attention"
 NOT_CONFIGURED = "not_configured"
+
+FIT_REASONS = {
+    "validated": "The forecast passed the hourly check for manual planning.",
+    "export_not_configured": "Choose the grid export mode to start the hourly check.",
+    "curtailment_sensor_missing": (
+        "Select a production curtailment sensor to verify hours under a fixed export limit."
+    ),
+    "insufficient_days": (
+        "Waiting for 21 comparable training days over 28 days or more and 7 later validation days."
+    ),
+    "non_neutral_daily_score": "The training days do not support a stable forecast factor of 1.00.",
+    "insufficient_production": "The validation hours have no usable measured solar production.",
+    "alignment_unavailable": "There is not enough measured daylight to check forecast alignment.",
+    "hourly_misalignment": "Shifting the forecast by an hour substantially reduces its error.",
+    "hourly_error_high": "The validation error exceeds 20% of measured solar energy.",
+}
+
+
+def _export_evidence(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
+    export = coordinator.export_evidence
+    observed = export.observed_state
+    limit = export.limit_w
+    readings: dict[Role, float] = {}
+    specs = {spec.role: spec for spec in coordinator.specs}
+    if observed is None and limit is not None and limit > 0:
+        for role in (Role.PV, Role.GRID_EXPORT, Role.GRID_IMPORT):
+            if (spec := specs.get(role)) is None:
+                continue
+            state = coordinator.hass.states.get(spec.entity_id)
+            if (
+                state is None
+                or state.attributes.get("restored")
+                or not timedelta(0) <= now - state.last_reported <= MEASUREMENT_MAX_AGE
+            ):
+                continue
+            watts, kind = read_channel(state)
+            if watts is not None and kind == KIND_POWER:
+                readings[role] = watts
+    measured = readings.get(Role.GRID_EXPORT)
+    if Role.GRID_EXPORT not in specs and (signed := readings.get(Role.GRID_IMPORT)) is not None:
+        measured = -signed
+    possible = (
+        limit is not None
+        and limit > 0
+        and readings.get(Role.PV, 0) > 0
+        and measured is not None
+        and measured > 0
+        and abs(measured - limit) <= FLOW_TOLERANCE_W
+    )
+    status = {"on": "confirmed", "off": "not_reported"}.get(
+        observed, "possible" if possible else "unknown"
+    )
+    return {
+        "mode": export.mode,
+        "limit_w": limit,
+        "curtailment": status,
+        "confirmed_hours": export.confirmed_hours,
+    }
+
+
+def _provider_evidence(coordinator: SolarSanityCoordinator, provider: str, now: datetime) -> dict:
+    fit = forecast_fit_for(coordinator, provider)
+    entry = coordinator.entry
+    battery = has_battery_channels(entry.data, entry.options)
+    correction = (
+        coordinator._tomorrow_correction(provider, now)
+        if battery
+        else solar_planning_correction(coordinator, provider)
+    )
+    captured = coordinator.forecast_capture_time(provider)
+    source = coordinator.hass.config_entries.async_get_entry(provider)
+    fresh = (
+        source is not None
+        and source.state is ConfigEntryState.LOADED
+        and source.disabled_by is None
+        and coordinator.forecast_available_for_planning(provider)
+        and captured is not None
+        and coordinator.forecast_source_is_fresh(provider, captured, now)
+    )
+    planning_ready = entry.options.get(OPT_SOLAR_ONLY_PLANNING) and fresh and correction is not None
+    return {
+        "status": "battery" if battery else "ready" if planning_ready else "waiting",
+        "reason": FIT_REASONS[fit.reason],
+        "reason_code": fit.reason,
+        "factor": correction.factor if correction is not None else None,
+        "factor_source": correction.basis if correction is not None else None,
+        "comparable_days": fit.comparable_days,
+        "training_days": fit.training_days,
+        "validation_days": fit.validation_days,
+        "compared_hours": fit.compared_hours,
+        "hourly_error_pct": fit.hourly_error_pct,
+        "exclusions": fit.exclusions,
+    }
+
+
+def forecast_evidence_revision(coordinator: SolarSanityCoordinator, now: datetime) -> str:
+    export = _export_evidence(coordinator, now)
+    fits = tuple(
+        forecast_fit_for(coordinator, provider)
+        for provider in coordinator.entry.data.get(CONF_FORECAST_ENTRIES) or ()
+    )
+    return sha256(repr((export, fits)).encode()).hexdigest()
 
 
 def _check(status: str, reason: str | None = None, *, action: str | None = None) -> dict:
@@ -190,7 +295,13 @@ def _forecast(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
     ):
         entry = coordinator.hass.config_entries.async_get_entry(entry_id)
         labels[entry_id] = entry.title if entry is not None else f"Unavailable provider {index}"
-        providers.append({**_provider(coordinator, entry_id, now), "name": labels[entry_id]})
+        providers.append(
+            {
+                **_provider(coordinator, entry_id, now),
+                "name": labels[entry_id],
+                "evidence": _provider_evidence(coordinator, entry_id, now),
+            }
+        )
     # Disambiguate entries even when two instances of the same integration
     # have the same title.
     counts = Counter(labels.values())
@@ -267,6 +378,7 @@ def _forecast(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
     return {
         **check,
         "providers": providers,
+        "export": _export_evidence(coordinator, now),
         "preferred_provider": labels.get(preferred) if preferred is not None else None,
         "sources": sources,
         "load_actions": coordinator.reminders.forecast_action_status(state, now)

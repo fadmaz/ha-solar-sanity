@@ -38,6 +38,7 @@ from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .entity import SolarSanityEntity
 from .journal import COLLECTION_REASONS, MODEL_REVISION
 from .load_planning import planning_metadata
+from .setup_check import forecast_evidence_revision
 from .statistics_source import forecast_statistic_id
 
 
@@ -195,6 +196,7 @@ COLLECTION_SENSOR = SolarSanitySensorDescription(
         "reason": COLLECTION_REASONS.get(c.journal.status()[1]),
         "battery_outlook_configured": c.battery.configured,
         "load_planning": planning_metadata(c, dt_util.utcnow()),
+        "forecast_evidence_revision": forecast_evidence_revision(c, dt_util.utcnow()),
     },
 )
 
@@ -466,7 +468,9 @@ class SolarSanitySensor(SolarSanityEntity, SensorEntity):
     """One sensor, driven entirely by its description."""
 
     entity_description: SolarSanitySensorDescription
-    _unrecorded_attributes = frozenset({"corrected_hours", "load_planning"})
+    _unrecorded_attributes = frozenset(
+        {"corrected_hours", "load_planning", "forecast_evidence_revision"}
+    )
 
     def __init__(
         self,

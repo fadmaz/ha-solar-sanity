@@ -48,6 +48,7 @@ export class SolarSanitySimulation extends LitElement {
   private _generation=0;
   private _running=false;
   private _queued=false;
+  private _planStarted=false;
   private _zone="";
   private readonly _visibility=()=>this._schedule();
   public override connectedCallback():void {super.connectedCallback();document.addEventListener("visibilitychange",this._visibility);this._schedule();}
@@ -57,7 +58,7 @@ export class SolarSanitySimulation extends LitElement {
     const zoneChanged=Boolean(this._zone && this._zone!==zone);
     if(zoneChanged && this._mode!=="now") {
       this._local="";this._fold="";this._deadline="";this._deadlineFold="";
-      this._plan=undefined;this._error="The time zone changed. Choose the times again.";
+      this._plan=undefined;this._planStarted=false;this._error="The time zone changed. Choose the times again.";
     }
     this._zone=zone;
     const previous=changed.get("planning") as LoadPlanning|undefined;
@@ -68,6 +69,7 @@ export class SolarSanitySimulation extends LitElement {
       const limit=configuredLimit(this.planning);
       this._planningLimit=limit===null?"":String(limit);
       this._plan=undefined;
+      this._planStarted=false;
     }
     if(changed.has("deviceId") && changed.get("deviceId")) {
       this._started=false;this._result=undefined;this._plan=undefined;this._error="";
@@ -110,6 +112,11 @@ export class SolarSanitySimulation extends LitElement {
     this._generation++;if(this._timer)clearTimeout(this._timer);this._queued=false;
     if(this._endTimer)clearTimeout(this._endTimer);
     this._result=undefined;
+    if(this._recheckPlan()) {
+      this._plan=undefined;
+      if(this.active&&this.isConnected&&!document.hidden) this._timer=setTimeout(()=>void this._findBestTime(),500);
+      return;
+    }
     if(this._mode==="best_time"||!this._started||!this.active||!this.isConnected||document.hidden) {this._loading=false;return;}
     this._timer=setTimeout(()=>void this._calculate(),500);
     if(this._mode==="scheduled"&&!this._validation()) {
@@ -120,6 +127,9 @@ export class SolarSanitySimulation extends LitElement {
       // projection is much shorter; let the server reject distant requests.
       if(remaining<=2147483647)this._endTimer=setTimeout(()=>this._finish(),remaining);
     }
+  }
+  private _recheckPlan():boolean {
+    return this._planStarted&&this._mode==="best_time"&&this.planning?.mode==="solar_only"&&this.planning.recheck_forecast===true;
   }
   private _finish():void {
     this._started=false;this._schedule();this._error="This scenario has finished. Choose a future interval and calculate again.";
@@ -151,7 +161,8 @@ export class SolarSanitySimulation extends LitElement {
     }
   }
   private async _findBestTime():Promise<void> {
-    if(this._planning||this._validation()||!this.active||!this.hass||!this.projectionId) return;
+    if(this._planning||this._validation()||!this.active||!this.hass||!this.projectionId||document.hidden) return;
+    this._planStarted=true;
     const generation=this._generation;
     const data:LoadPlanRequest={
       device_id:this.deviceId,
@@ -180,6 +191,7 @@ export class SolarSanitySimulation extends LitElement {
       }
     } finally {
       this._planning=false;
+      if(generation!==this._generation&&this._recheckPlan())this._schedule();
     }
   }
 
@@ -189,6 +201,7 @@ export class SolarSanitySimulation extends LitElement {
     if(key==="_deadline")this._deadlineFold="";
     if(this._mode==="best_time")this._started=false;
     this._plan=undefined;
+    this._planStarted=false;
     this._error="";
     this._schedule();
   }
@@ -253,7 +266,8 @@ export class SolarSanitySimulation extends LitElement {
       ${options.length?this._gridTable(options,plan.max_extra_grid_kwh):nothing}`;
   }
   private _solarSource(basis:SolarPlanResponse["basis"]):string {
-    return `Corrected forecast from ${basis.provider}, captured ${this._time(basis.forecast_captured_at,true)}.`;
+    const source=basis.forecast_factor_source==="validated"?"Hourly-validated forecast (1.00)":"Corrected forecast";
+    return `${source} from ${basis.provider}, captured ${this._time(basis.forecast_captured_at,true)}.`;
   }
   private _graph(result:SimulationResponse):TemplateResult {
     const a=Date.parse(result.basis.computed_at),b=Date.parse(result.basis.horizon_end),span=b-a;
