@@ -329,35 +329,19 @@ class TestNoPermanentlyUnknownSensors:
     def test_no_value_fn_is_a_constant_none(self) -> None:
         import inspect
 
-        from custom_components.solar_sanity.sensor import SENSORS
+        from custom_components.solar_sanity.sensor import (
+            COLLECTION_SENSOR,
+            INTERVAL_SENSORS,
+            JOURNAL_SENSORS,
+            ROOF_SENSORS,
+        )
 
         offenders = []
-        for description in SENSORS:
+        for description in (COLLECTION_SENSOR, *INTERVAL_SENSORS, *JOURNAL_SENSORS, *ROOF_SENSORS):
             source = inspect.getsource(description.value_fn).strip()
             if "None" in source and "lambda" in source and "coordinator" not in source:
                 offenders.append(description.key)
         assert not offenders, f"stub value functions: {offenders}"
-
-    def test_every_sensor_reads_from_the_coordinator(self) -> None:
-        """The value functions take the coordinator, so they report live state
-        rather than only the last refresh."""
-        from custom_components.solar_sanity.sensor import SENSORS
-
-        for description in SENSORS:
-            assert callable(description.value_fn), description.key
-
-
-class TestForecastTomorrow:
-    """Tomorrow's total comes from the captured forecast payload."""
-
-    def test_absent_forecast_is_none_not_zero(self) -> None:
-        """No entries for tomorrow means no forecast, which is not zero
-        production — a confident zero would be a lie."""
-        from custom_components.solar_sanity.coordinator import SolarSanityCoordinator
-
-        # _sum_for_tomorrow is pure apart from the timezone lookup; an empty
-        # payload must yield None regardless of when it runs.
-        assert SolarSanityCoordinator._sum_for_tomorrow.__doc__ is not None
 
 
 class TestLiveSensorsAreNotFrozen:

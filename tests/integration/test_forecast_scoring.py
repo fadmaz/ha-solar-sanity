@@ -57,11 +57,27 @@ async def _coordinator(hass: HomeAssistant, entry: MockConfigEntry):
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    coordinator = entry.runtime_data.coordinator
-    # Tests below inject captured forecast totals directly. Their timestamp
-    # must represent the same successful capture, just as the real path does.
-    coordinator.forecast_captured_at = dt_util.utcnow()
-    return coordinator
+    return entry.runtime_data.coordinator
+
+
+def _seed_tomorrow(coordinator, key, *values):
+    now = dt_util.utcnow()
+    zone = dt_util.get_time_zone(coordinator.hass.config.time_zone)
+    noon = (now.astimezone(zone) + timedelta(days=1)).replace(
+        hour=12, minute=0, second=0, microsecond=0
+    )
+    entry = coordinator.entry
+    coordinator.hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_FORECAST_ENTRIES: [key]}
+    )
+    coordinator.forecast_points = {
+        key: {
+            noon.astimezone(UTC) + timedelta(hours=index): kwh for index, kwh in enumerate(values)
+        }
+    }
+    coordinator._latest_forecast_batch = frozenset({key})
+    coordinator.forecast_captured_at = now
+    return now
 
 
 class TestTheUnitsAreConverted:
@@ -351,20 +367,11 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
 
         coordinator = await _coordinator(hass, entry)
         await hass.config.async_set_time_zone("UTC")
-        tomorrow = (dt_util.utcnow() + timedelta(days=1)).replace(
-            hour=12, minute=0, second=0, microsecond=0
-        )
-        raw = {tomorrow.isoformat(): 4003, (tomorrow + timedelta(hours=1)).isoformat(): 6003}
-        coordinator._expected_tomorrow_kwh = coordinator._sum_for_tomorrow(raw)
-        coordinator._expected_tomorrow_provider = "synthetic"
-        coordinator.forecast_points = {
-            "synthetic": {tomorrow: 4.003, tomorrow + timedelta(hours=1): 6.003}
-        }
+        now = _seed_tomorrow(coordinator, "synthetic", 4.003, 6.003)
         coordinator.battery._scales = {"synthetic": ForecastScale(factor=0.7, hours=100, days=15)}
-        attrs = coordinator.expected_tomorrow_corrected_attrs
+        total, attrs = coordinator.tomorrow_forecast(now)
         curve_sum = sum(hour["kwh"] for hour in attrs["corrected_hours"])
-        assert coordinator.expected_tomorrow_kwh == pytest.approx(10.006)
-        assert coordinator.expected_tomorrow_corrected_kwh == round(curve_sum, 2) == 7.0
+        assert total == round(curve_sum, 2) == 7.0
         coordinator.notify_live_entities()
         state = next(
             s
@@ -383,11 +390,11 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
         entry: MockConfigEntry,
     ) -> None:
         coordinator = await _coordinator(hass, entry)
-        coordinator._expected_tomorrow_kwh = 20.0
-        coordinator._expected_tomorrow_provider = "x"
+        now = _seed_tomorrow(coordinator, "x", 20.0)
 
-        assert coordinator.expected_tomorrow_corrected_kwh is None
-        assert coordinator.expected_tomorrow_corrected_attrs.get("reason")
+        total, attrs = coordinator.tomorrow_forecast(now)
+        assert total is None
+        assert attrs["reason"] and attrs["provider"] == "x"
 
     async def test_a_stateable_bias_moves_tomorrow_by_exactly_it(
         self,
@@ -399,8 +406,7 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
         from custom_components.solar_sanity.scoring import ProviderScore
 
         coordinator = await _coordinator(hass, entry)
-        coordinator._expected_tomorrow_kwh = 20.0
-        coordinator._expected_tomorrow_provider = "x"
+        now = _seed_tomorrow(coordinator, "x", 20.0)
         coordinator.forecast_scores = (
             ProviderScore(
                 entry_id="x",
@@ -409,8 +415,8 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
             ),
         )
 
-        assert coordinator.expected_tomorrow_corrected_kwh == pytest.approx(18.0)
-        attrs = coordinator.expected_tomorrow_corrected_attrs
+        total, attrs = coordinator.tomorrow_forecast(now)
+        assert total == pytest.approx(18.0)
         assert (attrs["factor"], attrs["basis"], attrs["days"]) == (0.9, "scored", 40)
 
     async def test_another_providers_bias_is_never_applied(
@@ -425,8 +431,7 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
         from custom_components.solar_sanity.scoring import ProviderScore
 
         coordinator = await _coordinator(hass, entry)
-        coordinator._expected_tomorrow_kwh = 20.0
-        coordinator._expected_tomorrow_provider = "x"
+        now = _seed_tomorrow(coordinator, "x", 20.0)
         coordinator.forecast_scores = (
             ProviderScore(
                 entry_id="y",
@@ -435,7 +440,7 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
             ),
         )
 
-        assert coordinator.expected_tomorrow_corrected_kwh is None
+        assert coordinator.tomorrow_forecast(now)[0] is None
 
     async def test_a_measured_but_unstateable_bias_is_not_applied(
         self,
@@ -449,8 +454,7 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
         from custom_components.solar_sanity.scoring import ProviderScore
 
         coordinator = await _coordinator(hass, entry)
-        coordinator._expected_tomorrow_kwh = 20.0
-        coordinator._expected_tomorrow_provider = "x"
+        now = _seed_tomorrow(coordinator, "x", 20.0)
         coordinator.forecast_scores = (
             ProviderScore(
                 entry_id="x",
@@ -459,7 +463,7 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
             ),
         )
 
-        assert coordinator.expected_tomorrow_corrected_kwh is None
+        assert coordinator.tomorrow_forecast(now)[0] is None
 
     async def test_the_battery_outlooks_scale_wins_and_is_published(
         self,
@@ -476,8 +480,7 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
         from custom_components.solar_sanity.statistics_source import forecast_statistic_id
 
         coordinator = await _coordinator(hass, entry)
-        coordinator._expected_tomorrow_kwh = 34.61
-        coordinator._expected_tomorrow_provider = "x"
+        now = _seed_tomorrow(coordinator, "x", 34.61)
         coordinator.battery._scales = {"x": ForecastScale(factor=0.5213, hours=143, days=15)}
         coordinator.forecast_scores = (
             ProviderScore(
@@ -491,7 +494,7 @@ class TestTomorrowCorrectedByWhatTheProviderActuallyDoes:
 
         # The descriptive factor stays short; exact applied_factor matches the
         # battery projection and the hourly curve before final energy rounding.
-        assert coordinator.expected_tomorrow_corrected_kwh == pytest.approx(18.04, abs=0.01)
+        assert coordinator.tomorrow_forecast(now)[0] == pytest.approx(18.04, abs=0.01)
         state = next(
             state
             for state in hass.states.async_all("sensor")

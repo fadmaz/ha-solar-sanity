@@ -26,7 +26,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOfPower, UnitOfTime
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
@@ -48,25 +48,6 @@ class SolarSanitySensorDescription(SensorEntityDescription):
 
     value_fn: Callable[[SolarSanityCoordinator], StateType]
     attrs_fn: Callable[[SolarSanityCoordinator], dict[str, Any]] | None = None
-
-
-SENSORS: tuple[SolarSanitySensorDescription, ...] = (
-    # `state_class: TOTAL`: a forecast nobody records is a forecast nobody can
-    # look back on, and Home Assistant's own forecast integrations omit it. The
-    # attributes say which provider it corrects and by what, and the forecast
-    # card reads the factor from them. Until 0.33.0 an uncorrected "Forecast
-    # tomorrow" sat beside it; the provider's own sensor already says that.
-    SolarSanitySensorDescription(
-        key="expected_tomorrow_corrected",
-        translation_key="expected_tomorrow_corrected",
-        icon="mdi:weather-sunny-alert",
-        device_class=SensorDeviceClass.ENERGY,
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        state_class=SensorStateClass.TOTAL,
-        value_fn=lambda coordinator: coordinator.expected_tomorrow_corrected_kwh,
-        attrs_fn=lambda coordinator: coordinator.expected_tomorrow_corrected_attrs,
-    ),
-)
 
 
 def _performance_attrs(coordinator: SolarSanityCoordinator, key: str) -> dict[str, Any]:
@@ -347,9 +328,9 @@ async def async_setup_entry(
     coordinator = data.coordinator
 
     entities: list[SensorEntity] = [
-        SolarSanitySensor(coordinator, entry, description) for description in SENSORS
+        TomorrowForecastSensor(coordinator, entry),
+        SolarSanitySensor(coordinator, entry, COLLECTION_SENSOR),
     ]
-    entities.append(SolarSanitySensor(coordinator, entry, COLLECTION_SENSOR))
     entities += [
         CaptureSensor(coordinator, entry, provider_id, description)
         for provider_id in entry.data.get(CONF_FORECAST_ENTRIES, [])
@@ -464,13 +445,36 @@ class ForecastBiasSensor(SolarSanityEntity, SensorEntity):
         }
 
 
+class TomorrowForecastSensor(SolarSanityEntity, SensorEntity):
+    """Publish the total and curve from the same calculation."""
+
+    # TOTAL keeps past forecast values in Recorder. The curve is for the live card.
+    entity_description = SensorEntityDescription(
+        key="expected_tomorrow_corrected",
+        translation_key="expected_tomorrow_corrected",
+        icon="mdi:weather-sunny-alert",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL,
+    )
+    _unrecorded_attributes = frozenset({"corrected_hours"})
+
+    def __init__(self, coordinator: SolarSanityCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry, self.entity_description.key)
+
+    @callback
+    def async_write_ha_state(self) -> None:
+        self._attr_native_value, self._attr_extra_state_attributes = (
+            self.coordinator.tomorrow_forecast(dt_util.utcnow())
+        )
+        super().async_write_ha_state()
+
+
 class SolarSanitySensor(SolarSanityEntity, SensorEntity):
     """One sensor, driven entirely by its description."""
 
     entity_description: SolarSanitySensorDescription
-    _unrecorded_attributes = frozenset(
-        {"corrected_hours", "load_planning", "forecast_evidence_revision"}
-    )
+    _unrecorded_attributes = frozenset({"load_planning", "forecast_evidence_revision"})
 
     def __init__(
         self,

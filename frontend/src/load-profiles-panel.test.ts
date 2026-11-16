@@ -188,3 +188,70 @@ it("keeps manual controls usable after a failed list read and offers a retry", a
   await settle(card);
   expect(root.querySelector("select")!.options).toHaveLength(2);
 });
+
+it("restores all unsaved edits and their original revision after a list failure", async () => {
+  const list = vi.fn().mockResolvedValueOnce(loadList([pump], 4))
+    .mockRejectedValueOnce(new Error("Offline")).mockResolvedValue(loadList([pump], 4));
+  const call = vi.fn().mockImplementation(async ({service}) => {
+    if (service === "list_load_profiles") return list();
+    if (service === "save_load_profile") {
+      return loadList([{...pump, name: "Long cycle", power_w: 0, duration_minutes: 90}], 5);
+    }
+    return {};
+  });
+  const card = make(call, true);
+  await settle(card);
+  const panel = profiles(card);
+  const root = panel.shadowRoot!;
+  root.querySelector<HTMLButtonElement>("[aria-label='Edit Heat pump']")!.click();
+  await settle(card);
+  field(panel, "[name=load_name]", "  Long cycle  ");
+  field(panel, "[name=load_power]", "0");
+  field(panel, "[name=load_minutes]", "90");
+  card.active = false;
+  await settle(card);
+  card.active = true;
+  await settle(card);
+  expect(root.querySelector("form")).toBeNull();
+  root.querySelector<HTMLButtonElement>("button")!.click();
+  await settle(card);
+  expect(Array.from(root.querySelectorAll("form input"), input => (input as HTMLInputElement).value))
+    .toEqual(["  Long cycle  ", "0", "90"]);
+  root.querySelector("form")!.dispatchEvent(new Event("submit", {cancelable: true}));
+  await settle(card);
+  expect(call.mock.calls.find(([args]) => args.service === "save_load_profile")?.[0]).toMatchObject({
+    service_data: {
+    device_id: "first", profile_id: pump.id, revision: 4, name: "Long cycle", power_w: 0, duration_minutes: 90,
+    },
+  });
+  expect(root.querySelector("form")).toBeNull();
+});
+
+it("keeps an edit visible after another administrator changes the list and clears it on installation switch", async () => {
+  const list = vi.fn().mockResolvedValueOnce(loadList([pump], 1))
+    .mockResolvedValueOnce(loadList([{...pump, power_w: 500}], 2))
+    .mockResolvedValue(loadList([]));
+  const call = vi.fn().mockImplementation(async ({service}) => service === "list_load_profiles" ? list() : {});
+  const card = make(call, true);
+  await settle(card);
+  const panel = profiles(card);
+  const root = panel.shadowRoot!;
+  root.querySelector<HTMLButtonElement>("[aria-label='Edit Heat pump']")!.click();
+  await settle(card);
+  field(panel, "[name=load_power]", "720");
+  card.active = false;
+  await settle(card);
+  card.active = true;
+  await settle(card);
+  expect(root.querySelector<HTMLInputElement>("[name=load_power]")!.value).toBe("720");
+  expect(root.querySelector<HTMLButtonElement>("[type=submit]")!.disabled).toBe(true);
+  expect(root.querySelector("[role=alert]")!.textContent).toContain("Cancel and reopen");
+  root.querySelector("form")!.dispatchEvent(new Event("submit", {cancelable: true}));
+  expect(call.mock.calls.some(([args]) => args.service === "save_load_profile")).toBe(false);
+  card.deviceId = "other";
+  await settle(card);
+  expect(root.querySelector("form")).toBeNull();
+  root.querySelector<HTMLButtonElement>("#save-as-load")!.click();
+  await settle(card);
+  expect(root.querySelector<HTMLInputElement>("[name=load_power]")!.value).toBe("1000");
+});

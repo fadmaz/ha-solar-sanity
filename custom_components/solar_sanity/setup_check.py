@@ -320,7 +320,8 @@ def _forecast(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
             figures.today_kwh,
         )
     )
-    tomorrow_available = bool(providers and coordinator.expected_tomorrow_corrected_kwh is not None)
+    tomorrow_value, tomorrow_attrs = coordinator.tomorrow_forecast(now)
+    tomorrow_available = tomorrow_value is not None
     corrected = today_available or tomorrow_available
     if not providers:
         check = _check(
@@ -335,11 +336,7 @@ def _forecast(coordinator: SolarSanityCoordinator, now: datetime) -> dict:
     today_reason = (
         coordinator.roof_forecast_attrs.get("reason") if providers and not today_available else None
     )
-    tomorrow_reason = (
-        coordinator.expected_tomorrow_corrected_attrs.get("reason")
-        if providers and not tomorrow_available
-        else None
-    )
+    tomorrow_reason = tomorrow_attrs.get("reason") if providers and not tomorrow_available else None
     preferred = coordinator.preferred_forecast_provider
     sources = {
         "today": _source_view(

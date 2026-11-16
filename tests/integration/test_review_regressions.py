@@ -7,7 +7,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
 from custom_components.solar_sanity.analysis.profile import ForecastScale
-from custom_components.solar_sanity.const import DOMAIN
+from custom_components.solar_sanity.const import CONF_FORECAST_ENTRIES, DOMAIN
 from tests.integration.ha_harness import MockConfigEntry
 from tests.integration.test_battery_outlook import BATTERY, SOC, _loaded
 
@@ -65,18 +65,22 @@ async def test_corrected_figures_expire_together_and_recover_without_relearning(
     coordinator = entry.runtime_data.coordinator
     now = dt_util.utcnow()
     hour = now.replace(minute=0, second=0, microsecond=0)
-    coordinator.forecast_points = {"synthetic": {hour: 1.0, hour + timedelta(hours=24): 2.0}}
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_FORECAST_ENTRIES: ["synthetic"]}
+    )
+    coordinator.forecast_points = {"synthetic": {hour: 1.0, hour + timedelta(hours=24): 20.0}}
     coordinator._expected_tomorrow_provider = "synthetic"
-    coordinator._expected_tomorrow_kwh = 20.0
+    coordinator._latest_forecast_batch = frozenset({"synthetic"})
     coordinator.battery._scales = {"synthetic": ForecastScale(0.5, 24, 3)}
     coordinator.forecast_captured_at = now - timedelta(hours=8)
     assert coordinator.roof_forecast() is None
-    assert coordinator.expected_tomorrow_corrected_kwh is None
+    total, attrs = coordinator.tomorrow_forecast(now)
+    assert total is None
     assert "three hours" in coordinator.roof_forecast_attrs["reason"]
-    assert "three hours" in coordinator.expected_tomorrow_corrected_attrs["reason"]
+    assert "three hours" in attrs["reason"]
     coordinator.forecast_captured_at = now
     assert coordinator.roof_forecast() is not None
-    assert coordinator.expected_tomorrow_corrected_kwh == 10.0
+    assert coordinator.tomorrow_forecast(now)[0] == 10.0
 
 
 @pytest.mark.parametrize("state_class", [None, "measurement"])

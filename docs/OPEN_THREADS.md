@@ -3,12 +3,20 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated for 0.54.0, 2026-11-16.
+Last updated for 0.54.1, 2026-11-16.
 
 ## Latest delivery and operational acceptance
 
-- 0.54.0 adds shared saved loads to What if. Live validation of profile
-  persistence and use on the reference dashboard remains open.
+- 0.54.1 publishes tomorrow's corrected total and hourly curve from the same
+  source and local day, preserves damaged or newer journal files, and retains
+  unsaved load edits across a failed list refresh. The reference upgrade and
+  dashboard check are pending.
+- 0.54.0 adds shared saved loads to What if. The reference dashboard used a
+  saved load in a calculation, retained it through a browser refresh, and
+  removed it afterwards. The existing journal survived the Core restart.
+  The first natural Forecast.Solar refresh matched all 44 hours in the
+  rolling Recorder archive and left the day-ahead rows intact. A saved load
+  surviving a Core restart has been verified in integration tests.
 - 0.53.0 adds export configuration, curtailment evidence and an hourly
   validation gate for a neutral forecast in solar-only What if. The reference
   installation preserved the journal across restart, showed Forecast evidence
