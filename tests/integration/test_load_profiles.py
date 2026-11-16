@@ -4,7 +4,7 @@ import asyncio
 import json
 from datetime import timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import voluptuous as vol
@@ -19,6 +19,7 @@ from tests.integration.test_load_reminders import (
     action,
     clock,  # noqa: F401
     install_notify,
+    mock_owner,
     schedule,
     setup,
 )
@@ -42,9 +43,7 @@ def hass_storage():
 
 @pytest.fixture
 def reader(hass):
-    user = MagicMock(is_active=True, is_admin=True)
-    user.permissions.check_entity.return_value = True
-    with patch.object(hass.auth, "async_get_user", new=AsyncMock(return_value=user)):
+    with mock_owner(hass) as user:
         yield user
 
 
