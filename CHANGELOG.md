@@ -2,6 +2,14 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.54.0] - 2026-11-16
+
+### Added
+
+- Save named appliance loads in **What if** and reuse their power and duration
+  in **Calculate** and **Find best time**. Administrators can manage up to 20
+  shared loads per installation. Scheduled reminders keep their original inputs.
+
 ## [0.53.0] - 2026-11-16
 
 ### Added

@@ -6,6 +6,8 @@ import {localInstants,type LoadPlanning,type LoadPlanRequest,type LoadPlanRespon
   type SolarGridTiming,type SolarPlanResponse,type SolarSimulationResponse} from "./simulation";
 import type {HomeAssistant} from "./types/hass";
 import "./load-reminder-panel";
+import type {SavedLoad} from "./load-profiles-panel";
+import "./load-profiles-panel";
 
 const planReasons: Record<NonNullable<LoadPlanResponse["reason_code"]>, string> = {
   window_too_short: "The load cannot finish by the deadline. Allow more time.",
@@ -31,6 +33,7 @@ export class SolarSanitySimulation extends LitElement {
   @property({type:Boolean}) public active=false;
   @state() protected _power="1000";
   @state() protected _minutes="60";
+  @state() private _savedLoad?: SavedLoad;
   @state() protected _mode="now";
   @state() protected _local="";
   @state() protected _fold="";
@@ -73,6 +76,7 @@ export class SolarSanitySimulation extends LitElement {
     }
     if(changed.has("deviceId") && changed.get("deviceId")) {
       this._started=false;this._result=undefined;this._plan=undefined;this._error="";
+      this._power="1000";this._minutes="60";this._savedLoad=undefined;
     }
     if(zoneChanged||defaultsChanged||changed.has("projectionId")||changed.has("deviceId")||changed.has("active")) this._schedule();
   }
@@ -197,12 +201,23 @@ export class SolarSanitySimulation extends LitElement {
 
   private _input(key:"_power"|"_minutes"|"_local"|"_fold"|"_mode"|"_deadline"|"_deadlineFold"|"_planningLimit",event:Event):void {
     this[key]=(event.target as HTMLInputElement).value;
+    if(key==="_power"||key==="_minutes")this._savedLoad=undefined;
     if(key==="_local"||key==="_mode")this._fold="";
     if(key==="_deadline")this._deadlineFold="";
     if(this._mode==="best_time")this._started=false;
     this._plan=undefined;
     this._planStarted=false;
     this._error="";
+    this._schedule();
+  }
+  private _pickLoad({detail}: CustomEvent<SavedLoad | undefined>): void {
+    this._savedLoad = detail;
+    if (!detail) return;
+    this._power = String(detail.power_w);
+    this._minutes = String(detail.duration_minutes);
+    this._started = this._planStarted = false;
+    this._plan = undefined;
+    this._error = "";
     this._schedule();
   }
   private _time(value:string|null,withOffset=false):string {
@@ -290,6 +305,9 @@ export class SolarSanitySimulation extends LitElement {
     return html`<section lang="en" dir="ltr"><p>${solar?
       "Estimate how much grid energy a load would add, using the corrected solar forecast and measured house consumption history.":
       "Compare one extra load with the current projection. Calculated times can differ from the main card's settled times."}</p>
+      <solar-sanity-load-profiles .hass=${this.hass} .deviceId=${this.deviceId} .active=${this.active}
+        .power=${this._power} .minutes=${this._minutes} .selected=${this._savedLoad}
+        @saved-load-change=${this._pickLoad}></solar-sanity-load-profiles>
       <div class="form"><label>Extra power (W)<input type="number" min="0" step="any" .value=${this._power} @input=${(e:Event)=>this._input("_power",e)}></label>
       <label>Duration (minutes)<input type="number" min="1" max="1440" step="1" .value=${this._minutes} @input=${(e:Event)=>this._input("_minutes",e)}></label>
       ${this.planning?.mode==="battery" || solar?html`<label>${solar?"Maximum estimated additional grid energy (kWh)":"Minimum planned battery charge (%)"}

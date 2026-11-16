@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
 from homeassistant.helpers.sun import get_astral_event_date
@@ -55,6 +57,23 @@ class PlanningUnavailableError(ValueError):
     def __init__(self, reason: str) -> None:
         super().__init__(PLANNING_REASONS[reason])
         self.reason_code = reason
+
+
+def load_power(value: object) -> float:
+    try:
+        number = float(value)
+    except (ValueError, TypeError, OverflowError) as err:
+        raise vol.Invalid("Power must be a number.") from err
+    if isinstance(value, bool) or not math.isfinite(number) or number < 0:
+        raise vol.Invalid("Power must be finite and non-negative.")
+    return number
+
+
+def load_duration(value: object) -> int:
+    number = load_power(value)
+    if not number.is_integer() or not 1 <= number <= 1440:
+        raise vol.Invalid("Duration must be whole minutes from one minute to 24 hours.")
+    return int(number)
 
 
 def has_battery_channels(data: Mapping[str, Any], options: Mapping[str, Any]) -> bool:

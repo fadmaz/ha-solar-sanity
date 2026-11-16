@@ -323,6 +323,64 @@
         }
       }
     },
+    "list_load_profiles": {
+      "name": "List saved loads",
+      "description": "Read the saved loads shared by this installation.",
+      "fields": {
+        "device_id": {
+          "name": "Installation",
+          "description": "The Solar Sanity installation to use."
+        }
+      }
+    },
+    "save_load_profile": {
+      "name": "Save load",
+      "description": "Create or update a shared load. Administrator access is required.",
+      "fields": {
+        "device_id": {
+          "name": "Installation",
+          "description": "The Solar Sanity installation to use."
+        },
+        "revision": {
+          "name": "List revision",
+          "description": "The revision returned by List saved loads."
+        },
+        "profile_id": {
+          "name": "Saved load ID",
+          "description": "Include the ID of an existing saved load to edit it."
+        },
+        "name": {
+          "name": "Load name",
+          "description": "A unique name from 1 to 60 characters."
+        },
+        "power_w": {
+          "name": "Extra power",
+          "description": "Finite non-negative additional power in watts."
+        },
+        "duration_minutes": {
+          "name": "Duration",
+          "description": "Whole elapsed minutes from 1 to 1440."
+        }
+      }
+    },
+    "delete_load_profile": {
+      "name": "Delete saved load",
+      "description": "Remove a shared load. Administrator access is required.",
+      "fields": {
+        "device_id": {
+          "name": "Installation",
+          "description": "The Solar Sanity installation to use."
+        },
+        "revision": {
+          "name": "List revision",
+          "description": "The revision returned by List saved loads."
+        },
+        "profile_id": {
+          "name": "Saved load ID",
+          "description": "The ID returned by List saved loads."
+        }
+      }
+    },
     "schedule_load_reminder": {
       "name": "Schedule load reminder",
       "description": "Schedule a manual-run notification that rechecks the corrected solar forecast before sending. Administrator access is required.",

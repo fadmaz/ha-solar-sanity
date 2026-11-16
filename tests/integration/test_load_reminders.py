@@ -1,5 +1,6 @@
 """Load reminders use the issued projection, native actions and real HA storage."""
 
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,13 +23,25 @@ from tests.integration.test_tools_services import device
 OWNER = Context(user_id="admin")
 
 
+@contextmanager
+def mock_owner(hass):
+    """Stub the action caller while preserving HTTP's real system user."""
+    user = MagicMock(is_active=True, is_admin=True)
+    user.permissions.check_entity.return_value = True
+    real_get_user = hass.auth.async_get_user
+
+    async def get_user(user_id):
+        return user if user_id == OWNER.user_id else await real_get_user(user_id)
+
+    with patch.object(hass.auth, "async_get_user", side_effect=get_user):
+        yield user
+
+
 @pytest.fixture
 def clock(hass):
     """Keep service calls and reminder callbacks on the same clock."""
-    user = MagicMock(is_active=True, is_admin=True)
-    user.permissions.check_entity.return_value = True
     with (
-        patch.object(hass.auth, "async_get_user", new=AsyncMock(return_value=user)),
+        mock_owner(hass) as user,
         patch("custom_components.solar_sanity.reminders.dt_util.utcnow", return_value=NOW) as now,
     ):
         try:
@@ -64,7 +77,7 @@ async def setup(hass, entry_data):
     return entry, journal, state
 
 
-async def action(hass, entry, name, *, context=OWNER, **data):
+async def action(hass, entry, name, /, *, context=OWNER, **data):
     return await hass.services.async_call(
         DOMAIN,
         name,

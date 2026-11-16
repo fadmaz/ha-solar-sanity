@@ -37,26 +37,12 @@ from .load_planning import (
     MANUAL_PLANNING_REASON,
     PlanningUnavailableError,
     SolarPlanningBasis,
+    load_duration,
+    load_power,
     solar_planning_basis,
 )
+from .load_profiles import LOAD_PROFILE_FIELDS, profile_revision
 from .setup_check import setup_check
-
-
-def _power(value):
-    try:
-        number = float(value)
-    except (ValueError, TypeError, OverflowError) as err:
-        raise vol.Invalid("Power must be a number.") from err
-    if isinstance(value, bool) or not math.isfinite(number) or number < 0:
-        raise vol.Invalid("Power must be finite and non-negative.")
-    return number
-
-
-def _duration(value):
-    number = _power(value)
-    if not number.is_integer() or not 1 <= number <= 1440:
-        raise vol.Invalid("Duration must be whole minutes from one minute to 24 hours.")
-    return int(number)
 
 
 def _start_time(value):
@@ -228,7 +214,7 @@ async def coordinator_for(hass: HomeAssistant, call: ServiceCall):
 
 @callback
 def async_setup_tools(hass: HomeAssistant) -> None:
-    """Register native response actions for analysis and load reminders."""
+    """Register native response actions for analysis and load planning."""
 
     async def get_setup_check(call: ServiceCall):
         coordinator = await coordinator_for(hass, call)
@@ -393,8 +379,8 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("device_id"): cv.string,
-                vol.Required("power_w"): _power,
-                vol.Required("duration_minutes"): _duration,
+                vol.Required("power_w"): load_power,
+                vol.Required("duration_minutes"): load_duration,
                 vol.Optional("start_at"): _start_time,
                 **_PLANNING_FIELDS,
             }
@@ -477,8 +463,8 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("device_id"): cv.string,
-                vol.Required("power_w"): _power,
-                vol.Required("duration_minutes"): _duration,
+                vol.Required("power_w"): load_power,
+                vol.Required("duration_minutes"): load_duration,
                 vol.Optional("earliest_start"): _start_time,
                 vol.Required("finish_by"): _start_time,
                 **_PLANNING_FIELDS,
@@ -487,11 +473,15 @@ def async_setup_tools(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    async def reminders_for(call: ServiceCall):
+    async def require_admin(call: ServiceCall):
         user_id = call.context.user_id
         user = await hass.auth.async_get_user(user_id) if user_id is not None else None
         if user is None or not user.is_active or not user.is_admin:
             raise Unauthorized()
+        return user
+
+    async def reminders_for(call: ServiceCall):
+        user = await require_admin(call)
         return (await coordinator_for(hass, call)).reminders, user
 
     async def schedule_load_reminder(call: ServiceCall):
@@ -526,8 +516,8 @@ def async_setup_tools(hass: HomeAssistant) -> None:
                 vol.Required("projection_id"): cv.string,
                 vol.Required("destination"): cv.string,
                 vol.Optional("script_entity_id"): cv.entity_id,
-                vol.Required("power_w"): _power,
-                vol.Required("duration_minutes"): _duration,
+                vol.Required("power_w"): load_power,
+                vol.Required("duration_minutes"): load_duration,
                 vol.Optional("earliest_start"): _start_time,
                 vol.Required("finish_by"): _start_time,
             }
@@ -555,4 +545,38 @@ def async_setup_tools(hass: HomeAssistant) -> None:
             schema = schema.extend({vol.Required("projection_id"): cv.string})
         hass.services.async_register(
             DOMAIN, name, handler, schema=schema, supports_response=SupportsResponse.ONLY
+        )
+
+    async def list_load_profiles(call: ServiceCall):
+        return (await coordinator_for(hass, call)).load_profiles.view()
+
+    async def change_load_profiles(call: ServiceCall):
+        await require_admin(call)
+        profiles = (await coordinator_for(hass, call)).load_profiles
+        load = None
+        if call.service == "save_load_profile":
+            load = {key: call.data[key] for key in ("name", "power_w", "duration_minutes")}
+        return await profiles.async_change(call.data["revision"], call.data.get("profile_id"), load)
+
+    profile_target = {vol.Required("device_id"): cv.string}
+    profile_write = {**profile_target, vol.Required("revision"): profile_revision}
+    for name, handler, fields in (
+        ("list_load_profiles", list_load_profiles, profile_target),
+        (
+            "save_load_profile",
+            change_load_profiles,
+            {**profile_write, vol.Optional("profile_id"): cv.string, **LOAD_PROFILE_FIELDS},
+        ),
+        (
+            "delete_load_profile",
+            change_load_profiles,
+            {**profile_write, vol.Required("profile_id"): cv.string},
+        ),
+    ):
+        hass.services.async_register(
+            DOMAIN,
+            name,
+            handler,
+            schema=vol.Schema(fields),
+            supports_response=SupportsResponse.ONLY,
         )

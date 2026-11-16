@@ -852,6 +852,19 @@ Gaps remain unknown. A live export reading near a positive limit can support
 the possible status in Setup while verified hourly evidence comes from the
 binary sensor.
 
+### Saved loads (0.54.0)
+
+`load_profiles.py` keeps power and duration templates in a private versioned
+Store per entry. The response-only list action uses the installation's read
+check. An active administrator supplies the last observed list revision for
+each change. A lock serializes writes and the new list becomes visible after
+disk read-back. A reload waits for admitted writes. Unknown or unreadable
+storage is preserved while manual planning remains available.
+
+What if copies the chosen power and duration into its draft. Calculation,
+planning and reminders take those numbers through their existing actions.
+The reminder persists the request's numbers when it is scheduled.
+
 ### Load reminders (0.50.0)
 
 `reminders.py` owns one active manual-run notification per battery entry. The

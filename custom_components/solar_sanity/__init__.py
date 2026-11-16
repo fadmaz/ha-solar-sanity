@@ -41,6 +41,7 @@ from .const import (
 )
 from .coordinator import SolarSanityCoordinator, SolarSanityData
 from .journal import JOURNAL_KEY, JOURNAL_VERSION
+from .load_profiles import load_profile_store
 from .reminders import reminder_store
 from .repairs import RETIRED_CODES, remove_energy_issues, sync_energy_issues
 from .statistics_source import (
@@ -124,6 +125,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
     coordinator = SolarSanityCoordinator(hass, entry)
     await coordinator.journal.async_restore()
     await coordinator.reminders.async_restore()
+    await coordinator.load_profiles.async_restore()
     entry.async_on_unload(coordinator.journal.cancel)
     entry.async_on_unload(coordinator.async_stop_forecast_updates)
     entry.async_on_unload(coordinator.reminders.async_stop)
@@ -211,14 +213,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) 
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: SolarSanityConfigEntry) -> bool:
-    """Stop reminders before replacing the loaded entry."""
+    """Finish pending writes before replacing the loaded entry."""
     coordinator = entry.runtime_data.coordinator
     reminders = coordinator.reminders
     await reminders.async_quiesce()
+    await coordinator.load_profiles.async_quiesce()
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded and coordinator.export_evidence.since is not None:
         await coordinator.async_save_export_evidence()
     elif not unloaded:
+        coordinator.load_profiles.accepting_writes = True
         reminders.async_start()
     return unloaded
 
@@ -237,6 +241,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             _LOGGER.debug("could not remove state for %s", entry.entry_id, exc_info=True)
     await Store(hass, JOURNAL_VERSION, f"{JOURNAL_KEY}.{entry.entry_id}").async_remove()
     await reminder_store(hass, entry.entry_id).async_remove()
+    await load_profile_store(hass, entry.entry_id).async_remove()
 
 
 async def _async_backfill(hass: HomeAssistant, coordinator: SolarSanityCoordinator) -> None:
