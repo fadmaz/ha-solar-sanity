@@ -32,17 +32,17 @@ Forecast.Solar in Home Assistant first.
    tools card's **Setup** tab to see what is ready and what still needs data.
    You can also add any of the three Solar Sanity cards to an existing dashboard.
 
-[Installation, sensor mapping and first-run checks](docs/GETTING_STARTED.md)
+[Installation, sensor mapping and first-run checks](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/GETTING_STARTED.md)
 
 ## User guides
 
 | I want to… | Read |
 | --- | --- |
-| Install, update, map sensors or fix missing data | [Get started](docs/GETTING_STARTED.md) |
-| Compare an extra load, find a time, or set a reminder | [Plan a load](docs/LOAD_PLANNING.md) |
-| Get a reserve or surplus notification | [Set up alerts](docs/AUTOMATIONS.md) |
-| Understand the charts, past predictions and accuracy | [Forecasts and history](docs/FORECASTS_AND_HISTORY.md) |
-| Find a setting, entity name or Home Assistant action | [Reference](docs/REFERENCE.md) |
+| Install, update, map sensors or fix missing data | [Get started](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/GETTING_STARTED.md) |
+| Compare an extra load, find a time, or set a reminder | [Plan a load](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/LOAD_PLANNING.md) |
+| Get a reserve or surplus notification | [Set up alerts](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/AUTOMATIONS.md) |
+| Understand the charts, past predictions and accuracy | [Forecasts and history](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/FORECASTS_AND_HISTORY.md) |
+| Find a setting, entity name or Home Assistant action | [Reference](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/REFERENCE.md) |
 
 Battery outlooks account for the measured starting charge and assume no future
 grid charging. The journal shows how predictions compared with real results and
@@ -55,12 +55,13 @@ after you select the button and the current conditions pass a fresh check.
 
 ## Support and project information
 
-The [troubleshooting guide](docs/GETTING_STARTED.md#troubleshooting) covers
+The [troubleshooting guide](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/GETTING_STARTED.md#troubleshooting) covers
 learning, stale forecasts and unavailable readings. For a reproducible problem,
 [open an issue](https://github.com/fadmaz/ha-solar-sanity/issues) with your
 Home Assistant and Solar Sanity versions and the relevant reason from **Setup**.
 Diagnostics can include your entity IDs, hardware names and home energy history.
 Share only the details needed to diagnose the problem.
 
-[Release notes](CHANGELOG.md) · [Architecture and development](docs/ARCHITECTURE.md) ·
-[MIT license](LICENSE)
+[Release notes](https://github.com/fadmaz/ha-solar-sanity/blob/main/CHANGELOG.md) ·
+[Architecture and development](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/ARCHITECTURE.md) ·
+[MIT license](https://github.com/fadmaz/ha-solar-sanity/blob/main/LICENSE)
