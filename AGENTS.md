@@ -12,7 +12,8 @@ code does not tell you.
 
 ## Read first
 
-- `README.md`: what a user sees, every entity and option.
+- `README.md`: installation overview and user guide index. `docs/REFERENCE.md` lists settings,
+  entities and actions.
 - `docs/ARCHITECTURE.md`: the structure, the outlook, the persistent store, the cards, CI and the
   ranked known risks. Section 9 says where to start reading the code. Keep it current when
   structure changes.

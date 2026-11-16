@@ -22,9 +22,10 @@ and whole-home consumption. A battery outlook also needs battery charge level
 and usable capacity. To use corrected forecasts, set up a provider such as
 Forecast.Solar in Home Assistant first.
 
-1. In **HACS → Custom repositories**, add
-   `https://github.com/fadmaz/ha-solar-sanity` as an **Integration**. Open
-   **Solar Sanity**, download the stable release and restart Home Assistant.
+1. Add `https://github.com/fadmaz/ha-solar-sanity` as a custom integration
+   repository. Use **Settings → Marketplace → Add from link** on Home Assistant
+   2026.11 or later, or **HACS → Custom repositories** if you use HACS. Install
+   the stable release and restart Home Assistant.
 2. Go to **Settings → Devices & services → Add integration → Solar Sanity**.
    Map your sensors, enter battery settings if applicable, and select your
    forecast providers.
@@ -55,12 +56,12 @@ after you select the button and the current conditions pass a fresh check.
 
 ## Support and project information
 
-The [troubleshooting guide](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/GETTING_STARTED.md#troubleshooting) covers
-learning, stale forecasts and unavailable readings. For a reproducible problem,
-[open an issue](https://github.com/fadmaz/ha-solar-sanity/issues) with your
-Home Assistant and Solar Sanity versions and the relevant reason from **Setup**.
-Diagnostics can include your entity IDs, hardware names and home energy history.
-Share only the details needed to diagnose the problem.
+- Check the guide for learning, stale forecasts and unavailable readings.
+  [Troubleshooting](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/GETTING_STARTED.md#troubleshooting)
+- For a reproducible problem, include your Home Assistant and Solar Sanity
+  versions and the relevant reason from **Setup**. Keep full diagnostics
+  private because they can contain equipment names, entity IDs and energy
+  history. [Report a problem](https://github.com/fadmaz/ha-solar-sanity/issues/new/choose)
 
 [Release notes](https://github.com/fadmaz/ha-solar-sanity/blob/main/CHANGELOG.md) ·
 [Architecture and development](https://github.com/fadmaz/ha-solar-sanity/blob/main/docs/ARCHITECTURE.md) ·

@@ -3,20 +3,23 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated for 0.52.0, 2026-11-15.
+Last updated for 0.52.0, 2026-11-16.
 
 ## Latest delivery and operational acceptance
 
 - 0.52.0 adds manual battery charge limits and solar-only estimates in What if.
-  Local and CI test data cover the solar-only path without a grid import
-  meter. Reference Home Assistant deployment and independent solar-only field
-  acceptance are pending.
+  The reference installation loaded 0.52.0 after a HACS upgrade and restart.
+  The saved journal survived, What if and Setup rendered on the live instance,
+  and the first natural Forecast.Solar refresh was verified through Recorder.
+  Local and CI tests cover solar-only planning without a grid import meter.
+  Independent solar-only field acceptance is pending.
 - 0.51.4 requires proof across the latest and day-ahead archives, retries an
   incomplete batch after a restart, and recovers from longer outages when a
   preceding total is known. Load actions report eligibility for the actual
   provider, and saved reminders can use a shorter outlook if the run fits.
-  The forecast card uses fresh corrected hours. HACS deployment and live
-  read-back for this version are pending.
+  The reference installation confirmed the HACS deployment and live Recorder
+  read-back. The dashboard forecast curve and total matched the corrected
+  forecast sensor.
 - 0.51.1 evaluates load actions from the current charge, checks reserve risk across
   the full warning window, and separates upstream update evidence from recorder
   verification. The reference provider is Forecast.Solar. Field evidence for

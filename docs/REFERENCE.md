@@ -106,7 +106,7 @@ For a script or automation, use `response_variable` to read it in a later step.
 | `solar_sanity.find_best_time` | `device_id`, `power_w`, `duration_minutes`, `finish_by` and optional `earliest_start`. Compare complete runs and get a recommendation when one qualifies. |
 | `solar_sanity.preview_battery_settings` | `device_id`, current `projection_id` and proposed `battery_charge_power_limit_w` and `inverter_standby_w`. Use `null` to preview automatic estimation. |
 | `solar_sanity.rescore_forecasts` | Recalculate forecast scores for configured providers from retained data. |
-| `solar_sanity.schedule_load_reminder` | Save a reminder against a current `projection_id`. Supply `destination`, the load and deadline fields, and optionally `script_entity_id`. |
+| `solar_sanity.schedule_load_reminder` | Save a reminder with the current `projection_id`, `power_w`, `duration_minutes` and `finish_by`. Set `destination` to a `notify` entity or a Companion App notification action. `earliest_start` and `script_entity_id` are optional. |
 | `solar_sanity.get_load_reminder` | Read the active or most recent reminder. |
 | `solar_sanity.cancel_load_reminder` | Cancel the active `reminder_id`. |
 | `solar_sanity.check_load_reminder` | Check whether the current `reminder_id` can start now. |

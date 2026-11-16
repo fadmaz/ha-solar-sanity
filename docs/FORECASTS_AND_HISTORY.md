@@ -80,10 +80,10 @@ settings context.
   charging can exclude the result.
 - **Solar coverage:** for eligible evening records, compare the forecast's
   handover time with the first measured hour in which solar generation
-  covered house use plus estimated inverter standby draw. The hour describes
-  energy over a full measured interval. It gives an hourly window for
-  coverage. If observed coverage started later, the row can also show the
-  lowest charge between the forecast end and that observed hour.
+  covered house use plus estimated inverter standby draw. The comparison uses
+  total energy for the full hour. If that hour starts after the forecast's
+  handover time, the row can also show the lowest charge recorded between
+  those times.
 
 The battery card's **Accuracy and data quality** section summarizes the
 most recent 28 days for the active context and includes a seven-day summary.
