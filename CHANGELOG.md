@@ -2,6 +2,17 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [0.54.2] - 2026-11-23
+
+### Fixed
+
+- Keep grading saved forecasts when an older prediction is missing an input.
+  History shows why the affected prediction was excluded and preserves what
+  it originally published.
+- Keep the rolling forecast archive's cumulative energy correct when a capture
+  skips hours or ends early. Archive read-back checks the hourly values and
+  cumulative totals through the retained tail.
+
 ## [0.54.1] - 2026-11-16
 
 ### Fixed

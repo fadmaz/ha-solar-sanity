@@ -26,6 +26,7 @@ from custom_components.solar_sanity.const import (
 )
 from custom_components.solar_sanity.journal import ARCHIVE_PROOF_REVISION, OutlookJournal
 from custom_components.solar_sanity.statistics_source import (
+    LatestArchiveProof,
     dayahead_statistic_id,
     forecast_statistic_id,
 )
@@ -188,10 +189,12 @@ async def test_same_payload_recovers_an_unverified_archive_after_journal_restore
 
     async def archive(*args, expected, previous, submitted, write, **kwargs):
         assert write
+        latest_id = forecast_statistic_id(key)
+        expected[latest_id] = LatestArchiveProof([(archived_hour, 1.5)], 0.0)
         expected[ahead_id] = first_ahead
         if previous:
-            assert previous[ahead_id] == first_ahead
-            submitted.update(expected)
+            assert previous == expected
+            submitted.update({latest_id: expected[latest_id].rows, ahead_id: first_ahead})
             return True
         return False
 
@@ -216,10 +219,14 @@ async def test_same_payload_recovers_an_unverified_archive_after_journal_restore
         assert restored.health[key]["captured_at"] == first_capture
         assert write.await_args.kwargs["now"] == NOW
         expected = restored.archive_expectations(key)
-        with patch(
-            "custom_components.solar_sanity.journal.async_forecast_series",
-            new=AsyncMock(
-                side_effect=[dict(expected[forecast_statistic_id(key)]), dict(first_ahead)]
+        with (
+            patch(
+                "custom_components.solar_sanity.journal.async_latest_archive",
+                new=AsyncMock(return_value={archived_hour: (1.5, 1.5)}),
+            ),
+            patch(
+                "custom_components.solar_sanity.journal.async_forecast_series",
+                new=AsyncMock(return_value=dict(first_ahead)),
             ),
         ):
             await restored._verify_archive(key, expected, delays=(0,))

@@ -144,7 +144,10 @@ async def test_forecast_archive_resumes_from_a_real_predecessor_after_eight_days
         hass, key, "Synthetic forecast", {future.isoformat(): 2000}, now, expected=expected
     )
     await async_wait_recording_done(hass)
-    assert expected == {latest: [(future, 2.0)], ahead: [(future, 2.0)]}
+    assert expected == {
+        latest: statistics_source.LatestArchiveProof([(future, 2.0)], 30.0),
+        ahead: [(future, 2.0)],
+    }
     for statistic_id in (latest, ahead):
         values = await statistics_source.async_forecast_series(
             hass, statistic_id, previous, future + timedelta(hours=1)
@@ -155,3 +158,36 @@ async def test_forecast_archive_resumes_from_a_real_predecessor_after_eight_days
                 hass, statistic_id, future + timedelta(hours=1)
             )
         ) == 32.0
+
+
+@pytest.mark.parametrize(
+    ("replacement", "states", "totals"),
+    [({0: 2, 1: 3}, (2, 3, 1), (2, 5, 6)), ({0: 2, 2: 3}, (2, 1, 3), (2, 3, 6))],
+)
+async def test_a_partial_capture_rewrites_the_latest_totals_through_the_saved_tail(
+    recorder_mock: Recorder, hass: HomeAssistant, replacement, states, totals
+) -> None:
+    """Shorter and sparse captures used to leave old cumulative totals after a rewrite."""
+    key = ULID_ENTRY_ID
+    now = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+    hours = [now + timedelta(hours=18 + offset) for offset in range(3)]
+    forecast = {hour.isoformat(): 1000 for hour in hours}
+    assert await statistics_source.async_record_forecast(hass, key, "Synthetic", forecast, now)
+    await async_wait_recording_done(hass)
+
+    proof = {}
+    patch = {hours[index].isoformat(): value * 1000 for index, value in replacement.items()}
+    assert await statistics_source.async_record_forecast(
+        hass, key, "Synthetic", patch, now, expected=proof
+    )
+    await async_wait_recording_done(hass)
+    latest = statistics_source.forecast_statistic_id(key)
+    actual = await statistics_source.async_latest_archive(hass, latest, hours[0], None)
+    assert actual == dict(zip(hours, zip(states, totals, strict=True), strict=True))
+    assert proof[latest] == statistics_source.LatestArchiveProof(
+        list(zip(hours, states, strict=True)), 0.0
+    )
+    ahead = await statistics_source.async_forecast_series(
+        hass, statistics_source.dayahead_statistic_id(key), hours[0], None
+    )
+    assert ahead == dict.fromkeys(hours, 1.0)

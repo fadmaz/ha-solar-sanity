@@ -485,6 +485,9 @@ incomplete. `analysis/observations.py` is shared with historical replay, and
 `analysis/grading.py` screens incomplete flows and grid charging. Failed reads
 and incomplete evidence have separate exclusions after retries for one day.
 Fill-time error requires a timestamped recording inside the observation window.
+A readable pending prediction without the saved inputs needed for grading is
+excluded individually once its observation window closes. Its published values
+stay in History, and other issues and shadows remain eligible for grading.
 
 From 0.44.0, an evening issue can have a separate `solar_coverage` observation.
 It compares its frozen takeover time with the first complete UTC hour inside
@@ -500,13 +503,19 @@ exposes only the display fields. Hour totals do not establish an instant of
 takeover or continuous coverage throughout the hour.
 
 Provider health separates attempted, captured, submitted and verified timestamps.
-The writer supplies the expectations for both series, including required
-content that could not be submitted, before read-back at 5, 30 and 120 seconds.
+The writer supplies the expectations for both series before read-back at 5,
+30 and 120 seconds. A short or sparse capture updates the rolling archive's
+hourly values through the end of the stored suffix, preserving values for
+omitted hours. It rebuilds cumulative totals from the preceding total, or from
+the existing first affected row's incoming total when no predecessor is found.
+A batch without a safe starting total waits for a later attempt. Read-back
+checks the rolling suffix's hourly values and totals, and the day-ahead values.
 An empty day-ahead plan differs from a failed query. An incomplete batch keeps
-one pending set of expectations per provider, keyed by the captured data and
-time. The next regular capture can retry it even when the provider data has
-not changed. The newest Recorder total can cover a longer gap when its hour
-is strictly before the new batch. Unload cancels verification and journal tasks.
+one pending set of expectations per provider, including the rolling suffix's
+starting total, keyed by the captured data and time. The next regular capture
+can retry it even when the provider data has not changed. The newest Recorder
+total can cover a longer gap when its hour is strictly before the new batch.
+Unload cancels verification and journal tasks.
 
 Four descriptive sensors summarize 28 days, with a seven-day summary and counts;
 they have no cumulative state class. Collection status and per-provider capture

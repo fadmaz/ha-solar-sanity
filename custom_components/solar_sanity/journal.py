@@ -13,10 +13,11 @@ from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-from homeassistant.core import CoreState, callback
+from homeassistant.core import CoreState, callback, valid_entity_id
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from ._forecast_plan import running_totals
 from ._store_file import async_read_store
 from .analysis.calibration import interval_view, issue_interval
 from .analysis.daylight_shape import SHAPE_REVISION
@@ -42,7 +43,9 @@ from .load_trial import LoadTrial, valid_control
 from .statistics_source import (
     ArchiveExpectations,
     ArchiveRows,
+    LatestArchiveProof,
     async_forecast_series,
+    async_latest_archive,
     async_observed_full_at,
     async_read_boundary_flows,
     async_read_grading_soc,
@@ -57,7 +60,7 @@ JOURNAL_KEY = f"{DOMAIN}.outlook_journal"
 JOURNAL_VERSION = 1
 MODEL_REVISION = "baseline-0.34.2"
 GRADING_REVISION = "verified-flows-0.51.2"
-ARCHIVE_PROOF_REVISION = 1
+ARCHIVE_PROOF_REVISION = 2
 COLLECTION_REASONS = {
     "journal_restore_failed": "The journal could not be read; its file was left untouched.",
     "journal_write_failed": "The issued prediction could not be saved.",
@@ -240,26 +243,40 @@ class OutlookJournal:
             health["submitted_at"] = now
         if expected is None:
             expected = submitted or {forecast_statistic_id(provider): list(points.items())}
+        latest = expected.get(forecast_statistic_id(provider))
+        if isinstance(latest, LatestArchiveProof):
+            health["archive_latest_base"] = latest.base_sum
+        else:
+            health.pop("archive_latest_base", None)
+        stored = {}
+        for key, expectation in expected.items():
+            rows = expectation.rows if isinstance(expectation, LatestArchiveProof) else expectation
+            stored[key] = (
+                None if rows is None else [[hour.isoformat(), value] for hour, value in rows]
+            )
         health.update(
             verification="pending",
             archive_series={
                 _series_label(key): "pending" if rows != [] else "not_required"
                 for key, rows in expected.items()
             },
-            archive_expected={
-                key: None if rows is None else [[hour.isoformat(), value] for hour, value in rows]
-                for key, rows in expected.items()
-            },
+            archive_expected=stored,
         )
         self._queue_verification(provider, expected)
 
     def archive_expectations(self, provider: str) -> ArchiveExpectations:
-        return {
+        health = self.health.get(provider, {})
+        expected: ArchiveExpectations = {
             key: None
             if rows is None
             else [(datetime.fromisoformat(hour), value) for hour, value in rows]
-            for key, rows in self.health.get(provider, {}).get("archive_expected", {}).items()
+            for key, rows in health.get("archive_expected", {}).items()
         }
+        latest_id = forecast_statistic_id(provider)
+        latest = expected.get(latest_id)
+        if latest and "archive_latest_base" in health:
+            expected[latest_id] = LatestArchiveProof(latest, health["archive_latest_base"])
+        return expected
 
     def archive_pending(self, provider: str) -> bool:
         task = self._verification.get(provider)
@@ -305,23 +322,32 @@ class OutlookJournal:
                 if not rows:
                     results[label] = "not_required"
                     continue
-                series = await async_forecast_series(
-                    self.hass,
-                    statistic_id,
-                    min(t for t, _ in rows),
-                    max(t for t, _ in rows) + timedelta(hours=1),
-                )
-                matches = series is not None and all(
-                    t in series and math.isfinite(series[t]) and abs(series[t] - value) <= 1e-7
-                    for t, value in rows
-                )
+                if isinstance(rows, LatestArchiveProof):
+                    matches = await self._verify_latest(statistic_id, rows)
+                else:
+                    series = await async_forecast_series(
+                        self.hass,
+                        statistic_id,
+                        min(t for t, _ in rows),
+                        max(t for t, _ in rows) + timedelta(hours=1),
+                    )
+                    matches = series is not None and all(
+                        t in series and math.isfinite(series[t]) and abs(series[t] - value) <= 1e-7
+                        for t, value in rows
+                    )
                 results[label] = "verified" if matches else "unverified"
             if results and "unverified" not in results.values():
                 health = self.health[provider]
                 health.update(
                     verified_at=dt_util.utcnow().isoformat(),
                     verification="verified",
-                    archive_proof_revision=ARCHIVE_PROOF_REVISION,
+                    archive_proof_revision=(
+                        ARCHIVE_PROOF_REVISION
+                        if isinstance(
+                            expected.get(forecast_statistic_id(provider)), LatestArchiveProof
+                        )
+                        else 1
+                    ),
                     archive_series=results,
                 )
                 if health.get("reason_code") in (
@@ -331,6 +357,7 @@ class OutlookJournal:
                 ):
                     health["reason_code"] = None
                 health.pop("archive_expected", None)
+                health.pop("archive_latest_base", None)
                 await self.async_save()
                 self.coordinator.notify_live_entities()
                 return
@@ -340,6 +367,22 @@ class OutlookJournal:
             health["reason_code"] = "archive_unverified"
         await self.async_save()
         self.coordinator.notify_live_entities()
+
+    async def _verify_latest(self, statistic_id: str, proof: LatestArchiveProof) -> bool:
+        start = proof.rows[0][0]
+        end = proof.rows[-1][0] + timedelta(hours=1)
+        actual = await async_latest_archive(self.hass, statistic_id, start, end)
+        return (
+            actual is not None
+            and len(actual) == len(proof.rows)
+            and all(
+                (stored := actual.get(hour)) is not None
+                and stored[1] is not None
+                and abs(stored[0] - state) <= 1e-7
+                and abs(stored[1] - total) <= 1e-7
+                for hour, state, total in running_totals(proof.rows, proof.base_sum)
+            )
+        )
 
     async def async_update(self, now: datetime | None = None) -> None:
         now = now or dt_util.utcnow()
@@ -353,14 +396,15 @@ class OutlookJournal:
                 self._next_grade = now + timedelta(minutes=5)
                 changed = await self._grade_pending(now) or changed
                 changed = await self._update_solar_coverage(now) or changed
+                if self.error == "journal_update_failed":
+                    self.error = None
+                    changed = True
             cutoff = now - timedelta(days=RETENTION_DAYS)
             retained = [r for r in self.records if datetime.fromisoformat(r["issued_at"]) >= cutoff]
             retained = retained[-MAX_RECORDS:]
             changed = changed or len(retained) != len(self.records)
             self.records = retained
             if changed or self.error == "journal_write_failed":
-                if self.error == "journal_update_failed":
-                    self.error = None
                 await self.async_save()
                 self.coordinator.notify_live_entities()
         except Exception:
@@ -562,6 +606,8 @@ class OutlookJournal:
                 is_load and self.load_trial.blocked(now) is not None
             ):
                 record["result"] = {"status": "excluded", "reason_code": "context_changed"}
+            elif not _has_grading_inputs(record):
+                record["result"] = {"status": "excluded", "reason_code": "invalid_saved_inputs"}
             else:
                 soc = await async_read_grading_soc(self.hass, record["soc_entity"], start, end)
                 if soc is None:
@@ -706,7 +752,13 @@ class OutlookJournal:
         now: datetime,
     ) -> None:
         context = self.context()
-        soc = await async_read_grading_soc(self.hass, record["soc_entity"], expected, observed)
+        entity_id = record.get("soc_entity")
+        if not isinstance(entity_id, str) or not valid_entity_id(entity_id):
+            result.update(
+                late_soc_status="unavailable", late_soc_reason_code="invalid_saved_inputs"
+            )
+            return
+        soc = await async_read_grading_soc(self.hass, entity_id, expected, observed)
         if self.context() != context:
             result.update(late_soc_status="unavailable", late_soc_reason_code="context_changed")
             return
@@ -863,6 +915,26 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _has_grading_inputs(record: dict[str, Any]) -> bool:
+    """An otherwise readable issue can be missing inputs required to grade it."""
+    entity_id = record.get("soc_entity")
+    if not isinstance(entity_id, str) or not valid_entity_id(entity_id):
+        return False
+    try:
+        published = record["published"]
+        if record["checkpoint"] == "evening":
+            percentages = (published["lowest_pct"], record["settings"]["reserve_pct"])
+            stamp = published["reserve_at"]
+        else:
+            percentages = (record["soc_pct"], record["settings"]["target_pct"])
+            stamp = published.get("full_at")
+        return all(type(value) in (int, float) and 0 <= value <= 100 for value in percentages) and (
+            stamp is None or datetime.fromisoformat(stamp).tzinfo is not None
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def _valid_record(record: Any) -> bool:
     if not isinstance(record, dict):
         return False
@@ -930,8 +1002,12 @@ def _valid_health(value: Any) -> bool:
         return False
     try:
         expectations = value.get("archive_expected", {})
+        base = value.get("archive_latest_base", 0.0)
         return (
             isinstance(expectations, dict)
+            and type(base) in (int, float)
+            and math.isfinite(base)
+            and base >= 0
             and all(
                 rows is None
                 or (

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -39,8 +40,18 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 type ArchiveRows = list[tuple[datetime, float]]
+
+
+@dataclass(frozen=True)
+class LatestArchiveProof:
+    """The affected states and the running total immediately before them."""
+
+    rows: ArchiveRows
+    base_sum: float
+
+
 # None is an unknown expectation after a failed read, while [] is known empty.
-type ArchiveExpectations = dict[str, ArchiveRows | None]
+type ArchiveExpectations = dict[str, ArchiveRows | LatestArchiveProof | None]
 
 
 def recorder_available(hass: HomeAssistant) -> bool:
@@ -315,6 +326,38 @@ async def async_forecast_series(
 
     ``None`` means the query failed, which is not the same as an empty archive.
     """
+    raw = await _async_read_forecast(hass, statistic_id, start, end, {"state"})
+    if raw is None:
+        return None
+    return {
+        dt_util.utc_from_timestamp(float(row["start"])): float(row["state"])
+        for row in raw
+        if row.get("state") is not None and row.get("start") is not None
+    }
+
+
+async def async_latest_archive(
+    hass: HomeAssistant, statistic_id: str, start: datetime, end: datetime | None
+) -> dict[datetime, tuple[float, float | None]] | None:
+    """Read an affected suffix without dropping a row whose energy is unknown."""
+    raw = await _async_read_forecast(hass, statistic_id, start, end, {"state", "sum"})
+    if raw is None:
+        return None
+    rows = {}
+    for row in raw:
+        hour, state, total = row.get("start"), row.get("state"), row.get("sum")
+        if not isinstance(hour, (int, float)) or not math.isfinite(hour):
+            return None
+        if not isinstance(state, (int, float)) or not math.isfinite(state) or state < 0:
+            return None
+        rows[dt_util.utc_from_timestamp(hour)] = (
+            float(state),
+            float(total) if isinstance(total, (int, float)) and math.isfinite(total) else None,
+        )
+    return rows
+
+
+async def _async_read_forecast(hass, statistic_id, start, end, fields) -> list | None:
     if not recorder_available(hass):
         return None
 
@@ -330,24 +373,21 @@ async def async_forecast_series(
             {statistic_id},
             "hour",
             {"energy": "kWh"},
-            {"state"},
+            fields,
         )
     except Exception:
         _LOGGER.debug("forecast read failed for %s", statistic_id, exc_info=True)
         return None
 
-    out: dict[datetime, float] = {}
-    for row in (raw or {}).get(statistic_id, []):
-        state = row.get("state")
-        started = row.get("start")
-        if state is None or started is None:
-            continue
-        out[dt_util.utc_from_timestamp(float(started))] = float(state)
-    return out
+    return (raw or {}).get(statistic_id, [])
 
 
 async def _async_resume_sum(
-    hass: HomeAssistant, statistic_id: str, before: datetime
+    hass: HomeAssistant,
+    statistic_id: str,
+    before: datetime,
+    *,
+    first_row: tuple[float, float | None] | None = None,
 ) -> float | None:
     """The running total to carry into a write starting at ``before``.
 
@@ -391,7 +431,11 @@ async def _async_resume_sum(
         # When the entire archive precedes the new batch, this is the immediate
         # predecessor even after a long outage. It is never a future row.
         total = newest.get("sum")
-        return float(total) if isinstance(total, (int, float)) and math.isfinite(total) else None
+        return (
+            float(total)
+            if isinstance(total, (int, float)) and math.isfinite(total) and total >= 0
+            else None
+        )
 
     try:
         rows = await get_instance(hass).async_add_executor_job(
@@ -410,13 +454,23 @@ async def _async_resume_sum(
 
     preceding = (rows or {}).get(statistic_id) or []
     if not preceding:
+        # The archive's first affected row already carries the incoming total.
+        # Use it only after the predecessor query succeeded and found no row.
+        if first_row is not None:
+            state, total = first_row
+            if total is not None and total >= state:
+                return total - state
         # The archive holds rows, but none in the week before this write. A gap
         # that long cannot be resumed across without inventing a total.
         _LOGGER.debug("no resumable total for %s before %s", statistic_id, before)
         return None
 
     total = preceding[-1].get("sum")
-    return float(total) if isinstance(total, (int, float)) and math.isfinite(total) else None
+    return (
+        float(total)
+        if isinstance(total, (int, float)) and math.isfinite(total) and total >= 0
+        else None
+    )
 
 
 def _as_rows(points: list[tuple[datetime, float]], running: float) -> list[Any]:
@@ -459,15 +513,37 @@ async def async_record_forecast(
     when_now = now or dt_util.utcnow()
     latest_id = forecast_statistic_id(provider_key)
     ahead_id = dayahead_statistic_id(provider_key)
+    pending_latest = (previous or {}).get(latest_id)
+    prior = pending_latest if isinstance(pending_latest, LatestArchiveProof) else None
     if expected is not None:
-        expected[latest_id] = points
+        expected[latest_id] = prior
         expected[ahead_id] = (previous or {}).get(ahead_id)
     if not recorder_available(hass):
         return False
 
-    latest_written = write and await _async_submit_forecast(
-        hass, latest_id, f"{provider_name} forecast", points, submitted
-    )
+    latest_written = False
+    first = points[0][0]
+    existing = await async_latest_archive(hass, latest_id, first, None)
+    if existing is not None:
+        running = await _async_resume_sum(hass, latest_id, first, first_row=existing.get(first))
+        if running is not None:
+            # Missing hours in a partial capture keep their last known values,
+            # including the tail beyond the end of the new capture.
+            values = dict(prior.rows) if prior is not None else {}
+            values.update((hour, state) for hour, (state, _) in existing.items())
+            values.update(points)
+            suffix = sorted(values.items())
+            if expected is not None:
+                expected[latest_id] = LatestArchiveProof(suffix, running)
+            if write:
+                latest_written = _submit_forecast(
+                    hass,
+                    latest_id,
+                    f"{provider_name} forecast",
+                    suffix,
+                    running,
+                    submitted=submitted,
+                )
     ahead_written = await _async_record_dayahead(
         hass,
         provider_key,
@@ -491,7 +567,7 @@ async def _async_record_dayahead(
     *,
     submitted: dict[str, ArchiveRows] | None,
     expected: ArchiveExpectations | None,
-    previous: ArchiveRows | None,
+    previous: ArchiveRows | LatestArchiveProof | None,
     write: bool,
 ) -> bool:
     """Write only hours still far enough ahead, and only once each.
@@ -513,7 +589,7 @@ async def _async_record_dayahead(
     if existing is None:
         return False
 
-    previous_values = dict(previous or [])
+    previous_values = dict(previous) if isinstance(previous, list) else {}
     pending_points = [(hour, previous_values.get(hour, value)) for hour, value in points]
     tail = dayahead_write_plan(pending_points, existing, now, DAYAHEAD_MIN_LEAD_HOURS)
     if expected is not None:
@@ -538,11 +614,23 @@ async def _async_submit_forecast(
     rows: ArchiveRows,
     submitted: dict[str, ArchiveRows] | None,
 ) -> bool:
-    from homeassistant.components.recorder.statistics import async_add_external_statistics
-
     running = await _async_resume_sum(hass, statistic_id, rows[0][0])
     if running is None:
         return False
+    return _submit_forecast(hass, statistic_id, name, rows, running, submitted=submitted)
+
+
+def _submit_forecast(
+    hass: HomeAssistant,
+    statistic_id: str,
+    name: str,
+    rows: ArchiveRows,
+    running: float,
+    *,
+    submitted: dict[str, ArchiveRows] | None,
+) -> bool:
+    from homeassistant.components.recorder.statistics import async_add_external_statistics
+
     try:
         async_add_external_statistics(hass, _metadata(statistic_id, name), _as_rows(rows, running))
     except Exception:
