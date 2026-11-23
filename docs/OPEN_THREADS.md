@@ -3,10 +3,16 @@
 Where the work stands, for whoever picks it up next. This is the one place for state rather than
 design: when you close a thread, delete it; when you leave one open, add it with its evidence.
 
-Last updated for 0.54.1, 2026-11-16.
+Last updated for 0.54.2, 2026-11-23.
 
 ## Latest delivery and operational acceptance
 
+- 0.54.2 excludes individual pending issues missing required grading inputs
+  and verifies rolling Recorder totals through a retained forecast tail. Field
+  acceptance is pending a HACS update, journal retention across restart and
+  read-back of the next natural capture. The reference replay is unchanged.
+- Tomorrow still selects an installation automatically. An explicit installation
+  selector for dashboards serving multiple installations is planned for 0.55.0.
 - 0.54.1 publishes tomorrow's corrected total and hourly curve from the same
   source and local day, preserves damaged or newer journal files, and retains
   unsaved load edits across a failed list refresh. The reference installation

@@ -915,7 +915,7 @@ class SolarSanityCoordinator(DataUpdateCoordinator[None]):
                 continue
             submitted: dict[str, ArchiveRows] = {}
             expected: ArchiveExpectations = {
-                forecast_statistic_id(entry_id): list(points[entry_id].items()),
+                forecast_statistic_id(entry_id): None,
                 dayahead_statistic_id(entry_id): None,
             }
             previous = self.journal.archive_expectations(entry_id) if same_capture else {}

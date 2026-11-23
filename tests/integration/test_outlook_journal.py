@@ -13,11 +13,15 @@ from homeassistant.core import CoreState
 from homeassistant.util import dt as dt_util
 
 from custom_components.solar_sanity.analysis.model import Bucket, BucketSource, Quality
-from custom_components.solar_sanity.analysis.observations import observation_hours
+from custom_components.solar_sanity.analysis.observations import SocSeries, observation_hours
 from custom_components.solar_sanity.analysis.outlook import BatterySettings, Step, project
 from custom_components.solar_sanity.battery_outlook import OutlookState
 from custom_components.solar_sanity.const import DOMAIN, OPT_BATTERY_CAPACITY_KWH
-from custom_components.solar_sanity.journal import JOURNAL_KEY
+from custom_components.solar_sanity.journal import JOURNAL_KEY, OutlookJournal
+from custom_components.solar_sanity.statistics_source import (
+    LatestArchiveProof,
+    forecast_statistic_id,
+)
 from tests.integration.ha_harness import MockConfigEntry, async_fire_time_changed
 from tests.integration.test_battery_outlook import BATTERY, _loaded
 
@@ -425,6 +429,97 @@ async def test_a_reported_disk_write_failure_remains_visible_until_retry(
     assert (await journal._store.async_load())[
         "last_checked_at"
     ] == journal.last_checked_at.isoformat()
+
+
+@pytest.mark.parametrize(
+    ("kind", "invalid_key"), [("evening", "soc_entity"), ("morning", "soc_pct")]
+)
+async def test_restored_missing_grading_inputs_exclude_only_the_affected_issue(
+    hass, enable_custom_integrations, entry_data, hass_storage, *, kind, invalid_key
+):
+    """A readable store can hold an older issue that cannot be graded with its saved inputs."""
+    entry, journal = await _journal(hass, entry_data)
+    issued = NOW if kind == "evening" else NOW.replace(hour=8)
+    journal.coordinator.battery.state = _projection(issued)
+    affected = journal._snapshot(f"{issued.date()}:{kind}", kind, issued)
+    affected["shadow"] = deepcopy(affected)
+    affected.pop(invalid_key)
+    journal.records.append(affected)
+    original = deepcopy(affected)
+    await journal.async_save()
+    restored = OutlookJournal(journal.coordinator)
+    await restored.async_restore()
+    assert restored.writable
+    stored = restored.records[0]
+    end = datetime.fromisoformat(stored["until"])
+    hours = observation_hours(issued, end)
+    restored.coordinator._buckets = _measured_flow(hours)
+    now = hours[-1] + timedelta(hours=1, minutes=15)
+    soc = SocSeries([(issued + timedelta(minutes=30 * i), 70.0) for i in range(40)])
+
+    with (
+        patch.object(restored, "capture", return_value=False),
+        patch.object(restored, "_read_boundary_flows", new=AsyncMock(return_value={})),
+        patch(
+            "custom_components.solar_sanity.journal.async_read_grading_soc",
+            new=AsyncMock(return_value=soc),
+        ) as read,
+    ):
+        await restored.async_update(now - timedelta(minutes=5))
+        assert stored["result"] == stored["shadow"]["result"] == {"status": "pending"}
+        read.assert_not_called()
+        await restored.async_update(now)
+        read.assert_awaited_once()
+
+    assert stored["result"] == {"status": "excluded", "reason_code": "invalid_saved_inputs"}
+    assert stored["shadow"]["result"]["status"] == "graded"
+    for key in original.keys() - {"shadow", "result"}:
+        assert stored[key] == original[key]
+    persisted = hass_storage[f"{JOURNAL_KEY}.{entry.entry_id}"]["data"]["records"]
+    assert persisted == restored.records
+
+
+async def test_a_successful_grading_cycle_clears_a_transient_journal_error(
+    hass, enable_custom_integrations, entry_data
+):
+    """A good cycle with no changed rows can recover collection status."""
+    _, journal = await _journal(hass, entry_data)
+    journal.error = "journal_update_failed"
+    journal._next_grade = NOW + timedelta(minutes=5)
+    with patch.object(journal, "capture", return_value=False):
+        await journal.async_update(NOW)
+        assert journal.error == "journal_update_failed"
+        await journal.async_update(NOW + timedelta(minutes=5))
+    assert journal.error is None
+
+
+async def test_latest_read_back_rejects_correct_states_with_an_old_tail_total(
+    hass, enable_custom_integrations, entry_data
+):
+    """Correct states alone cannot confirm a batch that left stale cumulative totals."""
+    _, journal = await _journal(hass, entry_data)
+    key, start = "provider", NOW.replace(minute=0)
+    tail = start + timedelta(hours=1)
+    latest = forecast_statistic_id(key)
+    expected = {latest: LatestArchiveProof([(start, 2.0), (tail, 1.0)], 0.0)}
+    with patch.object(journal, "_queue_verification"):
+        await journal.captured(key, {start: 2.0}, {}, expected=expected)
+    assert journal.archive_expectations(key) == expected
+    with patch(
+        "custom_components.solar_sanity.journal.async_latest_archive",
+        new=AsyncMock(
+            side_effect=[
+                {start: (2.0, 2.0), tail: (1.0, 2.0)},
+                {start: (2.0, 2.0), tail: (1.0, 3.0)},
+            ]
+        ),
+    ):
+        await journal._verify_archive(key, expected, delays=(0,))
+        assert journal.health[key]["archive_series"] == {"latest": "unverified"}
+        assert "verified_at" not in journal.health[key]
+        await journal._verify_archive(key, journal.archive_expectations(key), delays=(0,))
+    assert journal.health[key]["archive_series"] == {"latest": "verified"}
+    assert journal.health[key]["verified_at"]
 
 
 async def test_an_uncommitted_batch_is_not_a_verified_archive(

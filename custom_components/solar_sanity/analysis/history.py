@@ -12,6 +12,7 @@ OBSERVATION_REASONS = {
     "already_full": "The battery was already full at issue time.",
     "context_changed": "The setup changed during the observation window.",
     "history_read_failed": "The observation history could not be read.",
+    "invalid_saved_inputs": "The saved prediction is missing valid inputs for evaluation.",
     "offline_checkpoint": "Home Assistant was offline at the checkpoint.",
     "missed_checkpoint": "No valid prediction was published within five minutes.",
     "no_night": "The prediction did not cover a complete upcoming night.",
